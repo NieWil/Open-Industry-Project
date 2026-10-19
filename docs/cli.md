@@ -172,6 +172,11 @@ Never hand-edit scene.json; these go through the same checks the editor does.
     side transcribed into Python over the server's memory. It tests the bytes, not a Siemens CPU. snap7 enforces no
     PUT/GET setting, rack/slot or protection level. `-- --db` puts the two REALs in a data block, DB10.DBD0 /
     DB10.DBD4.
+  - `npm run plant -- --demo | <project-folder>` - the scene as a plant service: stepped at wall-clock speed behind a
+    Modbus TCP server (default `127.0.0.1:5020`) until stopped, for a PLC outside the repo to commission it. `--demo`
+    serves the palletizing cell with its tags given addresses as "Assign I/O" gives them; a folder must already be
+    wired to addresses (`npm run assign-io -- <folder>`). `--io-list <file.csv>` writes the I/O list, `--status
+    <file.json>` rewrites a status each second (sim time, lag, connections, requests by function code).
   - No script here drives commercial vendor software (a vendor IDE, runtime or SCADA): the PLC links to those are the
     app's own protocol clients, proven against open-source peers.
 
