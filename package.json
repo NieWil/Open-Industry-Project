@@ -79,6 +79,7 @@
     "st-oracle:openplc": "node scripts/oracle-openplc.mjs",
     "openplc-loop": "node scripts/openplc-loop.mjs",
     "s7-loop": "node scripts/s7-loop.mjs",
+    "plant": "node scripts/plant.mjs",
     "bench:behavior": "vitest bench --run --reporter=verbose src/sim/behavior.bench.ts",
     "e2e:server": "node scripts/e2e-server.mjs",
     "lint": "eslint src",
