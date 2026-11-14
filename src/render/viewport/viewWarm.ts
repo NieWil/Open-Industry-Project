@@ -1,7 +1,7 @@
 // Render-pipeline pre-warm for the view: the first-load staged compile, the
 // per-add (pumpWarm) and scene-load (compileSwap) warms, the bulk-reveal budget, the interaction extras.
 
-import { Vector3, WebGLRenderer } from 'three'
+import { Group, Vector3, WebGLRenderer } from 'three'
 import type { Object3D } from 'three'
 import type { WebGPURenderer } from 'three/webgpu'
 import type { PartInstance } from '../../core/types'
@@ -699,6 +699,37 @@ export async function warmInteractionExtrasWebGL(view: WarmHost): Promise<void> 
  * re-hide in one synchronous burst. Compiled scoped (`compileAsync(root, camera, scene)`), since the
  * whole-scene form cost ~330 ms of main-thread codegen, a visible stutter on a live scene.
  */
+/** how many pooled sources one compile takes: few enough that the page answers between batches */
+const POOL_WARM_BATCH = 256
+
+/**
+ * A root that stands for `objects` in one `compileAsync`, wherever each of them is in the scene. The objects are
+ * borrowed, not moved: they keep their parents, so nothing about the scene changes. Hidden itself, and revealing it
+ * reveals them for the length of the projection (`burst` reveals a root and hides it again in one synchronous step).
+ *
+ * Relies on three's projection reading only `visible`, `children` and each object's own world matrix
+ * (docs/three-coupling.md, "A compile scoped to a root still walks the whole target scene"): the holder must not
+ * update its children's matrices, which are their real parents' to set.
+ */
+function borrowed(objects: readonly Object3D[]): Object3D {
+  const holder = new Group()
+  holder.matrixWorldAutoUpdate = false
+  holder.matrixAutoUpdate = false
+  holder.children = [...objects]
+  let shown = false
+  const was = objects.map((o) => o.visible)
+  Object.defineProperty(holder, 'visible', {
+    get: () => shown,
+    set: (on: boolean) => {
+      shown = on
+      objects.forEach((o, i) => {
+        o.visible = on ? true : was[i]!
+      })
+    },
+  })
+  return holder
+}
+
 export async function warmInteractionExtras(view: WarmHost, gpu: WebGPURenderer): Promise<void> {
   if (view.disposed || view.warm.extrasWarmed) return
   view.warm.extrasWarmed = true
@@ -748,10 +779,14 @@ export async function warmInteractionExtras(view: WarmHost, gpu: WebGPURenderer)
     const markerWarmPos = new Vector3()
     view.showVertexMarkers(markerWarmPos, markerWarmPos)
     view.showVertexMarkers(null, null)
-    const tier2: Object3D[] = [view.handles.root, view.overlays.rulerGroup, view.overlays.rulerBracket, ...poolSources]
+    const tier2: Object3D[] = [view.handles.root, view.overlays.rulerGroup, view.overlays.rulerBracket]
     tier2.push(metalProbeIn(view)) // the first metal's environment (metalWarmProbe)
     if (view.vsnap.sourceMarker) tier2.push(view.vsnap.sourceMarker)
     if (view.vsnap.targetMarker) tier2.push(view.vsnap.targetMarker)
+    // The pooled sources go in batches, not one compile each. A compile scoped to a root still walks the whole
+    // live scene for its lights, so one call per source costs sources x scene: on a 420-part line that is 6,297
+    // calls over 7,196 visible objects, an 11 s freeze on the first seconds after the cover lifts.
+    for (let i = 0; i < poolSources.length; i += POOL_WARM_BATCH) tier2.push(borrowed(poolSources.slice(i, i + POOL_WARM_BATCH)))
     try {
       await burst(tier2, 'extras2')
     } finally {

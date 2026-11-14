@@ -218,6 +218,14 @@ These use public API but lean on r187 *behavior*. Each has a canary or gate.
   (owned by `ViewWarmState` in viewWarm.ts; RenderView forwards it under that name as a test hook)
   is what e2e waits on (see verify-render-bundles.mjs). A wait that returns before the warm settles
   measures compile noise, not the change under test.
+- **A compile scoped to a root still walks the whole target scene** - `compileAsync(root, camera, scene)` projects
+  only `root`, then traverses every visible object of `scene` to collect its lights. So one call per object costs
+  objects x scene. The interaction warm compiles the pooled hidden sources in batches for that reason (`borrowed`
+  in viewWarm.ts): a holder `Group` whose `children` are the sources themselves, left under their own parents. That
+  relies on the projection reading only `visible`, `children` and each object's own world matrix, and on
+  `compileAsync` updating the root's matrices only when `matrixWorldAutoUpdate` is set, which the holder turns off.
+  If a three bump makes the projection read `parent`, or update matrices unconditionally, the batch must go back to
+  one root per source or the sources be compiled under a real common ancestor.
 - **Shared uniform groups are version-gated** - the per-frame tick uniforms (roller/turntable spin,
   belt and chain scroll) join one shared uniform group
   ([tickUniformGroup.ts](../src/render/parts/tickUniformGroup.ts)), relying on `Bindings._update`
