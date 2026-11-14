@@ -8,10 +8,10 @@
 
 import type { Controller } from '../../core/controller'
 import { controllerDiagnostics, controllerRuns, controllerSource, runnableSource, type ControllerDiagnostics } from '../../plc/controller'
-import { parseAndCheck } from '../../plc/checker'
 import { compile } from '../../plc/interpreter'
 import { LocalPlcLink } from '../../plc/link/plcLink'
 import { surfaceOf, type ProgramSurface } from '../../plc/programSurface'
+import { parseStructure } from '../../plc/structure'
 import { StError, type CompiledProgram, type TaskInfo } from '../../plc/types'
 
 /** What to work the facts out for. */
@@ -76,6 +76,20 @@ function checkedFor(source: string, controller: Controller | null, defaultName: 
   return checked.found
 }
 
+/** The kind of value the table shows for a variable of each of these types (programFactsKinds.test.ts holds the two
+ *  together). A type not listed is read off the table. */
+const PLAIN_KIND: Readonly<Record<string, ValueKind>> = {
+  BOOL: 'boolean',
+  SINT: 'number',
+  INT: 'number',
+  DINT: 'number',
+  USINT: 'number',
+  UINT: 'number',
+  UDINT: 'number',
+  REAL: 'number',
+  LREAL: 'number',
+}
+
 function runFacts(build: () => { program: CompiledProgram | null; error: unknown }, tags: readonly string[]): RunFacts {
   let built: { program: CompiledProgram | null; error: unknown }
   try {
@@ -89,10 +103,21 @@ function runFacts(build: () => { program: CompiledProgram | null; error: unknown
     return { surface: null, kinds: {}, tasks: [], error: error === null ? null : { message, ...(error instanceof StError ? { offset: error.pos.offset } : {}) } }
   }
   const link = new LocalPlcLink(program)
-  const watch = link.watch
+  // A tag wired to a variable of the program by its own spelling is answered from the declaration. Anything else (a
+  // member, an element, a type not listed in PLAIN_KIND) is read off the value table, which is built only then: a
+  // large program's table holds hundreds of thousands of values and takes a second to build.
+  const declared = new Set(program.bindable)
+  let watch: Readonly<Record<string, unknown>> | null = null
   const kinds: Record<string, ValueKind> = {}
   for (const tag of tags) {
-    const v = watch[link.aliases.get(tag) ?? tag]
+    const key = link.aliases.get(tag) ?? tag
+    const plain = declared.has(key) ? PLAIN_KIND[program.varInfo(key)?.type ?? ''] : undefined
+    if (plain) {
+      kinds[tag] = plain
+      continue
+    }
+    watch ??= link.watch
+    const v = watch[key]
     if (v !== undefined) kinds[tag] = typeof v as ValueKind
   }
   return { surface: surfaceOf(program), kinds, tasks: program.tasks.map((t) => ({ ...t, programs: [...t.programs] })), error: null }
@@ -100,14 +125,12 @@ function runFacts(build: () => { program: CompiledProgram | null; error: unknown
 
 /** Where each task's INTERVAL value is written, in a program that declares its own CONFIGURATION. */
 function intervalsOf(source: string): Record<string, number> {
+  // Read off the shared parse (plc/structure.ts), which the table was worked out from and is kept: checking the
+  // program again for this read all of it a third time. A program that does not read has no task to place.
   const out: Record<string, number> = {}
-  try {
-    for (const t of parseAndCheck(source).ast.configuration?.tasks ?? []) {
-      const at = t.args.find((a) => a.name === 'INTERVAL')?.value.pos.offset
-      if (at !== undefined) out[t.name] = at
-    }
-  } catch {
-    // a program that does not read has no task to place
+  for (const t of parseStructure(source).ast?.configuration?.tasks ?? []) {
+    const at = t.args.find((a) => a.name.toUpperCase() === 'INTERVAL')?.value.pos.offset
+    if (at !== undefined) out[t.name] = at
   }
   return out
 }
