@@ -26,7 +26,25 @@ const MAX_DIAGNOSTICS = 100
 
 /** Lex, parse, and type-check every POU. Returns the annotated AST + def maps. Throws StError. */
 export function parseAndCheck(source: string): CheckedProgram {
+  if (kept && kept.source === source) {
+    const { program } = kept
+    kept = null
+    return program
+  }
   return checkAst(parse(lex(source), null), null)
+}
+
+// A realm that both lists a program's problems and compiles it (the editor's program worker) reads the text once for
+// the two: `diagnostics` keeps the program it checked when that found no error, and the next `parseAndCheck` of the
+// same text takes it. With no error the two checks do the same work, and a warning is only something said beside it.
+// The program is handed out once, because whoever gets a checked program may write to it. Off unless asked for: a
+// kept program is the whole tree, held until it is taken.
+let keeping = false
+let kept: { source: string; program: CheckedProgram } | null = null
+/** Whether `diagnostics` keeps the program it checked for the next `parseAndCheck` of the same text. */
+export function keepCheckedPrograms(on: boolean): void {
+  keeping = on
+  kept = null
 }
 
 /** The checking core. With a `sink` it records what it can and keeps going; without one the
@@ -347,7 +365,10 @@ function diagnosticsOf(source: string, limit: number): Diagnostic[] {
     // Type-check only once the program parses. Checking a partial AST reports cascades of
     // consequences - "undeclared variable" for everything after a broken VAR block - that
     // bury the one real mistake, so syntax errors are reported on their own.
-    if (out.length === 0) checkAst(ast, out)
+    if (out.length === 0) {
+      const program = checkAst(ast, out)
+      if (keeping && out.every((d) => d.severity === 'warning')) kept = { source, program }
+    }
   } catch (e) {
     // something the recovery could not absorb: a bad character, an unterminated block
     if (!(e instanceof StError)) throw e // not a source-level error (a bug) - don't swallow it

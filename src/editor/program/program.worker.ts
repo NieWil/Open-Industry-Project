@@ -7,11 +7,14 @@
 // On the walker engine: this worker runs no SES lockdown, and the walker builds a program without generating code,
 // so no text from the program is ever evaluated here. Both engines declare the same surface (they share the program
 // builders, plc/pou.ts).
+import { diagnostics, keepCheckedPrograms } from '../../plc/checker'
 import { compile, setScanEngine } from '../../plc/interpreter'
 import type { Build } from './programFacts'
 import { checkOfAsk, factsOfAsk, surfaceOfAsk, type ProgramReply, type ProgramRequest } from './programWorkerAsk'
 
 setScanEngine('walker')
+// Problems and the compile read a text once between them (plc/checker.ts keepCheckedPrograms).
+keepCheckedPrograms(true)
 
 // The last few texts compiled. The Problems panel asks again when a part's tag changes, with the same program: that
 // answer then costs a few lookups, not a compile.
@@ -20,6 +23,9 @@ const build: Build = (text) => {
   let b = built.get(text)
   if (!b) {
     try {
+      // Checked for its problems first, so the compile takes that reading whichever of the two was asked for first.
+      // The check's answer is remembered, and the Problems panel and the lint ask for it next.
+      diagnostics(text)
       b = { program: compile(text), error: null }
     } catch (error) {
       b = { program: null, error }
