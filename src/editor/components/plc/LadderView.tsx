@@ -168,8 +168,10 @@ interface LadderViewProps {
   onEdit: (next: string) => void
   onUndo: () => void
   onRedo: () => void
-  /** what is wrong with the program, positioned in `source` */
-  getDiagnostics: (source: string) => Diagnostic[]
+  /** What is wrong with the program, positioned in `source`. Asked for, not worked out while drawing: checking a
+   *  program reads all of it, so the panel asks the program worker (program/programWorkerClient.ts) and the sheet
+   *  draws its rungs first and marks the problems when the answer is in. */
+  getDiagnostics: (source: string) => Promise<Diagnostic[]>
   /** select the element the problem at this source offset is about, opening its routine (`n` makes each ask new) */
   revealProblem?: { offset: number; n: number } | null
   /** what the running controller faulted on, as problems of the elements it happened in: drawn exactly like an error
@@ -220,7 +222,25 @@ const PLACE = /^\s*[A-Za-z_][A-Za-z0-9_]*(\s*(\.\s*[A-Za-z_0-9]+|\[[^\]]*\]))*\s
 const NO_FAULTS: readonly Diagnostic[] = []
 
 export function LadderView({ revealProblem = null, faults = NO_FAULTS, source, onEdit, onUndo, onRedo, getDiagnostics, getWatch, live: running, readOnly, getTags, getDevices, revealRoutine = null, revealRung, onRevealedRoutine, idle, onShowText, onRenameTag, toggleBit, writeLive, getForces, onForcesChange, onWatch, onForce, onRelease }: LadderViewProps): ReactElement {
-  const routines = useMemo(() => LADDER.read(source, faults.length > 0 ? [...getDiagnostics(source), ...faults] : getDiagnostics(source)), [source, faults])
+  // the program's problems, for the text they were found in: an edit draws without them until its own are in
+  const [checked, setChecked] = useState<{ source: string; found: readonly Diagnostic[] } | null>(null)
+  const askDiagnostics = useRef(getDiagnostics)
+  askDiagnostics.current = getDiagnostics
+  useEffect(() => {
+    let live = true
+    void askDiagnostics.current(source).then(
+      (list) => {
+        // (none is the answer the sheet already drew: the same list, so the rungs are not read again for it)
+        if (live) setChecked({ source, found: list.length > 0 ? list : NO_FAULTS })
+      },
+      () => undefined,
+    )
+    return () => {
+      live = false
+    }
+  }, [source])
+  const problems = checked?.source === source ? checked.found : NO_FAULTS
+  const routines = useMemo(() => LADDER.read(source, faults.length > 0 ? [...problems, ...faults] : problems), [source, faults, problems])
   // A PROGRAM drawn here that no task runs is not what is running, so nothing here is lit: its variables would
   // otherwise answer from the program that is running, which shares its names when it is another version of it
   const idleRoutine = routines.find((r) => r.pou !== '' && idle?.running !== undefined && idle.programs.has(r.pou.toUpperCase()))

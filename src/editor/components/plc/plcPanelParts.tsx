@@ -3,12 +3,13 @@
 // into the table. They reach the panel through `PlcPanelCtx`, its doors and nothing more; the panel owns what is about
 // the program file and the window (the text editor, the block index, the status lines, undo and autosave).
 
+import { checkFor } from '../../program/programWorkerClient'
 import { Suspense, lazy, type ReactElement } from 'react'
 import type { Controller } from '../../../core/controller'
 import { addBlock, blockNameError, deleteBlock, parseDocument, renameBlock, type DocumentEdit, type StBlock } from '../../../plc/document'
 import { blockOffset } from '../../program/stReveal'
 import { commitProgramAddition, commitTagRename, namedProgramAddition } from '../../program/controllerCommit'
-import { controllerDiagnostics, controllerFor, declaresConfiguration, defaultController, extractController } from '../../../plc'
+import { controllerFor, declaresConfiguration, defaultController, extractController } from '../../../plc'
 import type { TagScope } from '../../../plc/tags'
 import type { TagValue } from '../../../plc/types'
 import { renameProgramType, type TagRename } from '../../../plc/controllerEdits'
@@ -267,7 +268,10 @@ export function PanelLadder({ ctx }: { ctx: PlcPanelCtx }): ReactElement {
         onEdit={ctx.applyLadderEdit}
         onUndo={ctx.undo}
         onRedo={ctx.redo}
-        getDiagnostics={(src) => controllerDiagnostics(src, ctx.store.getState().controller, { defaultName: ctx.store.getState().externalPlc.mainName }).source}
+        getDiagnostics={(src) => {
+          const s = ctx.store.getState()
+          return checkFor({ source: src, controller: s.controller, scanMs: s.stScanMs, defaultName: s.externalPlc.mainName }).then((d) => d.source)
+        }}
         faults={ctx.faults.marks}
         revealProblem={ctx.faults.reveal}
         getWatch={ctx.watch}
