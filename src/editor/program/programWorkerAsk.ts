@@ -32,6 +32,9 @@ export interface FactsAnswer {
 /** What the worker is asked: what the program offers the scene, every problem it and its table have, or all the
  *  Problems panel asks of it. */
 export type ProgramRequest = ({ kind: 'surface' } & ProgramAsk) | ({ kind: 'check' } & CheckAsk) | ({ kind: 'facts' } & FactsAsk)
+/** A request as it is sent: numbered, and with the program's text only when the worker does not hold it yet
+ *  (programService.ts sends a text once, however many questions are asked about it). */
+export type ProgramMessage = { [K in ProgramRequest['kind']]: Omit<Extract<ProgramRequest, { kind: K }>, 'source'> }[ProgramRequest['kind']] & { id: number; source?: string }
 /** Its answer to each. A surface is null when the program does not compile. */
 export interface ProgramAnswers {
   surface: ProgramSurface | null

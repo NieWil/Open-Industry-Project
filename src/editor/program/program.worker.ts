@@ -10,7 +10,7 @@
 import { diagnostics, keepCheckedPrograms } from '../../plc/checker'
 import { compile, setScanEngine } from '../../plc/interpreter'
 import type { Build } from './programFacts'
-import { checkOfAsk, factsOfAsk, surfaceOfAsk, type ProgramReply, type ProgramRequest } from './programWorkerAsk'
+import { checkOfAsk, factsOfAsk, surfaceOfAsk, type ProgramMessage, type ProgramReply, type ProgramRequest } from './programWorkerAsk'
 
 setScanEngine('walker')
 // Problems and the compile read a text once between them (plc/checker.ts keepCheckedPrograms).
@@ -36,8 +36,12 @@ const build: Build = (text) => {
   return b
 }
 
-self.onmessage = (e: MessageEvent<ProgramRequest & { id: number }>) => {
-  const ask = e.data
+// The program asked about. Its text comes with the first question about it and is held for the ones that follow.
+let source = ''
+
+self.onmessage = (e: MessageEvent<ProgramMessage>) => {
+  if (e.data.source !== undefined) source = e.data.source
+  const ask = { ...e.data, source } as ProgramRequest & { id: number }
   let reply: ProgramReply
   try {
     if (ask.kind === 'surface') reply = { id: ask.id, kind: 'surface', answer: surfaceOfAsk(ask, (text) => build(text).program) }

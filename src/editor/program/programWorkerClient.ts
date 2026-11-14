@@ -1,25 +1,23 @@
 // The open program, checked and compiled in a worker (program.worker.ts), so a click on a part or a pause in typing
 // never waits on the compiler. One answer of each kind is kept per program: it only changes one way at a time.
 //
-// Each kind of question has a worker of its own. A question still running when the program changes is of a text that
-// is no longer the program, so its worker is dropped, not waited for: a large program's stale compile never delays
-// the current one, and a check never waits behind a compile.
+// Every kind of question goes to the one worker (programService.ts), which reads the program once for all of them.
 //
 // Where there is no Worker (unit tests, a host that refuses one), or one fails, the answer is worked out here.
 
 import type { ControllerDiagnostics } from '../../plc/controller'
 import type { ProgramSurface } from '../../plc/programSurface'
 import { compiledOnce } from './compiledProgram'
-import { checkOfAsk, factsOfAsk, surfaceOfAsk, type CheckAsk, type FactsAnswer, type FactsAsk, type ProgramAnswers, type ProgramAsk, type ProgramReply, type ProgramRequest } from './programWorkerAsk'
+import { ProgramService, type Kind, type ProgramWorker } from './programService'
+import { checkOfAsk, factsOfAsk, surfaceOfAsk, type CheckAsk, type FactsAnswer, type FactsAsk, type ProgramAnswers, type ProgramAsk, type ProgramRequest } from './programWorkerAsk'
 
-type Kind = keyof ProgramAnswers
+const service = new ProgramService(
+  typeof Worker === 'undefined' ? null : () => new Worker(new URL('./program.worker.ts', import.meta.url), { type: 'module', name: 'program' }) as unknown as ProgramWorker,
+)
 
-/** One kind of question: its worker, the answer kept for the program last asked about, and how the page answers it. */
+/** One kind of question: the answer kept for the program last asked about, and how the page answers it. */
 class Lane<K extends Kind, A extends ProgramAsk> {
-  #worker: Worker | null = null
-  #pending: { id: number; stale: () => void } | null = null
   #kept: { key: string; ask: A; answer: Promise<ProgramAnswers[K]> } | null = null
-  #nextId = 1
 
   constructor(
     private readonly kind: K,
@@ -34,43 +32,11 @@ class Lane<K extends Kind, A extends ProgramAsk> {
   ask(ask: A): Promise<ProgramAnswers[K]> {
     // by what the ask says: the store hands out a new controller table object for an unchanged one
     const key = JSON.stringify(this.rest(ask))
-    if (!this.#kept || this.#kept.ask.source !== ask.source || this.#kept.key !== key) this.#kept = { key, ask, answer: this.#request(ask) }
-    return this.#kept.answer
-  }
-
-  #request(ask: A): Promise<ProgramAnswers[K]> {
-    if (typeof Worker === 'undefined') return Promise.resolve(this.here(ask))
-    if (this.#pending) {
-      this.#worker?.terminate()
-      this.#worker = null
-      this.#pending.stale()
-      this.#pending = null
+    if (!this.#kept || this.#kept.ask.source !== ask.source || this.#kept.key !== key) {
+      const request = { ...ask, kind: this.kind } as unknown as Extract<ProgramRequest, { kind: K }>
+      this.#kept = { key, ask, answer: service.request(request, () => this.here(ask), this.none) }
     }
-    return new Promise((resolve) => {
-      const id = this.#nextId++
-      const onPage = (): void => {
-        if (this.#pending?.id !== id) return
-        this.#pending = null
-        this.#worker?.terminate()
-        this.#worker = null
-        resolve(this.here(ask))
-      }
-      try {
-        this.#worker ??= new Worker(new URL('./program.worker.ts', import.meta.url), { type: 'module', name: `program-${this.kind}` })
-      } catch {
-        return resolve(this.here(ask))
-      }
-      this.#pending = { id, stale: () => resolve(this.none) }
-      this.#worker.onmessage = (e: MessageEvent<ProgramReply>) => {
-        if (this.#pending?.id !== e.data.id) return
-        if (e.data.kind !== this.kind) return onPage()
-        this.#pending = null
-        resolve(e.data.answer as ProgramAnswers[K])
-      }
-      // a worker that fails to load, or throws outside its own catch
-      this.#worker.onerror = onPage
-      this.#worker.postMessage({ ...ask, kind: this.kind, id } as ProgramRequest & { id: number })
-    })
+    return this.#kept.answer
   }
 }
 

@@ -186,7 +186,9 @@ projectTestsRun.ts); eslint enforces both.
   text editor's lint) and `factsFor` (all the Problems panel asks, [programFacts.ts](src/editor/program/programFacts.ts)).
   Hand it the program as the store holds it (text, table, scan time): `controllerFor` reads the whole text too. A new
   question is a function of the ask in [programWorkerAsk.ts](src/editor/program/programWorkerAsk.ts), which the worker
-  and the page's fallback both call. The worker runs the walker, so nothing from the program is evaluated there. Play
+  and the page's fallback both call. All three go to one worker ([programService.ts](src/editor/program/programService.ts)),
+  one at a time with the lint first, so the program is read once for all of them; a new kind of question joins that
+  queue. The worker runs the walker, so nothing from the program is evaluated there. Play
   still compiles on the page, once per attach.
 - **A running program's value table (`plcWatch`) may be a Proxy over a copy of the controller's memory**
   ([core/watchTable.ts](src/core/watchTable.ts), docs/plc-typed-storage.md "The watch table"). `table[key]` and
