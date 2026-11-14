@@ -4,32 +4,49 @@
 // Pure: the sheet (LadderView.tsx) keeps the index and polls the image; nothing here touches the DOM.
 
 import type { TagValue } from '../../../plc/types'
-import { watchElementKey, watchKeysOf } from '../../../core/watchTable'
+import { watchElementKey, watchHas, watchKeysOf } from '../../../core/watchTable'
 
 /** The names of a value table, indexed for lookup. This is the expensive part: a large program publishes thousands of
  *  values, and upper-casing every key eight times a second would take a tenth of a core on its own. The key set of a
  *  running program does not change, so the index is built when it does ({@link indexWatch}) and only read after that. */
 export interface WatchIndex {
-  exact: Map<string, string>
-  tails: Map<string, string | null>
+  /** every key by its upper-cased spelling */
+  readonly exact: Map<string, string>
+  /** a PROGRAM instance's variables by their bare names: null where two instances have the name */
+  readonly tails: Map<string, string | null>
   /** operand text -> key, for the texts whose key cannot change (no index that is itself a variable) */
   resolved: Map<string, string | null>
 }
 
+// Each part of the index is made when a lookup first needs it. A large program's table holds half a million values
+// and reading every key takes about a second, while a name spelled as the table spells it needs no index at all
+// (`watchLookup` asks the table first), and most of what a sheet shows is spelled that way.
 export function indexWatch(watch: Readonly<Record<string, TagValue>>): WatchIndex {
-  const exact = new Map<string, string>()
-  const tails = new Map<string, string | null>()
-  for (const k of watchKeysOf(watch)) {
-    const key = k.toUpperCase()
-    exact.set(key, k)
-    // a PROGRAM instance's variables are published as `Instance.Name`: a bare name answers when one instance has it
-    const dot = key.indexOf('.')
-    if (dot > 0) {
-      const tail = key.slice(dot + 1)
-      tails.set(tail, tails.has(tail) ? null : k)
+  let maps: { exact: Map<string, string>; tails: Map<string, string | null> } | null = null
+  const build = (): { exact: Map<string, string>; tails: Map<string, string | null> } => {
+    const exact = new Map<string, string>()
+    const tails = new Map<string, string | null>()
+    for (const k of watchKeysOf(watch)) {
+      const key = k.toUpperCase()
+      exact.set(key, k)
+      // a PROGRAM instance's variables are published as `Instance.Name`: a bare name answers when one instance has it
+      const dot = key.indexOf('.')
+      if (dot > 0) {
+        const tail = key.slice(dot + 1)
+        tails.set(tail, tails.has(tail) ? null : k)
+      }
     }
+    return { exact, tails }
   }
-  return { exact, tails, resolved: new Map() }
+  return {
+    get exact() {
+      return (maps ??= build()).exact
+    },
+    get tails() {
+      return (maps ??= build()).tails
+    },
+    resolved: new Map(),
+  }
 }
 
 export interface WatchLookup {
@@ -43,9 +60,10 @@ const NOTHING: WatchLookup = { valueOf: () => undefined, keyOf: () => null }
 
 export function watchLookup(watch: Readonly<Record<string, TagValue>> | null, index: WatchIndex | null): WatchLookup {
   if (!watch || !index) return NOTHING
-  const { exact, tails, resolved } = index
+  // (the index is read where it is needed, never up front: reading `exact` or `tails` is what builds them)
+  const { resolved } = index
   // (an element of an array too long to be among the keys is asked of the table: core/watchTable.ts)
-  const plain = (key: string): string | null => exact.get(key) ?? tails.get(key) ?? watchElementKey(watch, key)
+  const plain = (key: string): string | null => index.exact.get(key) ?? index.tails.get(key) ?? watchElementKey(watch, key)
   // as the image spells it: no spaces, and an index that is a variable (`A[i]`) as the number it holds now
   const spell = (text: string): string =>
     text
@@ -53,6 +71,14 @@ export function watchLookup(watch: Readonly<Record<string, TagValue>> | null, in
       .toUpperCase()
       .replace(/\[([^\]]*)\]/g, (_, inner: string) => `[${inner.split(',').map((ix) => { const k = plain(ix); const v = k === null ? undefined : watch[k]; return typeof v === 'number' ? String(v) : ix }).join(',')}]`)
   const resolve = (text: string): string | null => {
+    const typed = text.replace(/\s+/g, '')
+    // a literal (`0`, `16#FF`, `T#5s`, `'text'`) is no variable: every key begins with a name, then `.`, `[` or its end
+    if (!/^[A-Za-z_][A-Za-z0-9_]*(?:[.[]|$)/.test(typed)) return null
+    // Spelled as the table spells it, which is what a name picked from a list is: the table answers and the index is
+    // not needed. Names differ by more than case, so this is the key the index would give.
+    if (watchHas(watch, typed)) return typed
+    const typedBit = /^(.+)\.([0-9]+)$/.exec(typed)
+    if (typedBit && watchHas(watch, typedBit[1]!) && typeof watch[typedBit[1]!] === 'number') return typed
     const key = spell(text)
     const found = plain(key)
     if (found !== null) return found

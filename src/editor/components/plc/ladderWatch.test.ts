@@ -70,3 +70,42 @@ describe('whether a newer image changes what the sheet shows', () => {
     expect(shownUnchanged(new Map(), read({ ...first, 'Main.Count': 9 }))).toBe(true)
   })
 })
+
+describe('the index of a value table is built only when a lookup needs it', () => {
+  // a table that counts how often its keys are listed: listing them is what an index costs
+  const counted = (values: Record<string, number | boolean | string>): { table: Record<string, number | boolean | string>; listed: () => number } => {
+    let n = 0
+    const table = new Proxy(values, {
+      ownKeys: (t) => {
+        n++
+        return Reflect.ownKeys(t)
+      },
+    })
+    return { table, listed: () => n }
+  }
+  const VALUES = { Start: true, Count: 7, Word: 5, 'Zone[2].Run': true, 'Main.Local': 3 }
+
+  it('answers a name spelled as the table spells it, a bit of a word and a literal without listing a key', () => {
+    const { table, listed } = counted({ ...VALUES })
+    const { valueOf, keyOf } = watchLookup(table, indexWatch(table))
+    expect(valueOf('Start')).toBe(true)
+    expect(valueOf(' Count ')).toBe(7)
+    expect(valueOf('Zone[2].Run')).toBe(true)
+    expect(keyOf('Word.2')).toBe('Word.2')
+    expect(valueOf('Word.2')).toBe(true)
+    expect(valueOf('Word.1')).toBe(false)
+    for (const literal of ['0', '-1', '2.5', '16#FF', 'T#5s', "'text'", '?']) expect(keyOf(literal), literal).toBeNull()
+    expect(listed()).toBe(0)
+  })
+
+  it('gives the answers a full index gives, for every spelling', () => {
+    const { table, listed } = counted({ ...VALUES })
+    const { valueOf, keyOf } = watchLookup(table, indexWatch(table))
+    expect(keyOf('start')).toBe('Start') // another case: the index answers
+    expect(listed()).toBeGreaterThan(0)
+    expect(keyOf('Local')).toBe('Main.Local') // an instance's variable by its bare name
+    expect(keyOf('ZONE[2].RUN')).toBe('Zone[2].Run')
+    expect(valueOf('word.0')).toBe(true)
+    expect(keyOf('Nothing')).toBeNull()
+  })
+})
