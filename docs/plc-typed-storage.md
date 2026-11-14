@@ -155,7 +155,7 @@ The editor reads a running program's values from a copy of the arena, not from a
   elements by name (`table['Big[700]']`, `'Recs[900].Ok' in table`), in any case, from the shape. A reader that
   looks names up in its own index of the keys asks `watchElementKey` when the index misses, and `watchElementsUnder`
   for the first values under such an array (the Watch dock's rows). The elements are never listed, so nothing that
-  walks the keys pays for them. A table that travels as an object does not hold them.
+  walks the keys pays for them. When a program and its globals declare the same name, the program's is the one read. A table that travels as an object does not hold them.
 - **Where a table still travels.** A program on the walker, and several simulated controllers in one run (their
   tables are merged by name).
 

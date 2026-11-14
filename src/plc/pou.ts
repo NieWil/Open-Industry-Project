@@ -33,17 +33,38 @@ export interface WatchPlace {
  *  its variables elsewhere (the walker). */
 export function planWatch(steps: readonly { pou: Pou | null; prefix: string; blocks: boolean }[]): WatchPlan | null {
   const places = new Map<string, WatchPlace>()
-  // the arrays over the cap, by key without case: a later POU's takes an earlier one's place, as a listed key's does
+  // The arrays over the cap, by key without case. Two POUs listed under one prefix (a program and its globals) may
+  // declare the same name, and one name is one variable to a reader. An earlier POU's range goes when a later one
+  // declares the name, so a local's index out of its bounds does not read the global. A range is not added when an
+  // earlier POU declares the name, since that one's elements may be listed and the array would read as a mix of the two.
   const ranges = new Map<string, WatchRange>()
+  const earlier: { pou: Pou; prefix: string }[] = []
+  const variableOf = (key: string, prefix: string): string => key.slice(prefix.length).split(/[.[]/)[0]!
   let buffer: ArrayBuffer | null = null
   for (const s of steps) {
     if (!s.pou) continue
     if (!s.pou.placesInto) return null
     buffer = s.pou.placesInto(places, s.prefix, WATCH_ARRAY_MAX, s.blocks)
-    if (s.blocks || !s.pou.rangesInto) continue
+    if (s.blocks) continue
+    const pou = s.pou
+    const same = earlier.filter((e) => e.prefix === s.prefix)
+    // (the names whose earlier variable was itself a range: nothing of it is listed, so the later one's is taken)
+    const replaced = new Set<string>()
+    if (same.length > 0) {
+      for (const [k, r] of ranges) {
+        const name = variableOf(r.key, s.prefix)
+        if (!r.key.startsWith(s.prefix) || pou.typeOf(name) === undefined) continue
+        ranges.delete(k)
+        replaced.add(name.toUpperCase())
+      }
+    }
     const found: WatchRange[] = []
-    s.pou.rangesInto(found, s.prefix, WATCH_ARRAY_MAX)
-    for (const r of found) ranges.set(r.key.toUpperCase(), r)
+    pou.rangesInto?.(found, s.prefix, WATCH_ARRAY_MAX)
+    for (const r of found) {
+      const name = variableOf(r.key, s.prefix)
+      if (replaced.has(name.toUpperCase()) || !same.some((e) => e.pou.typeOf(name) !== undefined)) ranges.set(r.key.toUpperCase(), r)
+    }
+    earlier.push({ pou, prefix: s.prefix })
   }
   if (!buffer) return null
   const keys = [...places.keys()]

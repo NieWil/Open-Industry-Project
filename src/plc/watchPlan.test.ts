@@ -172,6 +172,34 @@ END_CONFIGURATION`)
     expect(watchElementKey(table, 'BIG[700]')).toBe('Main.Big[700]')
   })
 
+  it('reads a name a program and its globals both declare as the program’s, when one of the two is too long to list', () => {
+    const table = (src: string): Readonly<Record<string, TagValue>> => {
+      const program = compile(src)
+      program.scan(0.1)
+      expect(difference(program)).toBe('')
+      const plan = program.watchPlan!()!
+      return memoryTable(plan.layout, plan.memory.slice(0))
+    }
+    // a short local over a long global: an index outside the local is nothing, not the global's element
+    const short = table(`VAR_GLOBAL Big : ARRAY[0..999] OF INT := [1000(7)]; END_VAR
+VAR Big : ARRAY[0..3] OF INT; END_VAR
+Big[1] := 5;`)
+    expect(short['Big[1]']).toBe(5)
+    expect('Big[700]' in short).toBe(false)
+    expect(watchElementsUnder(short, 'Big', 8)).toBeNull()
+    // a long local over a long global: the local's
+    const long = table(`VAR_GLOBAL Big : ARRAY[0..999] OF INT := [1000(7)]; END_VAR
+VAR Big : ARRAY[0..999] OF INT; END_VAR
+Big[700] := 5;`)
+    expect(long['Big[700]']).toBe(5)
+    expect(long['Big[1]']).toBe(0)
+    // a long local over a short global: the global's elements are the listed ones, so the local's are not mixed in
+    const mixed = table(`VAR_GLOBAL Big : ARRAY[0..3] OF INT; END_VAR
+VAR Big : ARRAY[0..999] OF INT; END_VAR
+Big[700] := 5;`)
+    expect('Big[700]' in mixed).toBe(false)
+  })
+
   it('lists the first values under an array too long to list, and counts the rest', () => {
     const program = compile(`TYPE Rec : STRUCT Ok : BOOL; Grid : ARRAY[1..2, 0..1] OF INT; END_STRUCT END_TYPE
 VAR
