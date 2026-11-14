@@ -8,6 +8,7 @@ import { EditorView, keymap, placeholder, runScopeHandlers } from '@codemirror/v
 import { unfoldAll } from '@codemirror/language'
 import { changedSpan } from '../../../core/textDiff'
 import type { TagValue, WatchInstance } from '../../../plc'
+import { docText } from '../../program/docText'
 import { pushWatchValues, stExtensions } from '../../program/stLang'
 import { foldDeclarations } from '../../program/stFolding'
 import { watchNameAt, watchNameOfSelection } from '../../program/plcWatchList'
@@ -215,7 +216,7 @@ export const StCodeEditor = forwardRef<StCodeEditorHandle, StCodeEditorProps>(fu
     const v = new EditorView({
       parent: host.current,
       state: EditorState.create({
-        doc: initialRef.current,
+        doc: docText(initialRef.current),
         extensions: [
           keymap.of([{ key: 'Mod-Enter', preventDefault: true, run: runKey }]),
           // undo and redo ask the panel first: a program edit newer than anything typed here is taken back whole by
@@ -272,7 +273,7 @@ export const StCodeEditor = forwardRef<StCodeEditorHandle, StCodeEditorProps>(fu
     setValue: (value: string) => {
       const v = view.current
       if (!v || value === v.state.doc.toString()) return
-      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } })
+      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: docText(value) } })
     },
     applyEdit: (value: string) => {
       const v = view.current
@@ -281,7 +282,7 @@ export const StCodeEditor = forwardRef<StCodeEditorHandle, StCodeEditorProps>(fu
       if (value === current) return
       const { from, removed, inserted } = changedSpan(current, value)
       v.dispatch({
-        changes: { from, to: from + removed, insert: inserted },
+        changes: { from, to: from + removed, insert: docText(inserted) },
         annotations: [Transaction.addToHistory.of(false), isolateHistory.of('full')],
       })
     },
@@ -291,7 +292,7 @@ export const StCodeEditor = forwardRef<StCodeEditorHandle, StCodeEditorProps>(fu
       const current = v.state.doc.toString()
       if (value === current) return
       const { from, removed, inserted } = changedSpan(current, value)
-      v.dispatch({ changes: { from, to: from + removed, insert: inserted }, annotations: [isolateHistory.of('full')], userEvent: 'input.ladder' })
+      v.dispatch({ changes: { from, to: from + removed, insert: docText(inserted) }, annotations: [isolateHistory.of('full')], userEvent: 'input.ladder' })
     },
     // through the editor's own key handling, so it is exactly what Ctrl+Z / Ctrl+Y there would do, in a room too
     undo: () => {
