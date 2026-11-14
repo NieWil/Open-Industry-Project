@@ -259,6 +259,9 @@ export async function renderPackageThumbnails(pkgs: readonly PartPackage[]): Pro
 
     for (const { pkg, object } of items) {
       result.set(pkg.id, await ctx.capture(object))
+      // One card per task. A capture is a draw and a synchronous read back of its pixels, and a project with a few
+      // dozen parts of its own held the page for two seconds in one go, as the loading cover lifted.
+      await nextMacrotask()
     }
   } finally {
     // dispose in finally: a capture throw must not leak the GPU context - the caller
