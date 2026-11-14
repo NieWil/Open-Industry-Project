@@ -52,6 +52,8 @@ interface WatchSource {
   put?(key: string, value: WatchValue): boolean
   /** the source's spelling of an element it answers without listing ({@link watchElementKey}) */
   elementKey?(name: string): string | null
+  /** the unlisted values under a name ({@link watchElementsUnder}) */
+  elementsUnder?(name: string, max: number): { keys: string[]; more: number } | null
 }
 
 // a layout's ranges by the upper-case key their elements are under, and by that key without its program instance
@@ -78,18 +80,50 @@ function rangeIndexOf(layout: WatchLayout): { roots: Map<string, WatchRange>; ta
  *  without case, as the engine resolves them. `tails`: also a name written without its program instance, when one
  *  instance holds it. Null when `name` is no single value of a range. */
 function locate(layout: WatchLayout, name: string, tails: boolean): { key: string; addr: number; kind: number } | null {
+  const at = placeOf(layout, name, tails)
+  return at && 'kind' in at.shape ? { key: at.key, addr: at.addr, kind: at.shape.kind } : null
+}
+
+/** Where `name` is in a range, whatever it holds: an unlisted array itself, one of its elements, a member of one. */
+function placeOf(layout: WatchLayout, name: string, tails: boolean): { key: string; addr: number; shape: WatchShape } | null {
   if (!layout.ranges || layout.ranges.length === 0) return null
   const ix = rangeIndexOf(layout)
   const upper = name.toUpperCase()
+  const rangeAt = (head: string): WatchRange | undefined => ix.roots.get(head) ?? ((tails ? ix.tails.get(head) : undefined) || undefined)
   for (let at = upper.indexOf('['); at > 0; at = upper.indexOf('[', at + 1)) {
-    const head = upper.slice(0, at)
-    const range = ix.roots.get(head) ?? (tails ? ix.tails.get(head) : undefined)
+    const range = rangeAt(upper.slice(0, at))
     if (range) return descend(range, name.slice(at))
   }
-  return null
+  const whole = rangeAt(upper)
+  return whole ? { key: whole.key, addr: whole.addr, shape: whole.shape } : null
 }
 
-function descend(range: WatchRange, rest: string): { key: string; addr: number; kind: number } | null {
+/** how many values a shape holds */
+function valueCount(shape: WatchShape): number {
+  if ('kind' in shape) return 1
+  if ('fields' in shape) return shape.fields.reduce((n, f) => n + valueCount(f.shape), 0)
+  return shape.dims.reduce((n, d) => n * (d.hi - d.lo + 1), 1) * valueCount(shape.elem)
+}
+
+/** the keys of the values under `key`, in the order a listed array's are, until `out` holds `max` */
+function keysUnder(out: string[], key: string, shape: WatchShape, max: number): void {
+  if (out.length >= max) return
+  if ('kind' in shape) out.push(key)
+  else if ('fields' in shape) for (const f of shape.fields) keysUnder(out, `${key}.${f.name}`, f.shape, max)
+  else {
+    const at = shape.dims.map((d) => d.lo)
+    for (;;) {
+      if (out.length >= max) return
+      keysUnder(out, `${key}[${at.join(',')}]`, shape.elem, max)
+      let k = at.length - 1
+      while (k >= 0 && at[k] === shape.dims[k]!.hi) at[k] = shape.dims[k--]!.lo
+      if (k < 0) return
+      at[k]!++
+    }
+  }
+}
+
+function descend(range: WatchRange, rest: string): { key: string; addr: number; shape: WatchShape } | null {
   let shape = range.shape
   let addr = range.addr
   let key = range.key
@@ -122,7 +156,7 @@ function descend(range: WatchRange, rest: string): { key: string; addr: number; 
       i = end
     } else return null // text after a value: one bit of a word, which its reader takes from the word
   }
-  return 'kind' in shape ? { key, addr, kind: shape.kind } : null
+  return { key, addr, shape }
 }
 
 // the position of each key of a layout, built when a key is first looked up and kept for the program's life
@@ -185,6 +219,14 @@ class MemorySource implements WatchSource {
 
   elementKey(name: string): string | null {
     return locate(this.#layout, name, true)?.key ?? null
+  }
+
+  elementsUnder(name: string, max: number): { keys: string[]; more: number } | null {
+    const at = placeOf(this.#layout, name, true)
+    if (!at || 'kind' in at.shape) return null
+    const keys: string[] = []
+    keysUnder(keys, at.key, at.shape, max)
+    return { keys, more: valueCount(at.shape) - keys.length }
   }
 
   put(key: string, value: WatchValue): boolean {
@@ -267,6 +309,10 @@ class OverlaySource implements WatchSource {
   elementKey(name: string): string | null {
     return watchElementKey(this.over, name)
   }
+
+  elementsUnder(name: string, max: number): { keys: string[]; more: number } | null {
+    return watchElementsUnder(this.over, name, max)
+  }
 }
 
 const SOURCE = Symbol('watch source')
@@ -341,6 +387,13 @@ export function watchHas(table: Readonly<Record<string, WatchValue>>, key: strin
  *  up in its own index of the keys first, and asks here when that misses. */
 export function watchElementKey(table: Readonly<Record<string, WatchValue>>, name: string): string | null {
   return sources.get(table)?.elementKey?.(name) ?? null
+}
+
+/** The values under `name` that the table answers but does not list, when `name` is an array too long to list, one
+ *  of its elements or a structure inside one: the first `max` keys in the order a listed array's are, and how many
+ *  more there are. Null for anything else. `name` is read as {@link watchElementKey} reads one. */
+export function watchElementsUnder(table: Readonly<Record<string, WatchValue>>, name: string, max: number): { keys: string[]; more: number } | null {
+  return sources.get(table)?.elementsUnder?.(name, max) ?? null
 }
 
 /** `table` with `key` already in it set to `value`, as a new table: written in place when the table is a copy of

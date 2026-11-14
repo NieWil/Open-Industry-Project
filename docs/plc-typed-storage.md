@@ -153,8 +153,9 @@ The editor reads a running program's values from a copy of the arena, not from a
 - **Arrays too long to list.** An array of more than `WATCH_ARRAY_MAX` elements is not among the keys. The layout
   carries it as a range: its key, its address and its shape (`WatchLayout.ranges`). The table answers one of its
   elements by name (`table['Big[700]']`, `'Recs[900].Ok' in table`), in any case, from the shape. A reader that
-  looks names up in its own index of the keys asks `watchElementKey` when the index misses. The elements are never
-  listed, so nothing that walks the keys pays for them. A table that travels as an object does not hold them.
+  looks names up in its own index of the keys asks `watchElementKey` when the index misses, and `watchElementsUnder`
+  for the first values under such an array (the Watch dock's rows). The elements are never listed, so nothing that
+  walks the keys pays for them. A table that travels as an object does not hold them.
 - **Where a table still travels.** A program on the walker, and several simulated controllers in one run (their
   tables are merged by name).
 

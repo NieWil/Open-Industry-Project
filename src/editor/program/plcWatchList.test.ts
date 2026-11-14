@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { addToWatchList, addWatchNames, MAX_MEMBERS, onWatchListChange, parseWatchNames, readWatchList, resolveWatch, watchListKey, watchNameAt, watchNameOfSelection } from './plcWatchList'
+import { memoryTable } from '../../core/watchTable'
+import { compile } from '../../plc/interpreter'
 
 const IMAGE = {
   Run: true,
@@ -111,5 +113,31 @@ describe('Add to Watch', () => {
   it("takes over the list a project kept under its name, once it has none of its own", () => {
     addToWatchList('Old Line', ['Eye'])
     expect(readWatchList(watchListKey('doc-old', 'Old Line', false), 'Old Line')).toEqual(['Eye'])
+  })
+})
+
+describe('an array too long to be among the image’s keys', () => {
+  // (the image a running program gives: a copy of its memory, read through its plan - core/watchTable.ts)
+  const image = (): Readonly<Record<string, number | boolean | string>> => {
+    const program = compile(`TYPE Rec : STRUCT Ok : BOOL; Grid : ARRAY[1..2, 0..1] OF INT; END_STRUCT END_TYPE
+VAR
+  Wide : ARRAY[0..999] OF Rec;
+END_VAR
+Wide[1].Grid[2,0] := 9;`)
+    program.scan(0.1)
+    const plan = program.watchPlan!()!
+    return memoryTable(plan.layout, plan.memory.slice(0))
+  }
+
+  it('answers one element by name, and lists the first values under the array or one of its elements', () => {
+    const table = image()
+    expect(resolveWatch('wide[1].grid[2,0]', table)).toMatchObject({ key: 'Wide[1].Grid[2,0]', value: 9, members: [] })
+    const element = resolveWatch('Wide[1]', table)
+    expect(element.members.map((m) => [m.key, m.value])).toEqual([['Wide[1].Ok', false], ['Wide[1].Grid[1,0]', 0], ['Wide[1].Grid[1,1]', 0], ['Wide[1].Grid[2,0]', 9], ['Wide[1].Grid[2,1]', 0]])
+    expect(element.more).toBe(0)
+    const whole = resolveWatch('Wide', table)
+    expect(whole.members.length).toBe(MAX_MEMBERS)
+    expect(whole.members[0]!.key).toBe('Wide[0].Ok')
+    expect(whole.more).toBe(5000 - MAX_MEMBERS)
   })
 })

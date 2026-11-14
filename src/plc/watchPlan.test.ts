@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { withWatchValue } from '../core/watchKeys'
-import { forEachWatchValue, memoryTable, watchElementKey } from '../core/watchTable'
+import { forEachWatchValue, memoryTable, watchElementKey, watchElementsUnder } from '../core/watchTable'
 import { CONFORMANCE_CASES } from './conformanceCases'
 import { compile, setScanEngine } from './interpreter'
 import type { CompiledProgram, TagValue } from './types'
@@ -170,6 +170,25 @@ END_CONFIGURATION`)
     expect(table['Main.Big[700]']).toBe(5)
     expect(table['Big[700]']).toBeUndefined()
     expect(watchElementKey(table, 'BIG[700]')).toBe('Main.Big[700]')
+  })
+
+  it('lists the first values under an array too long to list, and counts the rest', () => {
+    const program = compile(`TYPE Rec : STRUCT Ok : BOOL; Grid : ARRAY[1..2, 0..1] OF INT; END_STRUCT END_TYPE
+VAR
+  Wide : ARRAY[0..999] OF Rec;
+  n : INT;
+END_VAR
+Wide[1].Grid[2,0] := 9;`)
+    program.scan(0.1)
+    const plan = program.watchPlan!()!
+    const table = memoryTable(plan.layout, plan.memory.slice(0))
+    expect(watchElementsUnder(table, 'wide', 7)).toEqual({
+      keys: ['Wide[0].Ok', 'Wide[0].Grid[1,0]', 'Wide[0].Grid[1,1]', 'Wide[0].Grid[2,0]', 'Wide[0].Grid[2,1]', 'Wide[1].Ok', 'Wide[1].Grid[1,0]'],
+      more: 5000 - 7,
+    })
+    expect(watchElementsUnder(table, 'Wide[1].Grid', 64)).toEqual({ keys: ['Wide[1].Grid[1,0]', 'Wide[1].Grid[1,1]', 'Wide[1].Grid[2,0]', 'Wide[1].Grid[2,1]'], more: 0 })
+    expect(watchElementsUnder(table, 'Wide[1].Ok', 64)).toBeNull()
+    expect(watchElementsUnder(table, 'n', 64)).toBeNull()
   })
 
   it('has no plan on the walker, whose memory is not one buffer', () => {

@@ -9,7 +9,7 @@
 import { KEYWORDS } from '../../plc'
 import type { TagValue } from '../../plc'
 import { keySetOf } from '../../core/watchKeys'
-import { watchElementKey, watchKeysOf } from '../../core/watchTable'
+import { watchElementKey, watchElementsUnder, watchKeysOf } from '../../core/watchTable'
 import { currentDocumentId } from '../project/documentStore'
 import { ownSharedProject } from '../project/sharedProject'
 
@@ -99,7 +99,8 @@ export function resolveWatch(name: string, watch: Readonly<Record<string, TagVal
       if (keys.length < MAX_MEMBERS) keys.push(k)
       else more++
     }
-    under = { keys, more }
+    // an array too long to be among the keys (or a structure in one): its first elements, asked of the table
+    under = (keys.length === 0 ? watchElementsUnder(watch, name, MAX_MEMBERS) : null) ?? { keys, more }
     ix.members.set(prefix, under)
   }
   return { name, key: null, value: undefined, members: under.keys.map((key) => ({ key, value: watch[key]! })), more: under.more }
