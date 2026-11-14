@@ -56,11 +56,26 @@ const ONE_CHAR = new Set(['+', '-', '*', '/', '(', ')', '[', ']', '<', '>', '=',
  *  copies its operands into the ST it lowers to, so a diagnostic can point back at them). */
 export const lexedSource = new WeakMap<readonly Token[], string>()
 
+// Characters are classed by code, not by a regular expression: these run once per character of the program, and
+// under the page's lockdown a regular expression's test costs several times what it does outside it (the lexer was
+// 0.9 s of a 25,000-line program's 2 s read). An empty string (past the end) is no class at all.
+const isLetterCode = (k: number): boolean => (k >= 65 && k <= 90) || (k >= 97 && k <= 122)
+const isDigitCode = (k: number): boolean => k >= 48 && k <= 57
+function isDigit(c: string): boolean {
+  return isDigitCode(c.charCodeAt(0))
+}
+/** a digit, or the underscore that may stand between digits */
+function isDigitPart(c: string): boolean {
+  const k = c.charCodeAt(0)
+  return isDigitCode(k) || k === 95
+}
 function isIdentStart(c: string): boolean {
-  return /[A-Za-z_]/.test(c)
+  const k = c.charCodeAt(0)
+  return isLetterCode(k) || k === 95
 }
 function isIdentPart(c: string): boolean {
-  return /[A-Za-z0-9_]/.test(c)
+  const k = c.charCodeAt(0)
+  return isLetterCode(k) || isDigitCode(k) || k === 95
 }
 
 /** Milliseconds per duration unit: IEC 2nd edition's, the ones MATIEC (and so OpenPLC) reads. */
@@ -184,7 +199,7 @@ function lexText(src: string): Token[] {
   const digitsFor = (base: number): string => {
     const ok = base === 16 ? /[0-9a-fA-F_]/ : base === 8 ? /[0-7_]/ : /[01_]/
     let out = ''
-    while (i < src.length && /[0-9a-zA-Z_]/.test(src[i]!)) {
+    while (i < src.length && isIdentPart(src[i]!)) {
       if (!ok.test(src[i]!)) throw new StError(`'${src[i]}' is not a base-${base} digit`, here())
       out += src[i]
       advance()
@@ -199,7 +214,7 @@ function lexText(src: string): Token[] {
    */
   const readNumber = (): { raw: string; num: number; real: boolean } => {
     let raw = ''
-    while (i < src.length && /[0-9_]/.test(src[i]!)) {
+    while (i < src.length && isDigitPart(src[i]!)) {
       raw += src[i]
       advance()
     }
@@ -214,11 +229,11 @@ function lexText(src: string): Token[] {
       return { raw: `${base}#${body}`, num: parseInt(body.replace(/_/g, ''), base), real: false }
     }
     let real = false
-    if (src[i] === '.' && /[0-9]/.test(src[i + 1] ?? '')) {
+    if (src[i] === '.' && isDigit(src[i + 1] ?? '')) {
       real = true
       raw += src[i]
       advance()
-      while (i < src.length && /[0-9_]/.test(src[i]!)) {
+      while (i < src.length && isDigitPart(src[i]!)) {
         raw += src[i]
         advance()
       }
@@ -231,7 +246,7 @@ function lexText(src: string): Token[] {
         raw += src[i]
         advance()
       }
-      while (i < src.length && /[0-9_]/.test(src[i]!)) {
+      while (i < src.length && isDigitPart(src[i]!)) {
         raw += src[i]
         advance()
       }
@@ -314,7 +329,7 @@ function lexText(src: string): Token[] {
     }
     // number. A '.' is only part of the literal when a digit follows it, so a
     // range dot (`1..5`) and member access stay separate tokens.
-    if (/[0-9]/.test(c)) {
+    if (isDigit(c)) {
       const pos = here()
       const lit = readNumber()
       toks.push({ kind: 'num', value: lit.raw, num: lit.num, real: lit.real, pos })
