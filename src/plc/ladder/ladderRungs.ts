@@ -12,6 +12,7 @@ import { lex } from '../lexer'
 import type { LdCoilMode, LdContactMode, LdElement, LdSection } from './ladder'
 import { builtinFbInfo, builtinFunctionInfo, printExit } from './ladder'
 import { parse } from '../parser'
+import { parseStructure } from '../structure'
 import type { RungElementOf, RungOf } from './ladderEdit'
 import type { Diagnostic } from '../types'
 
@@ -126,9 +127,13 @@ function routine(s: LdSection, all: readonly Diagnostic[]): LadderRoutine {
  * (checker.ts `diagnostics`), since type errors are found there, not in a parse, and a view wants them on their rung.
  */
 export function readLadder(source: string, checked: readonly Diagnostic[] = []): LadderRoutine[] {
-  const sink: Diagnostic[] = []
   try {
-    const sections = parse(lex(source), sink).ladder
+    // (the parse is shared with every other reader of this text - structure.ts - so its notes are copied before the
+    // checker's are added to them)
+    const structure = parseStructure(source)
+    if (!structure.ast) return []
+    const sink: Diagnostic[] = [...structure.notes]
+    const sections = structure.ast.ladder
     const seen = new Set(sink.map((d) => `${d.pos.offset}:${d.message}`))
     for (const d of checked) if (!seen.has(`${d.pos.offset}:${d.message}`)) sink.push(d)
     return sections.map((s) => routine(s, sink))
