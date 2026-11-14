@@ -10,6 +10,7 @@ import { bool, CALL_DEPTH_MESSAGE, isInt, MAX_CALL_DEPTH, num, wrap } from '../r
 import { generateBody, generateValue, type GenBody, type GenInternals, type GenScope, type TypedScope } from '../scanCodegen'
 import type { DataType, Decl, Expr, FbDef, FuncDef, Initializer, MethodDef, ScalarType, Stmt, StructInit, TagPort, TagValue, VarInfo } from '../types'
 import { isArray, isEnum, isInterface, isRef, isStruct, isUserFb, StError } from '../types'
+import type { WatchRange, WatchShape } from '../../core/watchTable'
 import { Arena, watchKindOf } from './arena'
 import { blocksOver } from './blocks'
 import { CLASS_FIELD, type Layouts, OWN_COPY, type PouLayout, type ScalarLayout, type TypeLayout, TypedUnsupported } from './layout'
@@ -776,6 +777,10 @@ export class TypedPou implements Pou {
     return this.#arena.buffer
   }
 
+  rangesInto(out: WatchRange[], prefix: string, maxArray: number): void {
+    for (const f of this.layout.fields) if (!f.hidden && !f.ref && f.iface === undefined) planRanges(out, `${prefix}${f.name}`, f.layout, this.base + f.off, maxArray)
+  }
+
   watchInto(out: Record<string, TagValue>, prefix: string, maxArray: number): void {
     const a = this.#arena
     for (const leaf of this.#plan(prefix, maxArray)) out[leaf.key] = a.load(leaf.slot, leaf.addr)
@@ -850,4 +855,52 @@ function planLeaves(out: Leaf[], key: string, layout: TypeLayout, addr: number, 
     }
     walk(0, [], addr)
   }
+}
+
+/** The arrays planLeaves leaves out (longer than `max`), each as its key, its address and its shape: the same walk,
+ *  keeping what that one skips. */
+function planRanges(out: WatchRange[], key: string, layout: TypeLayout, addr: number, max: number): void {
+  if (layout.kind === 'scalar') return
+  if (layout.kind === 'struct') {
+    if (layout.block || layout.fb) return
+    for (const f of layout.fields) if (!f.hidden && f.iface === undefined && !f.ref) planRanges(out, `${key}.${f.name}`, f.layout, addr + f.off, max)
+    return
+  }
+  const count = layout.dims.reduce((n, d) => n * (d.hi - d.lo + 1), 1)
+  if (count > max) {
+    const shape = shapeOf(layout)
+    if (shape) out.push({ key, addr, shape })
+    return
+  }
+  if (layout.elem.kind === 'scalar') return
+  const walk = (k: number, at: number[], a: number): void => {
+    if (k === layout.dims.length) return planRanges(out, `${key}[${at.join(',')}]`, layout.elem, a, max)
+    const d = layout.dims[k]!
+    for (let i = d.lo; i <= d.hi; i++) walk(k + 1, [...at, i], a + (i - d.lo) * layout.strides[k]!)
+  }
+  walk(0, [], addr)
+}
+
+// one shape per layout: a range per element of an array of structures shares it, on the wire too
+const shapes = new WeakMap<TypeLayout, WatchShape | null>()
+/** What planLeaves would list under a place, as a shape (core/watchTable.ts); null when it would list nothing. */
+function shapeOf(layout: TypeLayout): WatchShape | null {
+  let shape = shapes.get(layout)
+  if (shape !== undefined) return shape
+  if (layout.kind === 'scalar') shape = layout.pointer ? null : { kind: watchKindOf(layout.scalar) }
+  else if (layout.kind === 'struct') {
+    const fields: { name: string; off: number; shape: WatchShape }[] = []
+    if (!layout.block && !layout.fb) {
+      for (const f of layout.fields) {
+        const s = !f.hidden && f.iface === undefined && !f.ref ? shapeOf(f.layout) : null
+        if (s) fields.push({ name: f.name, off: f.off, shape: s })
+      }
+    }
+    shape = fields.length > 0 ? { fields } : null
+  } else {
+    const elem = shapeOf(layout.elem)
+    shape = elem ? { dims: layout.dims.map((d, k) => ({ lo: d.lo, hi: d.hi, stride: layout.strides[k]! })), elem } : null
+  }
+  shapes.set(layout, shape)
+  return shape
 }

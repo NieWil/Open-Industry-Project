@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import { keySetOf } from '../../core/watchKeys'
-import { watchKeysOf } from '../../core/watchTable'
+import { watchElementKey, watchKeysOf } from '../../core/watchTable'
 import type { TagValue } from '../../plc'
 import { deviceTags, devicesForTag, type DeviceTags, type DeviceTagUse, type TaggedPart } from '../../plc/bindings'
 
@@ -42,7 +42,12 @@ function upperKey(watch: Readonly<Record<string, TagValue>>, name: string): stri
     m = new Map(watchKeysOf(watch).map((k) => [k.toUpperCase(), k]))
     byUpper.set(set, m)
   }
-  return m.get(name.toUpperCase())
+  const listed = m.get(name.toUpperCase())
+  if (listed !== undefined) return listed
+  // an element of an array too long to be among the keys is asked of the table (core/watchTable.ts), and taken only
+  // under the name as written: a force never binds by a suffix
+  const element = watchElementKey(watch, name)
+  return element !== null && element.toUpperCase() === name.toUpperCase() ? element : undefined
 }
 
 /** The variable a tag name means: its alias's target (case-insensitive, as IEC names are), or the name itself. */

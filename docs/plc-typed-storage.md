@@ -150,6 +150,11 @@ The editor reads a running program's values from a copy of the arena, not from a
 - **The table.** The sim client wraps layout and bytes in a Proxy (`memoryTable`) that reads a value from its
   address when asked. A reader sees the `Readonly<Record<string, TagValue>>` it always did, and each table is the
   moment its bytes were copied.
+- **Arrays too long to list.** An array of more than `WATCH_ARRAY_MAX` elements is not among the keys. The layout
+  carries it as a range: its key, its address and its shape (`WatchLayout.ranges`). The table answers one of its
+  elements by name (`table['Big[700]']`, `'Recs[900].Ok' in table`), in any case, from the shape. A reader that
+  looks names up in its own index of the keys asks `watchElementKey` when the index misses. The elements are never
+  listed, so nothing that walks the keys pays for them. A table that travels as an object does not hold them.
 - **Where a table still travels.** A program on the walker, and several simulated controllers in one run (their
   tables are merged by name).
 

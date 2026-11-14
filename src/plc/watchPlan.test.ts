@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { forEachWatchValue, memoryTable } from '../core/watchTable'
+import { withWatchValue } from '../core/watchKeys'
+import { forEachWatchValue, memoryTable, watchElementKey } from '../core/watchTable'
 import { CONFORMANCE_CASES } from './conformanceCases'
 import { compile, setScanEngine } from './interpreter'
 import type { CompiledProgram, TagValue } from './types'
@@ -108,6 +109,67 @@ Count := Count + 1;`)
     program.scan(0.1)
     expect(then.n).toBe(1)
     expect(memoryTable(plan.layout, plan.memory.slice(0)).n).toBe(2)
+  })
+
+  it('answers the elements of an array too long to list, by name, without listing them', () => {
+    const program = compile(`TYPE Rec : STRUCT Ok : BOOL; N : DINT; Grid : ARRAY[1..2, 0..2] OF INT; END_STRUCT END_TYPE
+TYPE Zone : STRUCT Buf : ARRAY[0..599] OF REAL; END_STRUCT END_TYPE
+VAR_GLOBAL
+  Wide : ARRAY[0..999] OF Rec;
+END_VAR
+VAR
+  Big : ARRAY[10..1009] OF DINT;
+  Small : ARRAY[0..3] OF INT;
+  Zones : ARRAY[1..2] OF Zone;
+  i : INT;
+END_VAR
+Big[10] := 1;
+Big[709] := Big[709] + 7;
+Wide[900].Ok := TRUE;
+Wide[900].N := Wide[900].N - 3;
+Wide[999].Grid[2,1] := 42;
+Zones[2].Buf[599] := 1.5;`)
+    program.scan(0.1)
+    program.scan(0.1)
+    expect(difference(program)).toBe('')
+    const plan = program.watchPlan!()!
+    const table = memoryTable(plan.layout, plan.memory.slice(0))
+    expect(Object.keys(table).some((k) => k.startsWith('Big') || k.startsWith('Wide'))).toBe(false)
+    const memory = program.memory
+    for (const key of ['Big[10]', 'Big[709]', 'Big[1009]', 'Wide[900].Ok', 'Wide[900].N', 'Wide[999].Grid[2,1]', 'Wide[0].Grid[1,0]', 'Zones[2].Buf[599]', 'Zones[1].Buf[0]']) {
+      expect(key in table, key).toBe(true)
+      expect(table[key], key).toBe(memory[key])
+    }
+    expect(table['Big[709]']).toBe(14)
+    expect(table['Wide[999].Grid[2,1]']).toBe(42)
+    // out of bounds, a whole element, a member that is not there
+    for (const key of ['Big[9]', 'Big[1010]', 'Wide[900]', 'Wide[900].Nope', 'Wide[1].Grid[3,0]', 'Big[i]', 'Small[9]']) {
+      expect(key in table, key).toBe(false)
+      expect(table[key], key).toBeUndefined()
+    }
+    // a name in another case answers, and has the table's own spelling
+    expect(table['WIDE[900].ok']).toBe(true)
+    expect(watchElementKey(table, 'wide[900].OK')).toBe('Wide[900].Ok')
+    expect(watchElementKey(table, 'Small[1]')).toBeNull()
+    // a written value shows at once, as a listed one does
+    expect(withWatchValue(table, 'Big[709]', 99)['Big[709]']).toBe(99)
+  })
+
+  it('answers an instance variable’s elements without the instance, when one instance holds it', () => {
+    const program = compile(`PROGRAM Line
+VAR Big : ARRAY[0..999] OF INT; END_VAR
+Big[700] := 5;
+END_PROGRAM
+CONFIGURATION C
+  TASK T(INTERVAL := T#10ms, PRIORITY := 0);
+  PROGRAM Main WITH T : Line;
+END_CONFIGURATION`)
+    program.scan(0.01)
+    const plan = program.watchPlan!()!
+    const table = memoryTable(plan.layout, plan.memory.slice(0))
+    expect(table['Main.Big[700]']).toBe(5)
+    expect(table['Big[700]']).toBeUndefined()
+    expect(watchElementKey(table, 'BIG[700]')).toBe('Main.Big[700]')
   })
 
   it('has no plan on the walker, whose memory is not one buffer', () => {

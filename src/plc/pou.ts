@@ -6,6 +6,7 @@
 // storage, which is what lets both engines share them (docs/plc-typed-storage.md).
 
 import { canonicalAddress } from '../core/io/iecAddress'
+import type { WatchRange } from '../core/watchTable'
 import { controllerTags, identKey, isScalarType, passOrder, taskTable } from './program'
 import { bool, isInt, isString, nsOf, num, roundEven, str, strLimit, wrap } from './runtime'
 import type { Ast, CompiledProgram, DataType, Decl, Expr, ScalarType, SourcePos, Stmt, TagPort, TagValue, VarInfo, WatchPlan } from './types'
@@ -32,11 +33,17 @@ export interface WatchPlace {
  *  its variables elsewhere (the walker). */
 export function planWatch(steps: readonly { pou: Pou | null; prefix: string; blocks: boolean }[]): WatchPlan | null {
   const places = new Map<string, WatchPlace>()
+  // the arrays over the cap, by key without case: a later POU's takes an earlier one's place, as a listed key's does
+  const ranges = new Map<string, WatchRange>()
   let buffer: ArrayBuffer | null = null
   for (const s of steps) {
     if (!s.pou) continue
     if (!s.pou.placesInto) return null
     buffer = s.pou.placesInto(places, s.prefix, WATCH_ARRAY_MAX, s.blocks)
+    if (s.blocks || !s.pou.rangesInto) continue
+    const found: WatchRange[] = []
+    s.pou.rangesInto(found, s.prefix, WATCH_ARRAY_MAX)
+    for (const r of found) ranges.set(r.key.toUpperCase(), r)
   }
   if (!buffer) return null
   const keys = [...places.keys()]
@@ -47,7 +54,7 @@ export function planWatch(steps: readonly { pou: Pou | null; prefix: string; blo
     addrs[i] = p.addr
     kinds[i++] = p.kind
   }
-  return { layout: { keys, addrs, kinds }, memory: buffer }
+  return { layout: { keys, addrs, kinds, ...(ranges.size > 0 ? { ranges: [...ranges.values()] } : {}) }, memory: buffer }
 }
 
 /** A runnable POU: its own variable image, function-block instances included, and a body to scan. */
@@ -77,6 +84,9 @@ export interface Pou {
   /** Where watchInto's and blocksInto's values are, when its memory is one buffer (the typed engine's): each key's
    *  address and kind into `out`, in the order the two list them, and the buffer. Absent on the walker. */
   placesInto?(out: Map<string, WatchPlace>, prefix: string, maxArray: number, blocks: boolean): ArrayBuffer
+  /** The arrays placesInto leaves out for being longer than `maxArray`, each with its shape: a table read from a copy
+   *  of the buffer answers their elements by name (core/watchTable.ts). */
+  rangesInto?(out: WatchRange[], prefix: string, maxArray: number): void
   /** the declared scalar type of each key memory lists for it (CompiledProgram.memoryTypes) */
   typesInto(out: Record<string, string>, prefix: string): void
   /** Every scalar it holds (CompiledProgram.deepMemory): what memory lists, and inside every function block instance
@@ -149,10 +159,12 @@ export function coercerFor(type: ScalarType, maxLen: number | undefined, _pos: S
   return (v) => wrap(type, num(v))
 }
 
-/** An array bigger than this is left out of the watch table: it is posted from the sim worker every
- *  frame, and nobody reads a thousand rows. Its elements still run; they just do not light a rung. */
-export const WATCH_ARRAY_MAX = 512 // The cost is per frame, so this is not a number to keep raising -
-// a 2000-element array of UDTs would be tens of thousands of values a frame; reading elements on demand is the way past it)
+/** An array bigger than this is left out of the watch table's keys: a table that travels as an object is built and
+ *  cloned on every send, and every reader that indexes the keys pays for each one. A 2000-element array of UDTs
+ *  would be tens of thousands of values. Its elements are read by name instead, where the table is a copy of the
+ *  program's memory (planWatch's ranges). A table that travels as an object (the walker's, several controllers') does
+ *  not hold them. */
+export const WATCH_ARRAY_MAX = 512
 
 
 export type PouBuilder = (decls: Decl[], body: Stmt[]) => Pou

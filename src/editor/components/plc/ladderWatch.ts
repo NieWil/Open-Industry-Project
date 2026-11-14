@@ -4,7 +4,7 @@
 // Pure: the sheet (LadderView.tsx) keeps the index and polls the image; nothing here touches the DOM.
 
 import type { TagValue } from '../../../plc/types'
-import { watchKeysOf } from '../../../core/watchTable'
+import { watchElementKey, watchKeysOf } from '../../../core/watchTable'
 
 /** The names of a value table, indexed for lookup. This is the expensive part: a large program publishes thousands of
  *  values, and upper-casing every key eight times a second would take a tenth of a core on its own. The key set of a
@@ -44,7 +44,8 @@ const NOTHING: WatchLookup = { valueOf: () => undefined, keyOf: () => null }
 export function watchLookup(watch: Readonly<Record<string, TagValue>> | null, index: WatchIndex | null): WatchLookup {
   if (!watch || !index) return NOTHING
   const { exact, tails, resolved } = index
-  const plain = (key: string): string | null => exact.get(key) ?? tails.get(key) ?? null
+  // (an element of an array too long to be among the keys is asked of the table: core/watchTable.ts)
+  const plain = (key: string): string | null => exact.get(key) ?? tails.get(key) ?? watchElementKey(watch, key)
   // as the image spells it: no spaces, and an index that is a variable (`A[i]`) as the number it holds now
   const spell = (text: string): string =>
     text

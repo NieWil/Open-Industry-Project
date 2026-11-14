@@ -24,6 +24,22 @@ export interface WatchLayout {
   keys: string[]
   addrs: Uint32Array
   kinds: Uint8Array
+  /** The arrays too long to list (plc/pou.ts WATCH_ARRAY_MAX). Their elements are not in `keys`: a table answers one
+   *  by name, from the array's shape, when it is asked. */
+  ranges?: WatchRange[]
+}
+
+/** What a place of an unlisted array holds: one value (its WATCH_KIND), a structure's fields, or an array. */
+export type WatchShape =
+  | { kind: number }
+  | { fields: readonly { name: string; off: number; shape: WatchShape }[] }
+  | { dims: readonly { lo: number; hi: number; stride: number }[]; elem: WatchShape }
+
+/** One array left out of a layout's keys: the key its elements are written under (`Main.Big`), and where it starts. */
+export interface WatchRange {
+  key: string
+  addr: number
+  shape: WatchShape
 }
 
 /** What a table that is not a plain object reads from. */
@@ -34,6 +50,79 @@ interface WatchSource {
   forEach(fn: (key: string, value: WatchValue) => void): void
   /** set `key` in place, when the source can: a write shown before the frame that confirms it */
   put?(key: string, value: WatchValue): boolean
+  /** the source's spelling of an element it answers without listing ({@link watchElementKey}) */
+  elementKey?(name: string): string | null
+}
+
+// a layout's ranges by the upper-case key their elements are under, and by that key without its program instance
+const rangeIndexes = new WeakMap<WatchLayout, { roots: Map<string, WatchRange>; tails: Map<string, WatchRange | null> }>()
+function rangeIndexOf(layout: WatchLayout): { roots: Map<string, WatchRange>; tails: Map<string, WatchRange | null> } {
+  let ix = rangeIndexes.get(layout)
+  if (!ix) {
+    ix = { roots: new Map(), tails: new Map() }
+    for (const r of layout.ranges ?? []) {
+      const key = r.key.toUpperCase()
+      ix.roots.set(key, r)
+      const dot = key.indexOf('.')
+      if (dot > 0) {
+        const tail = key.slice(dot + 1)
+        ix.tails.set(tail, ix.tails.has(tail) ? null : r)
+      }
+    }
+    rangeIndexes.set(layout, ix)
+  }
+  return ix
+}
+
+/** Where the unlisted element `name` is: its key as the table spells it, its address and its kind. Names compare
+ *  without case, as the engine resolves them. `tails`: also a name written without its program instance, when one
+ *  instance holds it. Null when `name` is no single value of a range. */
+function locate(layout: WatchLayout, name: string, tails: boolean): { key: string; addr: number; kind: number } | null {
+  if (!layout.ranges || layout.ranges.length === 0) return null
+  const ix = rangeIndexOf(layout)
+  const upper = name.toUpperCase()
+  for (let at = upper.indexOf('['); at > 0; at = upper.indexOf('[', at + 1)) {
+    const head = upper.slice(0, at)
+    const range = ix.roots.get(head) ?? (tails ? ix.tails.get(head) : undefined)
+    if (range) return descend(range, name.slice(at))
+  }
+  return null
+}
+
+function descend(range: WatchRange, rest: string): { key: string; addr: number; kind: number } | null {
+  let shape = range.shape
+  let addr = range.addr
+  let key = range.key
+  let i = 0
+  while (i < rest.length) {
+    if ('dims' in shape) {
+      const end = rest.indexOf(']', i)
+      if (rest[i] !== '[' || end < 0) return null
+      const at = rest.slice(i + 1, end).split(',')
+      if (at.length !== shape.dims.length) return null
+      for (let k = 0; k < at.length; k++) {
+        const d = shape.dims[k]!
+        const n = /^-?[0-9]+$/.test(at[k]!) ? Number(at[k]) : NaN
+        if (!(n >= d.lo && n <= d.hi)) return null
+        addr += (n - d.lo) * d.stride
+      }
+      key += `[${at.map(Number).join(',')}]`
+      shape = shape.elem
+      i = end + 1
+    } else if ('fields' in shape) {
+      if (rest[i] !== '.') return null
+      let end = i + 1
+      while (end < rest.length && rest[end] !== '.' && rest[end] !== '[') end++
+      const want = rest.slice(i + 1, end).toUpperCase()
+      const field = shape.fields.find((f) => f.name.toUpperCase() === want)
+      if (!field) return null
+      addr += field.off
+      key += `.${field.name}`
+      shape = field.shape
+      i = end
+    } else return null // text after a value: one bit of a word, which its reader takes from the word
+  }
+  return 'kind' in shape ? { key, addr, kind: shape.kind } : null
 }
 
 // the position of each key of a layout, built when a key is first looked up and kept for the program's life
@@ -78,24 +167,32 @@ class MemorySource implements WatchSource {
   }
 
   has(key: string): boolean {
-    return indexOf(this.#layout).has(key)
+    return indexOf(this.#layout).has(key) || locate(this.#layout, key, false) !== null
   }
 
   get(key: string): WatchValue | undefined {
     const i = indexOf(this.#layout).get(key)
-    return i === undefined ? undefined : this.#at(i)
+    if (i !== undefined) return this.#read(this.#layout.addrs[i]!, this.#layout.kinds[i]!)
+    // an element of an array too long to list: read where its shape puts it
+    const at = locate(this.#layout, key, false)
+    return at ? this.#read(at.addr, at.kind) : undefined
   }
 
   forEach(fn: (key: string, value: WatchValue) => void): void {
-    const keys = this.#layout.keys
-    for (let i = 0; i < keys.length; i++) fn(keys[i]!, this.#at(i))
+    const { keys, addrs, kinds } = this.#layout
+    for (let i = 0; i < keys.length; i++) fn(keys[i]!, this.#read(addrs[i]!, kinds[i]!))
+  }
+
+  elementKey(name: string): string | null {
+    return locate(this.#layout, name, true)?.key ?? null
   }
 
   put(key: string, value: WatchValue): boolean {
     const i = indexOf(this.#layout).get(key)
-    if (i === undefined) return false
-    const addr = this.#layout.addrs[i]!
-    const kind = this.#layout.kinds[i]!
+    const at = i === undefined ? locate(this.#layout, key, false) : null
+    if (i === undefined && !at) return false
+    const addr = at ? at.addr : this.#layout.addrs[i!]!
+    const kind = at ? at.kind : this.#layout.kinds[i!]!
     if (kind === WATCH_KIND.STRING || typeof value === 'string') return false
     const n = typeof value === 'boolean' ? (value ? 1 : 0) : value
     switch (kind) {
@@ -112,9 +209,8 @@ class MemorySource implements WatchSource {
     return true
   }
 
-  #at(i: number): WatchValue {
-    const addr = this.#layout.addrs[i]!
-    switch (this.#layout.kinds[i]) {
+  #read(addr: number, kind: number): WatchValue {
+    switch (kind) {
       case WATCH_KIND.BOOL: return this.#u8[addr] !== 0
       case WATCH_KIND.I8: return this.#i8[addr]!
       case WATCH_KIND.U8: return this.#u8[addr]!
@@ -166,6 +262,10 @@ class OverlaySource implements WatchSource {
 
   forEach(fn: (key: string, value: WatchValue) => void): void {
     for (const k of this.keys) fn(k, this.get(k)!)
+  }
+
+  elementKey(name: string): string | null {
+    return watchElementKey(this.over, name)
   }
 }
 
@@ -233,6 +333,14 @@ export function forEachWatchValue<V extends WatchValue>(table: Readonly<Record<s
 export function watchHas(table: Readonly<Record<string, WatchValue>>, key: string): boolean {
   const source = sources.get(table)
   return source ? source.has(key) : Object.hasOwn(table, key)
+}
+
+/** The table's key for `name` when `name` is a value the table answers but does not list: an element of an array too
+ *  long to list (`Big[700]`, `Recs[900].Ok`). The name may be in any case, and without the program instance its
+ *  variable is under when one instance holds it. Null for anything else, a listed key included: a reader looks a name
+ *  up in its own index of the keys first, and asks here when that misses. */
+export function watchElementKey(table: Readonly<Record<string, WatchValue>>, name: string): string | null {
+  return sources.get(table)?.elementKey?.(name) ?? null
 }
 
 /** `table` with `key` already in it set to `value`, as a new table: written in place when the table is a copy of

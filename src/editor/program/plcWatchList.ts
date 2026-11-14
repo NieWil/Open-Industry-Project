@@ -9,7 +9,7 @@
 import { KEYWORDS } from '../../plc'
 import type { TagValue } from '../../plc'
 import { keySetOf } from '../../core/watchKeys'
-import { watchKeysOf } from '../../core/watchTable'
+import { watchElementKey, watchKeysOf } from '../../core/watchTable'
 import { currentDocumentId } from '../project/documentStore'
 import { ownSharedProject } from '../project/sharedProject'
 
@@ -57,7 +57,8 @@ function upperIndex(watch: Readonly<Record<string, TagValue>>): Map<string, stri
 
 /** Look one watched name up in the running image. */
 export function resolveWatch(name: string, watch: Readonly<Record<string, TagValue>>): WatchRow {
-  const key = upperIndex(watch).get(name.toUpperCase()) ?? null
+  // (an element of an array too long to be among the keys is asked of the table: core/watchTable.ts)
+  const key = upperIndex(watch).get(name.toUpperCase()) ?? watchElementKey(watch, name)
   if (key !== null) return { name, key, value: watch[key], members: [], more: 0 }
   // `Status.3`: one bit of a word, which the image holds as the word (the toggle and write paths read it the same way,
   // controller/program.ts)
