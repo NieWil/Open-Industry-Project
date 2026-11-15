@@ -29,6 +29,10 @@ export class FrameRoutingState {
   // parts whose visual root a frame basePose moved this run (a driven AGV); resetRunPoses returns
   // them to the authored transform on stop, even if the part exposes no rig appliers
   readonly baseDriven = new Set<string>()
+  /** A run has started since the last stop. A stop with none before it has no run pose to undo: the editor says
+   *  "not running" as it mounts, and resetting then built every jointed part's visual a second time and merged the
+   *  pool again, a quarter of a second on a 420-part line before the first frame. */
+  ranSinceStop = false
   /**
    * Rigs whose joints the editor poses even while the sim runs (applyIdlePose), with the sim's joint frames for them
    * ignored: a flex conveyor the walking character is pulling. Its shape changes every frame and the sim receives it
@@ -76,6 +80,8 @@ function sameSubPoses(a: SubPoseMap, b: SubPoseMap): boolean {
 export function applyBoxFrame(view: FrameRoutingHost, frame: BoxFrame): void {
   view.boxes.apply(frame)
   view.simHasFrame = true
+  // (a frame drives poses whoever sent it: a stop after one has them to undo)
+  view.routing.ranSinceStop = true
   // the worker's per-sensor beam results this step - probeBeam serves these while running
   view.lastBeamHits = frame.beamHits
   // the belt/roller/chain scroll advances by the delta of this clock (computed in tick), so a paused

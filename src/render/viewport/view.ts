@@ -1203,8 +1203,9 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     if (!running) {
       this.boxes.clear()
       this.applyIdleCargoFrame()
-      this.resetRunPoses()
-    }
+      if (this.routing.ranSinceStop) this.resetRunPoses()
+      this.routing.ranSinceStop = false
+    } else this.routing.ranSinceStop = true
   }
 
   /**
