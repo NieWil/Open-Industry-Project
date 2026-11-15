@@ -28,6 +28,7 @@
     "check-models": "node scripts/check-orphan-models.mjs",
     "optimize-assets": "node scripts/optimize-assets.mjs",
     "eager-census": "node scripts/eager-census.mjs",
+    "profile": "node e2e/probes/profile-steps.mjs",
     "eager-check": "node scripts/eager-check.mjs",
     "thumbnails": "node scripts/gen-thumbnails.mjs",
     "validate-project": "node scripts/validate-project.mjs",

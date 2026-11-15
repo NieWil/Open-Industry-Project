@@ -78,6 +78,8 @@ e2e/out/
 # Sourcemapped scratch build the eager-JS census makes (scripts/eager-census.mjs) - never dist/,
 # so a census cannot disturb a build something else is being measured against.
 /.eager-census
+# Unminified scratch build the step profiler makes (e2e/probes/profile-steps.mjs), for the same reason
+/.profile-build
 # The eager-JS jump check's and the census's last measurements on this machine (scripts/lib/eager-js.mjs)
 /.eager-js
 

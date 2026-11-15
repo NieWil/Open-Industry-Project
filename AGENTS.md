@@ -31,6 +31,7 @@ PLCs) built in TypeScript / three.js / Jolt-physics. It also ships a native surf
 | Desktop package | `npm run desktop:pack` (→ `apps/desktop/release/win-unpacked`) · `npm run desktop:dist` (NSIS installer; refuses a dirty tree or a HEAD not on origin/main, because an installer's build stamp claims collab rooms) · `node scripts/desktop-smoke.mjs <executable>` (boots a packaged build over CDP; fuses block `--inspect`, so Playwright can't drive it). See [apps/desktop/README.md](apps/desktop/README.md). A release is the hand-started [desktop.yml](.github/workflows/desktop.yml) workflow with `upload` ticked |
 | Edge speed | `npm run edge-bench` ([docs/cdn-runbook.md](docs/cdn-runbook.md)) |
 | Eager-JS census | `npm run eager-census` (the first-frame JS graph by source module; `-- --no-build`, `-- --top 40`) |
+| Step profile | `npm run profile` (where the time goes on reload, after the cover lifts, opening the PLC dock, the ladder face, Problems, Play and Stop, on an 800-part reference line; `-- play dock`, `-- --stations 1000`, `-- --project line.oip`, `-- --no-build`) |
 | Dev on prod assets | `OIP_DEV_PROD_ASSETS=1 npm run dev` (serves `/models` + `/textures` from `dist/`) |
 | ST oracles | `npm run st-oracle` (MATIEC) · `st-oracle:ed3` (STruC++) · `st-oracle:xml` · `st-oracle:openplc` · `st-oracle:dry`; on Windows `wsl -u root -- bash scripts/oracle-wsl.sh all` |
 | PLC in the loop | `npm run openplc-loop` (OpenPLC over Modbus TCP) · `npm run openplc-loop:cells` (OpenPLC as a second controller beside the program) · `npm run s7-loop` (snap7 over S7) |

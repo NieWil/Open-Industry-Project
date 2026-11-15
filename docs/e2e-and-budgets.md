@@ -58,6 +58,38 @@ sits well above the next-paint one on both renderers, and a bare page with a Web
 shows the same gap (`node e2e/probes/blank-input-latency.mjs`). The viewport redraws every frame, so that gap is the
 browser's frame pipeline, not any one handler.
 
+## Where the time goes at size
+
+The demo scene is a few dozen parts and a short program, and it hides whatever costs in proportion to a project's
+size. A lookup done once per rung operand, a compile done once per pooled mesh and an index of every value built
+once per image were each invisible on the demo and took seconds on a 420-part line with a 25,000-line program.
+
+`npm run profile` ([e2e/probes/profile-steps.mjs](../e2e/probes/profile-steps.mjs)) measures the editor at that
+size. It builds the reference line ([e2e/_reference.mjs](../e2e/_reference.mjs)) from the built-in parts: belt
+conveyors in rows with a sensor over each, every tag wired to a program that has a function block instance, an
+array of structures and two rungs per station. 400 stations by default: 800 parts and a 7,625-line program whose
+run holds about 210,000 values. `--stations 1000` reaches half a million values, and `--project line.oip` measures
+a real project.
+
+It then performs each step someone working in the editor does (reload, the seconds after the cover lifts, opening
+the PLC dock, the ladder face, the Problems panel, Play, Stop) and prints for each: how long until its result was
+on screen, the page's stalls, time working against time idle, and the functions that account for it. It runs
+headed, since headless has no WebGPU, on an unminified build of its own (`.profile-build/`), so the functions
+carry their names and `dist/` is left alone.
+
+Read it this way:
+
+- **Working against idle first.** A step that is mostly idle is waiting on something (the GPU, a worker, a frame),
+  and no amount of faster script will shorten it.
+- **Inclusive time says where to look, self time says what is slow.** A function high in both is the cost itself.
+- **Compare runs taken one after the other.** The same step moved by 40% across an afternoon on one machine. A
+  before and an after taken minutes apart can be compared; two taken an hour apart cannot.
+- **A step that grows faster than the line does is a defect.** Run it at 100 and at 400 stations: four times the
+  line should cost about four times as much. `largeProgramBudget.test.ts` holds the program's own stages to that.
+
+The helper it is built on ([e2e/_profile.mjs](../e2e/_profile.mjs)) records a CPU profile around any drive of the
+page and attributes a window of it by function, for a probe that asks a narrower question.
+
 ## Build budgets
 
 `npm run build` fails on two asset budgets, the cover-gating asset set (building + dock bay) and total
