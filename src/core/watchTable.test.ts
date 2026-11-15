@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { keySetOf, markKeySet, withWatchValue } from './watchKeys'
-import { forEachWatchValue, memoryTable, overlayTable, putWatchValue, WATCH_KIND, watchHas, watchIsEmpty, watchKeyCount, watchKeysOf, type WatchLayout } from './watchTable'
+import { forEachWatchValue, lazyTable, memoryTable, overlayTable, putWatchValue, WATCH_KIND, watchHas, watchIsEmpty, watchKeyCount, watchKeysOf, type WatchLayout } from './watchTable'
 
 // A table read from a copy of a controller's memory must answer as the object it replaces, for every way a reader
 // asks. (That it holds the same values as the engine's own table is the engine's test: plc/watchPlan.test.ts.)
@@ -107,5 +107,28 @@ describe('one table laid over another', () => {
     expect('Cell2::Go' in table).toBe(true)
     expect(table.Nope).toBeUndefined()
     expect(watchKeyCount(table)).toBe(Object.keys(spread).length)
+  })
+})
+
+describe('a table built when it is read', () => {
+  it('is not built until something reads it, and then once', () => {
+    let builds = 0
+    const table = lazyTable(() => {
+      builds++
+      return { Run: true, Count: 7, 'Zone[1].Speed': 1.5 }
+    })
+    expect(builds).toBe(0)
+    expect(table['Count']).toBe(7)
+    expect(builds).toBe(1)
+    expect('Run' in table).toBe(true)
+    expect('Nothing' in table).toBe(false)
+    expect(table['Nothing']).toBeUndefined()
+    expect(watchKeysOf(table)).toEqual(['Run', 'Count', 'Zone[1].Speed'])
+    expect(watchHas(table, 'Zone[1].Speed')).toBe(true)
+    expect(watchKeyCount(table)).toBe(3)
+    const seen: string[] = []
+    forEachWatchValue(table, (k, v) => seen.push(`${k}=${String(v)}`))
+    expect(seen).toEqual(['Run=true', 'Count=7', 'Zone[1].Speed=1.5'])
+    expect(builds).toBe(1)
   })
 })

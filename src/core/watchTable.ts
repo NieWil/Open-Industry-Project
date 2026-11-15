@@ -345,6 +345,43 @@ export function memoryTable(layout: WatchLayout, bytes: ArrayBuffer): Readonly<R
   return tableOf(new MemorySource(layout, bytes))
 }
 
+/** A table worked out the first time anything is read from it. */
+class LazySource implements WatchSource {
+  #table: Readonly<Record<string, WatchValue>> | null = null
+  #keys: readonly string[] | null = null
+
+  constructor(private readonly build: () => Readonly<Record<string, WatchValue>>) {}
+
+  #built(): Readonly<Record<string, WatchValue>> {
+    return (this.#table ??= this.build())
+  }
+  get keys(): readonly string[] {
+    return (this.#keys ??= watchKeysOf(this.#built()))
+  }
+  has(key: string): boolean {
+    return watchHas(this.#built(), key)
+  }
+  get(key: string): WatchValue | undefined {
+    const table = this.#built()
+    return watchHas(table, key) ? table[key] : undefined
+  }
+  forEach(fn: (key: string, value: WatchValue) => void): void {
+    forEachWatchValue(this.#built(), fn)
+  }
+  elementKey(name: string): string | null {
+    return watchElementKey(this.#built(), name)
+  }
+}
+
+/**
+ * The table `build` makes, made when it is first read and not before. For a table that is costly to build and often
+ * replaced unread: the values a program starts from, shown until its first frame arrives a moment later, are every
+ * value it holds, and nothing reads them unless a view of the program is open.
+ */
+export function lazyTable(build: () => Readonly<Record<string, WatchValue>>): Readonly<Record<string, WatchValue>> {
+  return tableOf(new LazySource(build))
+}
+
 /** `{ ...under, ...over }` without copying `over`: a large table with a few values of another kind beside it. */
 export function overlayTable(under: Readonly<Record<string, WatchValue>>, over: Readonly<Record<string, WatchValue>>): Readonly<Record<string, WatchValue>> {
   return tableOf(new OverlaySource(under, over))

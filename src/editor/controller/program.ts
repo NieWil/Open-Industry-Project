@@ -4,6 +4,7 @@
 // and the link-side hooks come in as narrow dependencies (ProgramDeps).
 
 import { controllerOf, controllerTag, partsForController } from '../../core/io/controllerTag'
+import { lazyTable } from '../../core/watchTable'
 import type { SceneJSON } from '../../core/types'
 import type { PlcFault, SimClient } from '../../sim/client'
 import { commsTags, ControllerError, controllerRuns, LocalPlcLink, runnableSource, StError, unhandledProgramTags } from '../../plc'
@@ -175,10 +176,15 @@ export function runProgram(
     }
   }
   shipDriven(p, ec.sim, built)
-  // every controller's variables are one table, the default controller's own names winning over another's copy
-  const watch: Record<string, TagValue> = {}
-  for (const b of built) if (b.controller !== null) Object.assign(watch, b.link.watch)
-  for (const b of built) if (b.controller === null) Object.assign(watch, b.link.watch)
+  // Every controller's variables are one table, the default controller's own names winning over another's copy.
+  // Built when it is read: it is every value the programs hold (a third of a second on an 800-part line), it stands
+  // only until the first frame, and nothing reads it then unless a view of the program is open or a force is held.
+  const watch = lazyTable(() => {
+    const all: Record<string, TagValue> = {}
+    for (const b of built) if (b.controller !== null) Object.assign(all, b.link.watch)
+    for (const b of built) if (b.controller === null) Object.assign(all, b.link.watch)
+    return all
+  })
   // A force names a variable of the program it was set on, and outlives Stop. An attach keeps the ones this program
   // still has with the same kind of value, and drops the rest, so nothing reports a force that holds nothing (or holds
   // the wrong type). The ones still held show on the toolbar's count; a dropped one gets a notice, since it would
