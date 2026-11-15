@@ -6,14 +6,15 @@ export class StoreSubscribers {
   readonly listeners = new Set<() => void>()
   // view/controller subscribers, notified on every change including the high-frequency
   // transient drag/motion updates that `listeners` (React) skips
-  private readonly viewListeners = new Set<() => void>()
+  private readonly viewListeners = new Set<(transient: boolean) => void>()
 
   subscribe(cb: () => void): () => void {
     this.listeners.add(cb)
     return () => this.listeners.delete(cb)
   }
 
-  subscribeView(cb: () => void): () => void {
+  /** `transient` tells the listener a drag's own move from a lasting change (a commit, a load, a peer's edit) */
+  subscribeView(cb: (transient: boolean) => void): () => void {
     this.viewListeners.add(cb)
     return () => this.viewListeners.delete(cb)
   }
@@ -22,7 +23,7 @@ export class StoreSubscribers {
   notify(transient: boolean): void {
     // the view always tracks the live scene (smooth gizmo drag); React skips the
     // transient stream and re-renders only on structural changes / commits
-    for (const cb of this.viewListeners) cb()
+    for (const cb of this.viewListeners) cb(transient)
     if (!transient) for (const cb of this.listeners) cb()
   }
 }

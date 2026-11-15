@@ -149,7 +149,7 @@ export class EditorStore {
   subscribe = (cb: () => void): (() => void) => this.subscribers.subscribe(cb)
 
   /** view/controller subscription: fires on every change, transient updates included */
-  subscribeView = (cb: () => void): (() => void) => this.subscribers.subscribeView(cb)
+  subscribeView = (cb: (transient: boolean) => void): (() => void) => this.subscribers.subscribeView(cb)
 
   /** @internal test hook - React's subscribers (e2e/verify-crash-boundary notifies them by hand) */
   get listeners(): ReadonlySet<() => void> {

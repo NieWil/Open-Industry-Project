@@ -1135,7 +1135,12 @@ export class EditorController {
     this.sim.setPaused(s.paused) // restore the user's intent (normally resume)
   }
 
-  private onStoreChange = (): void => {
+  private onStoreChange = (transient = false): void => {
+    // A scene that arrives during an open drag or reposition from anything but the gesture's own moves (a project
+    // load, a folder reload, an agent's edit). Each move rebuilds the scene from the one the gesture started on, so
+    // the next move would write that old scene over the new one and the release would commit it. A gesture's own
+    // moves are transient and its release closes it before committing, so a lasting scene change here is not its own.
+    if (!transient && this.store.getState().scene !== this.prevScene) dragOps.dropOvertakenGesture(this)
     const s = this.store.getState()
     // a part removed out from under an in-flight reposition: drop the gesture
     const repos = this.repo.active
@@ -1849,8 +1854,8 @@ export class EditorController {
     repositionOps.commitReposition(this.repo, this)
   }
 
-  cancelReposition(): void {
-    repositionOps.cancelReposition(this.repo, this)
+  cancelReposition(revert = true): void {
+    repositionOps.cancelReposition(this.repo, this, revert)
   }
 
   // --- pointer -------------------------------------------------------------

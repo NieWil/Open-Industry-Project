@@ -1021,7 +1021,18 @@ export function finishBand(ec: EditorController, drag: Drag & { kind: 'band' }, 
   }
 }
 
-export function cancelActiveDrag(ec: EditorController): void {
+/**
+ * End an open drag or reposition that writes the scene, because the scene was replaced by something other than its
+ * own moves (EditorController.onStoreChange). The new scene stays as it is: nothing is reverted.
+ */
+export function dropOvertakenGesture(ec: EditorController): void {
+  const drag = ec.drag
+  if (drag && 'start' in drag && drag.start !== undefined) cancelActiveDrag(ec, false)
+  if (ec.reposition) ec.cancelReposition(false)
+}
+
+/** `revert: false` ends the drag and leaves the scene as it is now (dropOvertakenGesture) */
+export function cancelActiveDrag(ec: EditorController, revert = true): void {
   const drag = ec.drag
   if (!drag) return
   ec.drag = null
@@ -1033,8 +1044,9 @@ export function cancelActiveDrag(ec: EditorController): void {
   } else if (drag.kind === 'rigGizmo') {
     ec.view.endRobotDrag() // transient pose held by the visual; nothing to revert in the scene…
     // …except a tool-size handle drag's streamed param transients - restore the pre-drag scene (RMB cancel)
-    if (drag.sizeParam !== undefined && drag.start) ec.store.setTransient(drag.start)
-    else ec.noteRigJog(drag.id) // the pose the drag reached stays held: say so
+    if (drag.sizeParam !== undefined && drag.start) {
+      if (revert) ec.store.setTransient(drag.start)
+    } else ec.noteRigJog(drag.id) // the pose the drag reached stays held: say so
   } else if (drag.kind === 'rigNode') {
     ec.view.endGizmoDrag()
     ec.view.setTransformReadout(null)
@@ -1048,7 +1060,7 @@ export function cancelActiveDrag(ec: EditorController): void {
     ec.view.setTransformReadout(null)
     ec.view.showVertexMarkers(null, null)
     ec.vsnap = null
-    ec.store.setTransient(drag.start)
+    if (revert) ec.store.setTransient(drag.start)
   } else {
     if (drag.kind === 'gizmo' || drag.kind === 'rotate') ec.view.endGizmoDrag()
     if (drag.kind === 'gizmo' || drag.kind === 'rotate') setDraggedBodyFrozen(ec, drag.ids, false)
@@ -1059,8 +1071,10 @@ export function cancelActiveDrag(ec: EditorController): void {
     // a cancelled Shift+drag duplicate discards the staged copies and re-selects the originals
     // (drag.start holds the clones); every other drag just reverts its transient scene.
     const dup = drag.kind === 'gizmo' || drag.kind === 'rotate' ? drag.dup : undefined
-    if (dup) ec.store.setTransient(dup.before, dup.origSelection)
-    else ec.store.setTransient(drag.start)
+    if (revert) {
+      if (dup) ec.store.setTransient(dup.before, dup.origSelection)
+      else ec.store.setTransient(drag.start)
+    }
   }
   ec.resetSnap()
 }

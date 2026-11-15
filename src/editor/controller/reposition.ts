@@ -166,20 +166,23 @@ export function turnReposition(r: RepositionState, ec: EditorController, step: n
   if (ec.lastPointer) updateReposition(r, ec, ec.lastPointer.x, ec.lastPointer.y, alt)
 }
 
-export function cancelReposition(r: RepositionState, ec: EditorController): void {
+/** `revert: false` ends the gesture and leaves the scene as it is now (dragOps.dropOvertakenGesture) */
+export function cancelReposition(r: RepositionState, ec: EditorController, revert = true): void {
   const repos = r.active
   if (!repos) return
   r.active = null
   ec.view.setTransformReadout(null) // clear the face-snap alignment readout
-  // restore every moved body to its pre-gesture pose, then release them (matches the scene revert)
   const moved = [repos.id, ...repos.carried]
-  const back = new Map<string, SnapPose>()
-  for (const id of moved) {
-    const p = repos.start.parts.find((sp) => sp.id === id)
-    if (p) back.set(id, { position: p.position, rotationY: p.rotationY })
+  if (revert) {
+    // restore every moved body to its pre-gesture pose, then release them (matches the scene revert)
+    const back = new Map<string, SnapPose>()
+    for (const id of moved) {
+      const p = repos.start.parts.find((sp) => sp.id === id)
+      if (p) back.set(id, { position: p.position, rotationY: p.rotationY })
+    }
+    dragOps.syncDraggedBody(ec, moved, back, true)
   }
-  dragOps.syncDraggedBody(ec, moved, back, true)
   dragOps.setDraggedBodyFrozen(ec, moved, false)
-  ec.store.setTransient(repos.start)
+  if (revert) ec.store.setTransient(repos.start)
   ec.resetSnap()
 }

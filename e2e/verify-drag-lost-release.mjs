@@ -169,6 +169,50 @@ async function main() {
     const meta = await snapDrag('Meta')
     check('Cmd (Meta) turns it off the same way', fractional(meta) && Math.abs(meta - ctrl) < 1e-6, `${meta.toFixed(3)} vs Ctrl ${ctrl.toFixed(3)}`)
 
+    // A scene that arrives mid-drag from somewhere else (an agent's edit, a folder reload, a project load) ends the
+    // drag and stays whole. Each move rebuilds the scene from the one the drag started on, so the drag used to write
+    // that old scene back over the arrival on its next move and commit it on release.
+    const sceneNow = () => page.evaluate(() => window.__oip.store.getState().scene.parts.map((p) => `${p.id}@${p.position[0].toFixed(2)}`).join(' '))
+    const partIds = () => page.evaluate(() => window.__oip.store.getState().scene.parts.map((p) => p.id).join(' '))
+    await page.evaluate(() => {
+      const st = window.__oip.store
+      st.setState({ gridSnap: { ...st.getState().gridSnap, enabled: false } })
+    })
+    const far2 = at(200)
+    const xHere = await posX(page)
+    await beginDrag(80)
+    check('setup: a drag is open for the scene load', (await dragOpen(page)) && Math.abs((await posX(page)) - xHere) > 0.05)
+    await page.evaluate((x) => {
+      const { store } = window.__oip
+      const sc = store.getState().scene
+      const belt = { ...sc.parts[0], position: [x, 0.5, 0] }
+      store.loadScene({ ...sc, parts: [belt, { ...belt, id: 'other1', name: 'Other', position: [x, 0.5, 4] }] })
+      store.select('belt1')
+    }, xHere)
+    check('a scene load ends the drag', !(await dragOpen(page)))
+    await page.mouse.move(far2.x, far2.y)
+    await page.waitForTimeout(100)
+    await page.mouse.up()
+    await page.waitForTimeout(150)
+    const loaded = `belt1@${xHere.toFixed(2)} other1@${xHere.toFixed(2)}`
+    check('and the loaded scene stays as loaded', (await sceneNow()) === loaded, `${await sceneNow()} vs ${loaded}`)
+
+    await page.waitForTimeout(300)
+    await beginDrag(80)
+    check('setup: a drag is open for the edit from elsewhere', (await dragOpen(page)) && Math.abs((await posX(page)) - xHere) > 0.05)
+    await page.evaluate(() => {
+      const { store } = window.__oip
+      const sc = store.getState().scene
+      store.commit('Add part', { ...sc, parts: [...sc.parts, { ...sc.parts[0], id: 'belt2', name: 'Belt 2', position: [0, 0.5, 8] }] })
+    })
+    check('an edit from elsewhere ends the drag', !(await dragOpen(page)))
+    await page.mouse.move(far2.x, far2.y)
+    await page.waitForTimeout(100)
+    check('the next move leaves the added part in the scene', (await partIds()) === 'belt1 other1 belt2', await partIds())
+    await page.mouse.up()
+    await page.waitForTimeout(150)
+    check('and so does the release', (await partIds()) === 'belt1 other1 belt2', await partIds())
+
     // Camera navigation loses its release the same way: OrbitControls kept the pointer, so after Alt-Tab the camera
     // went on panning as the mouse hovered. A plain middle drag pans (core/navigation.ts). The view hands
     // OrbitControls the missed release on a no-button move or on blur; the camera stays where the drag left it.
