@@ -614,6 +614,15 @@ export async function compileStaged(view: WarmHost, gpu: WebGPURenderer): Promis
     return // nothing new to warm
   }
   for (const o of deferred) o.visible = true
+  // Merge before compiling. Every deferred part was root-invisible when the load-time rebuild ran, so the pool
+  // has merged none of their hardware yet (see the `finally` below). Compiled as they stand, each bank is an item
+  // of its own: 4,400 of the 4,843 on an 800-part line, 2 s of per-item work for meshes the merge hides a moment
+  // later, while the 11 pooled copies that draw in their place are new meshes this compile never sees and so
+  // compile on the first frame. Merged first, the compile walks what the scene draws. The hidden originals a
+  // drag brings back are warmed after the cover, with the rest of what only an interaction needs
+  // (warmInteractionExtras).
+  view.poolRebuild()
+  notifyBundleStructureChanged()
   view.warm.stagedReveal = true // hold the building frame until every part pipeline is warm
   const tPhase2 = performance.now()
   try {
