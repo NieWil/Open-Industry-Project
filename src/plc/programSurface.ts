@@ -3,7 +3,7 @@
 // unlike the compiled program it can cross a thread boundary, so the compile that produces it can run in a worker
 // (editor/program/program.worker.ts).
 
-import { LocalPlcLink } from './link/plcLink'
+import { declaredAliases, LocalPlcLink } from './link/plcLink'
 import type { CompiledProgram, VarInfo } from './types'
 
 export interface ProgramSurface {
@@ -27,6 +27,7 @@ export function surfaceOf(program: CompiledProgram): ProgramSurface {
     if (info) vars[name] = info
   }
   // every alias the link has, less those of names nothing binds (a path inside a block instance)
-  const aliases = [...new LocalPlcLink(program).aliases].filter(([, name]) => listed.has(name))
+  // (the listed names are what a scene binds by, and their aliases are worked out without the program's every value)
+  const aliases = [...declaredAliases(new LocalPlcLink(program).aliases)].filter(([, name]) => listed.has(name))
   return { inputs: [...program.inputs], outputs: [...program.outputs], bindable: [...program.bindable], aliases, vars }
 }

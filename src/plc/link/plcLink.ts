@@ -64,10 +64,114 @@ export function soleInstanceAliases(prog: Pick<CompiledProgram, 'tasks' | 'input
 
 const NO_ALIASES: ReadonlyMap<string, string> = new Map()
 
-/** `names`, each followed by its bare alias when it has one */
+/**
+ * {@link soleInstanceAliases}, with the work a large program makes of it put off until it is asked for.
+ *
+ * A program's `watch` lists every value it holds, and each one under the sole instance has a bare alias: 210,000 of
+ * them on an 800-part line, built on every attach (0.9 s of the stall at Play) and almost all never read. A scene
+ * binds by the names the program declares for it (its inputs, its outputs, what a part may wire), which are a few
+ * thousand, so those are worked out up front ({@link declared}) and are all that binding reads. Any other alias is a
+ * path inside a variable (`T1.Q`, `Zone[3].Run`), read by name now and then: the whole table is built the first
+ * time one is asked for that could exist, and never for a name the instance declares no variable for.
+ *
+ * It is a view of the same table, not a second rule: `get` answers what {@link soleInstanceAliases} would, and
+ * walking it walks that table (plcLinkAliases.test.ts holds the two together).
+ */
+export class Aliases implements ReadonlyMap<string, string> {
+  /** the aliases of the names a scene binds by: the program's inputs, outputs and bindable variables */
+  readonly declared: ReadonlyMap<string, string>
+  #all: ReadonlyMap<string, string> | null = null
+  /** an alias the instance's own variables cannot account for exists (see the constructor): never refuse by them */
+  readonly #anyRoot: boolean
+  /** the names that are not this instance's, upper-cased: a bare name one of them has is no alias */
+  readonly #taken: ReadonlySet<string>
+
+  constructor(
+    private readonly prog: AliasSource,
+    private readonly prefix: string,
+  ) {
+    const P = prefix.toUpperCase()
+    const own = (n: string): boolean => n.toUpperCase().startsWith(P)
+    const names = [...prog.inputs, ...prog.outputs, ...prog.bindable]
+    const shared = prog.sharedWatchKeys!()
+    // (every other key of `watch` is an instance's, so these are all the names that are not this instance's)
+    const taken = new Set([...names, ...shared].filter((n) => !own(n)).map((n) => n.toUpperCase()))
+    const out = new Map<string, string>()
+    for (const n of names) {
+      if (!own(n)) continue
+      const bare = n.slice(prefix.length)
+      if (bare === '' || taken.has(bare.toUpperCase()) || out.has(bare)) continue
+      out.set(bare, n)
+    }
+    this.declared = out
+    this.#taken = taken
+    // a tag or a global spelled like the instance (`Line`, with a member) lists keys that read as the instance's
+    this.#anyRoot = shared.some(own)
+  }
+
+  /** whether the whole table has been built (for the test that it is not, by a read that does not need it) */
+  get built(): boolean {
+    return this.#all !== null
+  }
+
+  #whole(): ReadonlyMap<string, string> {
+    return (this.#all ??= soleInstanceAliases(this.prog))
+  }
+
+  get(bare: string): string | undefined {
+    const bound = this.declared.get(bare)
+    if (bound !== undefined) return bound
+    if (this.#all) return this.#all.get(bare)
+    if (bare === '' || this.#taken.has(bare.toUpperCase())) return undefined
+    // an alias names a variable of the instance, or a path inside one: there is none where it declares no such variable
+    if (!this.#anyRoot && !this.prog.instanceDeclares!(this.prefix + bare)) return undefined
+    return this.#whole().get(bare)
+  }
+  has(bare: string): boolean {
+    return this.get(bare) !== undefined
+  }
+  get size(): number {
+    return this.#whole().size
+  }
+  forEach(fn: (value: string, key: string, map: ReadonlyMap<string, string>) => void, thisArg?: unknown): void {
+    this.#whole().forEach((v, k) => fn.call(thisArg, v, k, this))
+  }
+  entries(): MapIterator<[string, string]> {
+    return this.#whole().entries()
+  }
+  keys(): MapIterator<string> {
+    return this.#whole().keys()
+  }
+  values(): MapIterator<string> {
+    return this.#whole().values()
+  }
+  [Symbol.iterator](): MapIterator<[string, string]> {
+    return this.#whole()[Symbol.iterator]()
+  }
+}
+
+type AliasSource = Pick<CompiledProgram, 'tasks' | 'inputs' | 'outputs' | 'bindable' | 'watch' | 'sharedWatchKeys' | 'instanceDeclares'>
+
+/** A program's bare-name aliases ({@link soleInstanceAliases}), as a table that is built when it is needed. */
+export function aliasesOfProgram(prog: AliasSource): ReadonlyMap<string, string> {
+  const instances = prog.tasks.flatMap((t) => t.programs)
+  if (instances.length !== 1) return NO_ALIASES
+  // (a program that cannot say what its instances own is asked for everything, as before)
+  if (!prog.sharedWatchKeys || !prog.instanceDeclares) return soleInstanceAliases(prog)
+  return new Aliases(prog, `${instances[0]!}.`)
+}
+
+/** The aliases of the names a scene binds by (a program's inputs, outputs and bindable variables): all of them when
+ *  the table was not built on demand. Every alias whose variable is one of those names is among them. */
+export function declaredAliases(aliases: ReadonlyMap<string, string>): ReadonlyMap<string, string> {
+  return aliases instanceof Aliases ? aliases.declared : aliases
+}
+
+/** `names`, each followed by its bare alias when it has one. The names are ones a scene binds by. */
 function withAliases(names: readonly string[], aliases: ReadonlyMap<string, string>): string[] {
-  if (aliases.size === 0) return [...names]
-  const bareOf = new Map([...aliases].map(([bare, q]) => [q, bare]))
+  const bound = declaredAliases(aliases)
+  if (bound.size === 0) return [...names]
+  const bareOf = new Map([...bound].map(([bare, q]) => [q, bare]))
   return names.flatMap((n) => {
     const bare = bareOf.get(n)
     return bare === undefined ? [n] : [n, bare]
@@ -126,7 +230,7 @@ export class LocalPlcLink implements PlcLink {
   constructor(source: string | CompiledProgram, wired: WiredBindings = NO_WIRED_BINDINGS) {
     this.prog = typeof source === 'string' ? compile(source) : source
     let aliases = aliasesOf.get(this.prog)
-    if (!aliases) aliasesOf.set(this.prog, (aliases = soleInstanceAliases(this.prog)))
+    if (!aliases) aliasesOf.set(this.prog, (aliases = aliasesOfProgram(this.prog)))
     this.aliases = aliases
     this.bind(wired)
   }

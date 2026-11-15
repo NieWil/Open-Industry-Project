@@ -390,6 +390,20 @@ export function configuredProgram(ast: Ast, build: PouBuilder, globalPou: Pou | 
       for (const i of instances) i.pou.blocksInto(out, `${i.name}.`)
       return out
     },
+    // `watch`'s first and third steps alone: what the instances do not own
+    sharedWatchKeys(): string[] {
+      const out: Record<string, TagValue> = {}
+      globalPou?.watchInto(out, '', WATCH_ARRAY_MAX)
+      globalPou?.blocksInto(out, '')
+      return Object.keys(out)
+    },
+    instanceDeclares(name: string): boolean {
+      const s = split(name)
+      if (!s) return false
+      // (the variable is what stands before the first member or index)
+      const end = s.rest.search(/[.[]/)
+      return s.inst.pou.typeOf(end < 0 ? s.rest : s.rest.slice(0, end)) !== undefined
+    },
     // the same steps as `watch`, as places
     watchPlan: () =>
       (configuredPlan ??= {

@@ -774,6 +774,18 @@ export interface CompiledProgram {
   /** snapshot of every scalar variable's current value (for a watch table) */
   readonly watch: Readonly<Record<string, TagValue>>
   /**
+   * The keys of `watch` that no program instance owns: the controller's tags and the globals. For a reader that needs
+   * those names and not every instance's values, which on a large program is the whole cost of `watch`
+   * (plc/link/plcLink.ts, the bare-name aliases). Absent from a program with no instances to tell them from.
+   */
+  sharedWatchKeys?(): string[]
+  /**
+   * Whether the variable a qualified name starts at is one its program instance declares, in any spelling:
+   * `Line.Zone[3].Run` asks whether instance `Line` declares `Zone`. Every key `watch` lists under an instance
+   * starts at one, so a name this refuses is no key of it. False for a name no instance leads.
+   */
+  instanceDeclares?(name: string): boolean
+  /**
    * Everything the program holds, keyed as `watch` keys it - with no array left out for being large. The watch table
    * caps an array's size because it is built and posted many times a second; this is for what is asked once and must
    * be complete: saving the controller's values into the project, which may not skip a tag for being a big one.
