@@ -211,15 +211,16 @@ by messages and is fetched only when someone imports a STEP file.
 ### jolt-physics is a local fork, not the upstream package
 
 `jolt-physics` does not come from npm here. It is a local build, version
-**`1.1.0-oip.9`**, installed from `vendor/jolt-physics-1.1.0-oip.9.tgz` through a
+**`1.1.1-oip.10`**, installed from `vendor/jolt-physics-1.1.1-oip.10.tgz` through a
 `file:` dependency in `package.json`. No such version is published on npm.
 
 The vendored `package.json` names the version and the fork in its `description`, but
 keeps upstream's `repository` and `homepage` fields. Those point at
-<https://github.com/jrouwe/JoltPhysics.js>, which has no `1.1.0-oip.9` and none of the
+<https://github.com/jrouwe/JoltPhysics.js>, which has no `1.1.1-oip.10` and none of the
 changes listed here.
 
-**The fork's source is in this repository:** upstream's `1.1.0` tag plus the four patches
+**The fork's source is in this repository:** upstream commit `c43eabb` (Jolt 5.7.0, three
+commits after the `1.1.1` tag) plus the four patches
 in `vendor/jolt-physics-src/`, which `node scripts/jolt-src.mjs <dir>` applies to a fresh
 upstream clone.
 
@@ -232,19 +233,18 @@ upstream clone.
   between them at runtime (`src/sim/worker.ts`, `src/sim/world.ts`). The live one is
   reported as `conveyorListener: 'native' | 'js' | 'none'`, and `?jsconveyor` forces
   the JS path. So the fork is detectable, and the app runs without it.
-- **What the four commits touch**, against upstream's `1.1.0` tag (523 insertions in
+- **What the four commits touch**, against that upstream commit (518 insertions in
   6 files):
   `JoltJS.h` (+315, the listener and `BodySnapshot`, a batched reader for body positions
   and rotations), `JoltJS.idl` (+20, the bindings that expose them to JavaScript),
-  `CMakeLists.txt` (+15/-2: sizes the thread pool to the machine, fixes a node worker
-  import, applies the patch), and a `patches/` directory that applies a
+  `CMakeLists.txt` (+10/-1: sizes the thread pool to the machine, applies the patch), and a `patches/` directory that applies a
   coupled-planar-friction patch to the Jolt C++ source the build pulls in. The shipped
   single-threaded builds are also compiled with SIMD, a build option rather than a source
   change (`vendor/README.md`).
 - **Rebuilding:** see [vendor/README.md](vendor/README.md). The `patches/README.md` that
   the first patch adds explains the friction patch.
 - **Traceability:** the `-oip.N` suffix is applied when the tarball is packaged, and
-  the fork's own `package.json` reads `1.1.0`. So `-oip.9` does not name a commit of
+  the fork's own `package.json` reads `1.1.1`. So `-oip.10` does not name a commit of
   the fork.
 
 Only the built tarball lives here. MIT requires the copyright notice to travel with it,

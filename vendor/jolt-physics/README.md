@@ -3,11 +3,11 @@
 [![Bundle Size](https://img.shields.io/bundlephobia/min/jolt-physics?label=bundle%20size)](https://bundlephobia.com/result?p=jolt-physics)
 [![Build Status](https://github.com/jrouwe/JoltPhysics.js/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/jrouwe/JoltPhysics.js/actions/)
 
-> **Open Industry Project fork, not the npm package.** This is `jolt-physics` **1.1.0-oip.9**, built from
-> upstream's `1.1.0` tag plus the four patches in the Open Industry Project repository's `vendor/jolt-physics-src/`.
+> **Open Industry Project fork, not the npm package.** This is `jolt-physics` **1.1.1-oip.10**, built from
+> upstream commit `c43eabb` (Jolt 5.7.0, three commits after the `1.1.1` tag) plus the four patches in the Open Industry Project repository's `vendor/jolt-physics-src/`.
 > It adds a native `ConveyorContactListener` and a `BodySnapshot` batched body reader, both exposed to JavaScript,
 > SIMD in the single-threaded (ST) builds, and one patch to Jolt itself (coupled planar friction).
-> Open Industry Project installs it from `vendor/jolt-physics-1.1.0-oip.9.tgz`, a `file:` dependency in the root
+> Open Industry Project installs it from `vendor/jolt-physics-1.1.1-oip.10.tgz`, a `file:` dependency in the root
 > `package.json`. `npm install jolt-physics` gives upstream's build, which has none of these additions. To rebuild,
 > follow `vendor/README.md` in this repository. Everything below is upstream's README. The badges, links and
 > `repository` field point at upstream. See also `THIRD_PARTY_NOTICES.md` at the repository root.

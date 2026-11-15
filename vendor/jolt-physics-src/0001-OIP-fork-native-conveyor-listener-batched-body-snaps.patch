@@ -1,10 +1,10 @@
-From 69d83e2cbf6b0f6dd7c516a7262fba6aa32d6e27 Mon Sep 17 00:00:00 2001
+From cc94a993fcce1778971bc3e3859c1113daa40d05 Mon Sep 17 00:00:00 2001
 From: ryevdokimov <105675984+ryevdokimov@users.noreply.github.com>
 Date: Sun, 16 Aug 2026 23:19:15 -0400
-Subject: [PATCH 1/3] OIP fork: native conveyor listener, batched body
+Subject: [PATCH 1/4] OIP fork: native conveyor listener, batched body
  snapshot, coupled planar friction
 
-Three additions carried on top of upstream tag 1.1.0 (Jolt C++ 5.6.0), used by
+Three additions carried on top of upstream JoltPhysics.js (Jolt C++ 5.7.0), used by
 oip-web's sim worker and vendored into that repo as a prebuilt tarball.
 
 - ConveyorContactListener (JoltJS.h/.idl): fully-native contact listener that
@@ -19,9 +19,7 @@ oip-web's sim worker and vendored into that repo as a prebuilt tarball.
   the fraction of the tangential limit consumed. Without it, conveyed cargo that
   catches a corner dead-stops instead of pivoting off it. Defaults to 0, which
   is bit-identical to upstream. Applied via PATCH_COMMAND in CMakeLists.txt.
-- CMakeLists.txt: applies the patch set, sizes the pthread pool at runtime, and
-  restores the parens that closure's --dynamic_import_alias round-trip drops
-  from emscripten's node pthread self-detection (which otherwise hangs MT init).
+- CMakeLists.txt: applies the patch set and sizes the pthread pool at runtime.
 
 Rationale, measurements and known limitations for the Jolt-core patch are in
 patches/README.md; read it before bumping GIT_TAG, since a version bump needs
@@ -29,22 +27,22 @@ the patch re-checked against the new solver rather than merely re-applied.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 ---
- CMakeLists.txt                             |  17 +-
+ CMakeLists.txt                             |  11 +-
  JoltJS.h                                   | 214 +++++++++++++++++++++
  JoltJS.idl                                 |  18 ++
  patches/0001-coupled-planar-friction.patch |  82 ++++++++
  patches/README.md                          |  66 +++++++
  patches/apply.cmake                        |  25 +++
- 6 files changed, 420 insertions(+), 2 deletions(-)
+ 6 files changed, 415 insertions(+), 1 deletion(-)
  create mode 100644 patches/0001-coupled-planar-friction.patch
  create mode 100644 patches/README.md
  create mode 100644 patches/apply.cmake
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8ea6471..ede220a 100644
+index a0d001b..58f022e 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -68,9 +68,13 @@ if (ENABLE_MULTI_THREADING)
+@@ -71,9 +71,13 @@ if (ENABLE_MULTI_THREADING)
  		-pthread
  		--post-js ${CMAKE_CURRENT_SOURCE_DIR}/multi-threaded.js
  		-s SHARED_MEMORY)
@@ -59,22 +57,9 @@ index 8ea6471..ede220a 100644
  	set(CMAKE_CXX_FLAGS "-pthread -s SHARED_MEMORY")
  	set(OUTPUT_BASE_NAME "${OUTPUT_FOLDER}jolt-physics.multithread")
  	set(REMOVE_THREAD_LOCAL "")
-@@ -88,7 +92,11 @@ endif()
- 
- # Replace 'replace_by_import' by 'import' in the generated JS code to workaround a bug in emscripten
- # See: https://github.com/jrouwe/JoltPhysics.js/issues/245
--set(REPLACE_IMPORT sed -i -e "s:replace_by_import:import:g")
-+# OIP fork: the closure dynamic_import_alias round-trip drops the parens emscripten's
-+# nodePthreadDetection() emits around `(await import('node:worker_threads')).workerData`,
-+# leaving `.workerData` read off the PROMISE — so node pthread workers never self-identify
-+# and multithread init hangs forever under node. Restore the parens after the alias swap.
-+set(REPLACE_IMPORT sed -i -e "s:replace_by_import:import:g" -e "s/await import(\"node:worker_threads\")\\.workerData/(await import(\"node:worker_threads\")).workerData/g")
- 
- # Enable SIMD flags
- if (ENABLE_SIMD)
-@@ -108,6 +116,11 @@ FetchContent_Declare(
+@@ -107,6 +111,11 @@ FetchContent_Declare(
          GIT_REPOSITORY "https://github.com/jrouwe/JoltPhysics"
-         GIT_TAG "v5.6.0"
+         GIT_TAG "v5.7.0"
  		SOURCE_SUBDIR "Build"
 +        # OIP fork patches against upstream Jolt -- see patches/README.md. Applied via a helper
 +        # script so re-configuring an already-patched tree is a no-op instead of a hard error.
@@ -85,10 +70,10 @@ index 8ea6471..ede220a 100644
  FetchContent_MakeAvailable(JoltPhysics)
  
 diff --git a/JoltJS.h b/JoltJS.h
-index 12b675a..7f30697 100644
+index dcee23e..267200c 100644
 --- a/JoltJS.h
 +++ b/JoltJS.h
-@@ -869,3 +869,217 @@ public:
+@@ -877,3 +877,217 @@ public:
  	/// Value used to create gaps in the height field
  	static constexpr float	cNoCollisionValue = HeightFieldShapeConstants::cNoCollisionValue;
  };
@@ -307,10 +292,10 @@ index 12b675a..7f30697 100644
 +	Array<float>			mOut;
 +};
 diff --git a/JoltJS.idl b/JoltJS.idl
-index c2e299b..7b33227 100644
+index 449268b..72b1a2a 100644
 --- a/JoltJS.idl
 +++ b/JoltJS.idl
-@@ -2165,6 +2165,7 @@ interface ContactSettings {
+@@ -2164,6 +2164,7 @@ interface ContactSettings {
  	attribute float mInvMassScale2;
  	attribute float mInvInertiaScale2;
  	attribute boolean mIsSensor;
@@ -318,7 +303,7 @@ index c2e299b..7b33227 100644
  	[Value] attribute Vec3 mRelativeLinearSurfaceVelocity;
  	[Value] attribute Vec3 mRelativeAngularSurfaceVelocity;
  };
-@@ -2194,6 +2195,23 @@ interface ContactListenerJS {
+@@ -2212,6 +2213,23 @@ interface ContactListenerJS {
  	void OnContactRemoved([Const, Ref] SubShapeIDPair inSubShapePair);
  };
  
@@ -344,12 +329,12 @@ index c2e299b..7b33227 100644
  	boolean HasContact([Const, Ref] SoftBodyVertex inVertex);
 diff --git a/patches/0001-coupled-planar-friction.patch b/patches/0001-coupled-planar-friction.patch
 new file mode 100644
-index 0000000..c66fe4d
+index 0000000..0dc8acd
 --- /dev/null
 +++ b/patches/0001-coupled-planar-friction.patch
 @@ -0,0 +1,82 @@
 +diff --git a/Jolt/Physics/Collision/ContactListener.h b/Jolt/Physics/Collision/ContactListener.h
-+index 07dacf3a..b9e93d70 100644
++index ea9fb56..f64fa5e 100644
 +--- a/Jolt/Physics/Collision/ContactListener.h
 ++++ b/Jolt/Physics/Collision/ContactListener.h
 +@@ -47,6 +47,7 @@ public:
@@ -361,18 +346,18 @@ index 0000000..c66fe4d
 + 	Vec3					mRelativeAngularSurfaceVelocity = Vec3::sZero(); ///< Relative angular surface velocity between the bodies (world space angular surface velocity of body 2 - world space angular surface velocity of body 1). Note that this angular velocity is relative to the center of mass of body 1, so if you want it relative to body 2's center of mass you need to add body 2 angular velocity x (body 1 world space center of mass - body 2 world space center of mass) to mRelativeLinearSurfaceVelocity.
 + };
 +diff --git a/Jolt/Physics/Constraints/ContactConstraintManager.cpp b/Jolt/Physics/Constraints/ContactConstraintManager.cpp
-+index efb7aee2..906b4dd3 100644
++index 7bc0140..711baf6 100644
 +--- a/Jolt/Physics/Constraints/ContactConstraintManager.cpp
 ++++ b/Jolt/Physics/Constraints/ContactConstraintManager.cpp
-+@@ -824,6 +824,7 @@ JPH_INLINE ContactConstraintManager::ContactConstraint<Type1, Type2> *ContactCon
-+ 	constraint->mSortKey = inSortKey;
-+ 	inWorldSpaceNormal.StoreFloat3(&constraint->mWorldSpaceNormal);
++@@ -822,6 +822,7 @@ JPH_INLINE ContactConstraintManager::ContactConstraint<Type1, Type2> *ContactCon
++ 	tangent1.StoreFloat3(&constraint->mWorldSpaceTangent1);
++ 	inWorldSpaceNormal.Cross(tangent1).StoreFloat3(&constraint->mWorldSpaceTangent2);
 + 	constraint->mCombinedFriction = inSettings.mCombinedFriction;
 ++	constraint->mFrictionCoupling = inSettings.mFrictionCoupling;
 + 	constraint->mInvInertiaScale1 = inSettings.mInvInertiaScale1;
 + 	constraint->mInvInertiaScale2 = inSettings.mInvInertiaScale2;
 + 	constraint->mCachedManifoldHandle = inCachedManifoldHandle;
-+@@ -1715,6 +1716,9 @@ bool ContactConstraintManager::sSolveVelocityConstraint(ContactConstraintBase &i
++@@ -1727,6 +1728,9 @@ bool ContactConstraintManager::sSolveVelocityConstraint(ContactConstraintBase &i
 + 		max_angular_lambda *= constraint.mCombinedFriction;
 + 	}
 + 
@@ -382,8 +367,8 @@ index 0000000..c66fe4d
 + 	// First apply friction constraint (non-penetration is more important than friction)
 + 	if (linear_friction_active)
 + 	{
-+@@ -1729,7 +1733,9 @@ bool ContactConstraintManager::sSolveVelocityConstraint(ContactConstraintBase &i
-+ 			float scale = max_linear_lambda / Sqrt(total_lambda_sq);
++@@ -1741,7 +1745,9 @@ bool ContactConstraintManager::sSolveVelocityConstraint(ContactConstraintBase &i
++ 			float scale = MulRSqrtApproximate(max_linear_lambda, total_lambda_sq);
 + 			lambda1 *= scale;
 + 			lambda2 *= scale;
 ++			total_lambda_sq = Square(max_linear_lambda);
@@ -392,7 +377,7 @@ index 0000000..c66fe4d
 + 
 + 		// Apply the friction impulse
 + 		if (constraint.mFrictionConstraint1.SolveVelocityConstraintApplyLambda(linear_velocity1, angular_velocity1, linear_velocity2, angular_velocity2, constraint.mInvMass1, constraint.mInvMass2, t1, lambda1))
-+@@ -1740,8 +1746,23 @@ bool ContactConstraintManager::sSolveVelocityConstraint(ContactConstraintBase &i
++@@ -1752,8 +1758,23 @@ bool ContactConstraintManager::sSolveVelocityConstraint(ContactConstraintBase &i
 + 
 + 	// Apply angular friction
 + 	Vec3 ws_normal = constraint.GetWorldSpaceNormal();
@@ -419,12 +404,12 @@ index 0000000..c66fe4d
 + 	// Then apply all non-penetration constraints
 + 	for (uint32 i = 0; i < constraint.mNumContactPoints; ++i)
 +diff --git a/Jolt/Physics/Constraints/ContactConstraintManager.h b/Jolt/Physics/Constraints/ContactConstraintManager.h
-+index d76f3fc3..aba83018 100644
++index ed6f06d..5904f4d 100644
 +--- a/Jolt/Physics/Constraints/ContactConstraintManager.h
 ++++ b/Jolt/Physics/Constraints/ContactConstraintManager.h
-+@@ -469,6 +469,7 @@ private:
-+ 		uint64					mSortKey;
-+ 		Float3					mWorldSpaceNormal;
++@@ -470,6 +470,7 @@ private:
++ 		Float3					mWorldSpaceTangent1;
++ 		Float3					mWorldSpaceTangent2;
 + 		float					mCombinedFriction;
 ++		float					mFrictionCoupling;
 + 		float					mInvMass1;
@@ -432,7 +417,7 @@ index 0000000..c66fe4d
 + 		float					mInvMass2;
 diff --git a/patches/README.md b/patches/README.md
 new file mode 100644
-index 0000000..d156747
+index 0000000..330bdb8
 --- /dev/null
 +++ b/patches/README.md
 @@ -0,0 +1,66 @@
@@ -450,7 +435,7 @@ index 0000000..d156747
 +
 +## 0001-coupled-planar-friction.patch
 +
-+Pinned against Jolt `v5.6.0` (e77f1755).
++Pinned against Jolt `v5.7.0` (cf16769b).
 +
 +**What upstream does.** Jolt solves contact friction at the manifold level with three planar
 +DOFs: two linear tangents (`mFrictionConstraint1/2`) plus a torsional constraint about the

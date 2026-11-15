@@ -102,7 +102,7 @@
     "@huggingface/usd-web-viewer": "0.2.0",
     "@lezer/highlight": "^1.2.3",
     "fflate": "^0.8.3",
-    "jolt-physics": "file:vendor/jolt-physics-1.1.0-oip.9.tgz",
+    "jolt-physics": "file:vendor/jolt-physics-1.1.1-oip.10.tgz",
     "meshoptimizer": "1.2.0",
     "monaco-editor": "^0.57.0",
     "occt-import-js": "^0.0.23",

@@ -1,7 +1,7 @@
-From 7a6b89786192b0ea85831dabc7462ab4840c42e3 Mon Sep 17 00:00:00 2001
+From c664be41caca244fb7182e7ca1f543e9b6c7b5b9 Mon Sep 17 00:00:00 2001
 From: ryevdokimov <105675984+ryevdokimov@users.noreply.github.com>
 Date: Sun, 16 Aug 2026 23:47:11 -0400
-Subject: [PATCH 2/3] ConveyorContactListener: gate conveying on a declared
+Subject: [PATCH 2/4] ConveyorContactListener: gate conveying on a declared
  running-surface normal
 
 Surface velocity is a property of the surface cargo rides, not of the whole
@@ -31,10 +31,10 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
  2 files changed, 46 insertions(+), 3 deletions(-)
 
 diff --git a/JoltJS.h b/JoltJS.h
-index 7f30697..9fa9110 100644
+index 267200c..6d7d2cb 100644
 --- a/JoltJS.h
 +++ b/JoltJS.h
-@@ -877,11 +877,21 @@ public:
+@@ -885,11 +885,21 @@ public:
  /// pthread job threads, whose isolated JS realms don't hold the listener object).
  ///
  /// Contract with JS:
@@ -58,7 +58,7 @@ index 7f30697..9fa9110 100644
  /// - A conveyor body advertises its facets in its (32-bit) user data:
  ///   bit 31 = conveyor tag, bits 12..30 = base slot, bits 0..11 = entry count.
  ///   count == 0 participates in ghost filtering only (e.g. conveying rigs' frame rails).
-@@ -924,6 +934,14 @@ public:
+@@ -932,6 +942,14 @@ public:
  		mFrictionCoupling = inCoupling;
  	}
  
@@ -73,7 +73,7 @@ index 7f30697..9fa9110 100644
  	virtual void			OnContactAdded(const Body &inBody1, const Body &inBody2, const ContactManifold &inManifold, ContactSettings &ioSettings) override
  	{
  		HandleContact(inBody1, inBody2, inManifold, ioSettings);
-@@ -935,9 +953,21 @@ public:
+@@ -943,9 +961,21 @@ public:
  	}
  
  private:
@@ -96,7 +96,7 @@ index 7f30697..9fa9110 100644
  	inline const double *	ResolveFacet(const Body &inBody, uint64 inUserData, const SubShapeID &inSubShapeID) const
  	{
  		uint32 count = (uint32)(inUserData & 0xfffull);
-@@ -982,6 +1012,17 @@ private:
+@@ -990,6 +1020,17 @@ private:
  		if (e1 == nullptr && e2 == nullptr)
  			return;
  
@@ -114,7 +114,7 @@ index 7f30697..9fa9110 100644
  		double vx = 0.0, vy = 0.0, vz = 0.0, wy = 0.0, c1x = 0.0, c1z = 0.0;
  		if ((e1 != nullptr && e1[0] == 2.0) || (e2 != nullptr && e2[0] == 2.0))
  		{
-@@ -1024,6 +1065,7 @@ private:
+@@ -1032,6 +1073,7 @@ private:
  	float					mGhostRamDepth;
  	float					mGhostRamUpDot;
  	float					mFrictionCoupling = 0.0f;
@@ -123,10 +123,10 @@ index 7f30697..9fa9110 100644
  
  /// Batched body-state snapshot (OIP fork addition): one WASM call fills a flat float buffer with
 diff --git a/JoltJS.idl b/JoltJS.idl
-index 7b33227..10b1828 100644
+index 72b1a2a..a843613 100644
 --- a/JoltJS.idl
 +++ b/JoltJS.idl
-@@ -2200,6 +2200,7 @@ interface ConveyorContactListener {
+@@ -2218,6 +2218,7 @@ interface ConveyorContactListener {
  	unsigned long GetFacetCapacity();
  	unsigned long GetFacetTablePtr();
  	void SetFrictionCoupling(float inCoupling);

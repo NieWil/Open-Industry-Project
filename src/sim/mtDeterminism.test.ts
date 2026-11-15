@@ -17,12 +17,11 @@ import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 // ConveyorContactListener, linear + arc carry, box-box contacts). e2e/mt-determinism.mjs is the
 // browser twin of this check.
 //
-// Node can run the MT build only on the fork >= 1.1.0-oip.3. Upstream artifacts (incl. stock npm)
-// drop the parens in emscripten's node pthread detection (`.workerData` reads off the import()
-// promise), so pthread workers never self-identify and init hangs forever (fix: REPLACE_IMPORT in
-// the fork's CMakeLists). Pool constraint: PTHREAD_POOL_SIZE=16 and one MT world takes cores−1
-// job threads, so NEVER hold two MT worlds at once (deadlock); the repeat check runs
-// sequentially over recorded checkpoints.
+// Node can run the MT build on the fork, and on upstream from the commit the fork is based on.
+// Upstream 1.1.0 and earlier (incl. that npm release) hang at init under node: their pthread
+// workers never identify themselves. Pool constraint: the pthread pool is sized to the machine
+// (at most 9) and one MT world takes most of it, so never hold two MT worlds at once (deadlock);
+// the repeat check runs sequentially over recorded checkpoints.
 
 const JoltST = (await initJoltST()) as unknown as JoltModule
 const JoltMT = (await initJoltMT()) as unknown as JoltModule

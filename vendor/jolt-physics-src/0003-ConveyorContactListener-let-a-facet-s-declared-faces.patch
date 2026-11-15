@@ -1,7 +1,7 @@
-From 76ef1b52417309af43ea4be3852ef82497c3db0b Mon Sep 17 00:00:00 2001
+From 470ef7652b226774e7c1e98bfa28c97471a47faf Mon Sep 17 00:00:00 2001
 From: ryevdokimov <105675984+ryevdokimov@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 00:42:44 -0400
-Subject: [PATCH 3/3] ConveyorContactListener: let a facet's declared faces
+Subject: [PATCH 3/4] ConveyorContactListener: let a facet's declared faces
  steer the ghost gates
 
 The gates exist for contacts cargo drives INTO along its travel - a speculative
@@ -32,10 +32,10 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
  2 files changed, 69 insertions(+), 18 deletions(-)
 
 diff --git a/JoltJS.h b/JoltJS.h
-index 9fa9110..51027de 100644
+index 6d7d2cb..0de69ff 100644
 --- a/JoltJS.h
 +++ b/JoltJS.h
-@@ -877,8 +877,8 @@ public:
+@@ -885,8 +885,8 @@ public:
  /// pthread job threads, whose isolated JS realms don't hold the listener object).
  ///
  /// Contract with JS:
@@ -46,7 +46,7 @@ index 9fa9110..51027de 100644
  ///   JS allocates slots itself and writes velocities through a Float64Array view over
  ///   GetFacetTablePtr(); writes must happen outside PhysicsSystem::Update (the app writes
  ///   between steps on its physics thread). The listener only reads.
-@@ -892,6 +892,13 @@ public:
+@@ -900,6 +900,13 @@ public:
  ///   keeps a valid normal without JS re-writing the table as it moves.
  ///   A zero normal means undeclared and is never gated, so a table written by an older caller
  ///   behaves exactly as it did before this field existed.
@@ -60,7 +60,7 @@ index 9fa9110..51027de 100644
  /// - A conveyor body advertises its facets in its (32-bit) user data:
  ///   bit 31 = conveyor tag, bits 12..30 = base slot, bits 0..11 = entry count.
  ///   count == 0 participates in ghost filtering only (e.g. conveying rigs' frame rails).
-@@ -942,6 +949,17 @@ public:
+@@ -950,6 +957,17 @@ public:
  		mSurfaceGateCos = inCos;
  	}
  
@@ -78,7 +78,7 @@ index 9fa9110..51027de 100644
  	virtual void			OnContactAdded(const Body &inBody1, const Body &inBody2, const ContactManifold &inManifold, ContactSettings &ioSettings) override
  	{
  		HandleContact(inBody1, inBody2, inManifold, ioSettings);
-@@ -953,21 +971,44 @@ public:
+@@ -961,21 +979,44 @@ public:
  	}
  
  private:
@@ -128,7 +128,7 @@ index 9fa9110..51027de 100644
  	inline const double *	ResolveFacet(const Body &inBody, uint64 inUserData, const SubShapeID &inSubShapeID) const
  	{
  		uint32 count = (uint32)(inUserData & 0xfffull);
-@@ -991,24 +1032,32 @@ private:
+@@ -999,24 +1040,32 @@ private:
  		if (!conveyor1 && !conveyor2)
  			return;
  
@@ -170,7 +170,7 @@ index 9fa9110..51027de 100644
  		if (e1 == nullptr && e2 == nullptr)
  			return;
  
-@@ -1016,9 +1065,9 @@ private:
+@@ -1024,9 +1073,9 @@ private:
  		// ghost gates above this does NOT disable the contact: a flank stays solid, it just
  		// stops conveying. If that leaves nothing driven, the contact resolves as plain
  		// collision (and, like an undriven registered body, without friction coupling).
@@ -182,7 +182,7 @@ index 9fa9110..51027de 100644
  			e2 = nullptr;
  		if (e1 == nullptr && e2 == nullptr)
  			return;
-@@ -1066,6 +1115,7 @@ private:
+@@ -1074,6 +1123,7 @@ private:
  	float					mGhostRamUpDot;
  	float					mFrictionCoupling = 0.0f;
  	float					mSurfaceGateCos = -1.0f;
@@ -191,10 +191,10 @@ index 9fa9110..51027de 100644
  
  /// Batched body-state snapshot (OIP fork addition): one WASM call fills a flat float buffer with
 diff --git a/JoltJS.idl b/JoltJS.idl
-index 10b1828..990e27b 100644
+index a843613..1ba1523 100644
 --- a/JoltJS.idl
 +++ b/JoltJS.idl
-@@ -2201,6 +2201,7 @@ interface ConveyorContactListener {
+@@ -2219,6 +2219,7 @@ interface ConveyorContactListener {
  	unsigned long GetFacetTablePtr();
  	void SetFrictionCoupling(float inCoupling);
  	void SetSurfaceGateCos(float inCos);
