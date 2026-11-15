@@ -204,9 +204,36 @@ export function schemaToParamSpecs(schema: ParamSchema): ParamSpec[] {
   return specs
 }
 
-/** The editable ParamSpecs for a custom part backed by `pkg`. */
+// A package's specs by its schema object. A registered package is never changed in place (an edit registers a new
+// one), and every reader of a part's fields asks: the Inspector, the wiring check, and the ladder sheet once per
+// part on every redraw, where working them out afresh for a 420-part line held the page for 0.3 s each time.
+const specsOf = new WeakMap<object, { specs: readonly ParamSpec[]; lists: boolean }>()
+
+const isList = (v: unknown): boolean => typeof v === 'object' && v !== null
+/** a copy of a default that is a list (rows of numbers, wall rules, colours): nothing below it is shared */
+function copyOfDefault<T>(v: T): T {
+  if (Array.isArray(v)) return v.map((x) => copyOfDefault(x)) as T
+  if (isList(v)) return Object.fromEntries(Object.entries(v as object).map(([k, x]) => [k, copyOfDefault(x)])) as T
+  return v
+}
+
+/**
+ * The editable ParamSpecs for a custom part backed by `pkg`. Kept per package, and shared between callers: read
+ * them, never write. A default that is a list is the exception, and is a fresh copy on every call: a part is given
+ * its default as it stands in the spec, and two parts must not come to share one list.
+ */
 export function packageParamSpecs(pkg: PartPackage): ParamSpec[] {
-  return schemaToParamSpecs(pkg.params)
+  const schema = pkg.params as object | undefined
+  if (!schema) return schemaToParamSpecs(pkg.params)
+  let kept = specsOf.get(schema)
+  if (!kept) {
+    // frozen, so a caller that tried to change a shared spec fails where it does so
+    const specs = Object.freeze(schemaToParamSpecs(pkg.params).map((spec) => Object.freeze(spec)))
+    kept = { specs, lists: specs.some((spec) => isList((spec as { default?: unknown }).default)) }
+    specsOf.set(schema, kept)
+  }
+  if (!kept.lists) return kept.specs as ParamSpec[]
+  return kept.specs.map((spec) => (isList((spec as { default?: unknown }).default) ? ({ ...spec, default: copyOfDefault((spec as { default?: unknown }).default) } as ParamSpec) : spec))
 }
 
 /**

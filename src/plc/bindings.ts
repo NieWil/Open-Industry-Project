@@ -9,7 +9,7 @@ import { controllerOf } from '../core/io/controllerTag'
 import { packageParamSpecs, switchValue, visibleWhenHolds } from '../core/packageParams'
 import type { VisibleWhen } from '../core/types'
 import { commsOn } from '../core/conveyor/conveyorDirection'
-import { getPackage } from '../core/parts/partRegistry'
+import { getPackage, registryRevision } from '../core/parts/partRegistry'
 import type { PlcLink } from './link/plcLink'
 
 /** A scene part with its params, for reading the per-part device-IO tag wiring. */
@@ -146,6 +146,18 @@ export function devicesForTag(devices: readonly DeviceTags[], name: string): Dev
  *  `includeDisabled` lists tags on parts with comms off too (flagged `enabled: false`), for a message that can
  *  say "the part names it, but comms is off" instead of "undeclared". */
 export function sceneTags(parts: readonly TaggedPart[], opts: { includeDisabled?: boolean } = {}): SceneTag[] {
+  // Kept for the parts they were worked out from: a scene's parts are a new array whenever one changes, and a
+  // ladder sheet asks once per rung on every redraw, which on a 420-part line was a quarter of a second each time.
+  const rev = registryRevision()
+  let kept = tagsOf.get(parts)
+  if (!kept || kept.rev !== rev) tagsOf.set(parts, (kept = { rev }))
+  const which = opts.includeDisabled ? 'all' : 'enabled'
+  return (kept[which] ??= Object.freeze(sceneTagsOf(parts, opts)) as SceneTag[])
+}
+// (frozen above, so a caller that tried to change the shared list fails where it does so)
+const tagsOf = new WeakMap<readonly TaggedPart[], { rev: number; enabled?: SceneTag[]; all?: SceneTag[] }>()
+
+function sceneTagsOf(parts: readonly TaggedPart[], opts: { includeDisabled?: boolean }): SceneTag[] {
   const out = new Map<string, SceneTag>()
   for (const p of parts) {
     if (p.type !== 'part') continue
