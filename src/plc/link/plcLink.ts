@@ -28,6 +28,47 @@ export interface PlcLink {
   stepTask?(index: number, inputs: Readonly<Record<string, TagValue>>, dt: number): Record<string, TagValue>
   /** bare scene tag -> the program variable it also names ({@link soleInstanceAliases}); absent or empty for most links */
   readonly aliases?: ReadonlyMap<string, string>
+  /** What kind of value the program variable `name` holds, when its declaration says ({@link valueKinds}); undefined
+   *  for a name it cannot answer for, which is then read off `watch`. Absent from a link that knows no declarations. */
+  declaredKind?(name: string): ValueKind | undefined
+}
+
+/** What a value of a program is, as far as a part's declared type can be held against it. */
+export type ValueKind = 'boolean' | 'number' | 'string'
+
+/** The kind of value the watch table shows for a variable of each of these types (programFactsKinds.test.ts holds
+ *  the two together). A type not listed is read off the table. */
+const PLAIN_KIND: Readonly<Record<string, ValueKind>> = {
+  BOOL: 'boolean',
+  SINT: 'number',
+  INT: 'number',
+  DINT: 'number',
+  USINT: 'number',
+  UINT: 'number',
+  UDINT: 'number',
+  REAL: 'number',
+  LREAL: 'number',
+}
+
+/**
+ * A reader of the kind of value each scene tag holds in `link`'s program: `typeof` what the watch table has for it,
+ * or undefined when the program holds no such value.
+ *
+ * A tag wired to a variable the program declares for a scene, by its own spelling, is answered from the declaration.
+ * Anything else (a member, an element, a type not in PLAIN_KIND) is read off the table, which is built then and at
+ * most once per reader: a large program's table holds hundreds of thousands of values and takes a third of a second
+ * to build, and a check of the wiring asks about a few thousand tags.
+ */
+export function valueKinds(link: Pick<PlcLink, 'watch' | 'aliases' | 'declaredKind'>): (tag: string) => ValueKind | undefined {
+  let table: Readonly<Record<string, TagValue>> | null = null
+  return (tag) => {
+    const name = link.aliases?.get(tag) ?? tag
+    const declared = link.declaredKind?.(name)
+    if (declared !== undefined) return declared
+    table ??= link.watch
+    const v = table[name]
+    return v === undefined ? undefined : (typeof v as ValueKind)
+  }
 }
 
 /**
@@ -295,6 +336,12 @@ export class LocalPlcLink implements PlcLink {
   /** Where {@link watch}'s values are in the program's memory (CompiledProgram.watchPlan), or null. */
   watchPlan(): WatchPlan | null {
     return this.prog.watchPlan?.() ?? null
+  }
+  // the names the program declares for a scene, as it spells them: the watch table has each under that spelling
+  #declared: Set<string> | null = null
+  declaredKind(name: string): ValueKind | undefined {
+    this.#declared ??= new Set([...this.prog.inputs, ...this.prog.outputs, ...this.prog.bindable])
+    return this.#declared.has(name) ? PLAIN_KIND[this.prog.varInfo(name)?.type ?? ''] : undefined
   }
   /** What a variable is, by its watch-table name (CompiledProgram.varInfo). */
   varInfo(name: string): VarInfo | undefined {

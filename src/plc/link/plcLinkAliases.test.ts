@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { compile, setScanEngine } from '../interpreter'
 import { surfaceOf } from '../programSurface'
 import type { CompiledProgram } from '../types'
-import { Aliases, aliasesOfProgram, boundNames, declaredAliases, LocalPlcLink, soleInstanceAliases } from './plcLink'
+import { Aliases, aliasesOfProgram, boundNames, declaredAliases, LocalPlcLink, soleInstanceAliases, valueKinds } from './plcLink'
 
 const CONFIG = (programs: string): string => `
 CONFIGURATION C
@@ -140,5 +140,39 @@ describe.each(['typed', 'walker'] as const)('bare-name aliases built on demand (
     expect(link.varInfo('Speed')?.type).toBe('REAL')
     expect(link.inputs).toContain('Eye')
     expect(link.bindable).toContain('Speed')
+  })
+})
+
+describe.each(['typed', 'walker'] as const)('the kind of value a tag holds, from its declaration (%s engine)', (engine) => {
+  it.each(PROGRAMS)('%s: is what the value table shows, for every name and spelling', (_name, src) => {
+    setScanEngine(engine)
+    const link = new LocalPlcLink(compile(src))
+    const table = link.watch
+    const asked = [...link.inputs, ...link.outputs, ...link.bindable, ...Object.keys(table).slice(0, 400), ...NOT_ALIASES, 'eye', 'MOTOR', 'Line.Dwell.Q', 'Dwell.Q', 'Zones[1].Count', 'Name', 'Label']
+    const kindOf = valueKinds(link)
+    for (const tag of asked) {
+      const v = table[link.aliases.get(tag) ?? tag]
+      expect(kindOf(tag), tag).toBe(v === undefined ? undefined : typeof v)
+    }
+  })
+
+  it('answers a declared name without building the table', () => {
+    setScanEngine(engine)
+    const program = compile(SOLE)
+    let reads = 0
+    const link = new LocalPlcLink(program)
+    const counted = { aliases: link.aliases, declaredKind: (n: string) => link.declaredKind(n), get watch() {
+      reads++
+      return link.watch
+    } }
+    const kindOf = valueKinds(counted)
+    expect(kindOf('Eye')).toBe('boolean')
+    expect(kindOf('Speed')).toBe('number')
+    expect(kindOf('Line.Count')).toBe('number')
+    expect(reads).toBe(0)
+    expect(kindOf('Name')).toBe('string') // a STRING is no tag a part wires: the table answers
+    expect(kindOf('Dwell.Q')).toBe('boolean')
+    expect(kindOf('Nothing')).toBeUndefined()
+    expect(reads).toBe(1)
   })
 })

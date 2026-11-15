@@ -44,6 +44,7 @@ import { commsOn } from '../core/conveyor/conveyorDirection'
 import { getPackage } from '../core/parts/partRegistry'
 import type { TaggedPart } from './bindings'
 import type { PlcLink, WiredBindings } from './link/plcLink'
+import { valueKinds } from './link/plcLink'
 
 /** A scene part as the wiring walk needs it - {@link TaggedPart} plus its display name. */
 export interface WiringPart extends TaggedPart {
@@ -150,7 +151,7 @@ function undrivenCost(readers: readonly Decl[]): string {
  * compiled program the part-vs-part checks still run (contested writers, type clashes), and the
  * program-side ones are not attempted.
  */
-export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, 'inputs' | 'outputs' | 'watch' | 'aliases'>): WiringReport {
+export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, 'inputs' | 'outputs' | 'watch' | 'aliases' | 'declaredKind'>): WiringReport {
   const byTag = new Map<string, Decl[]>()
   const unresolved = new Set<string>()
 
@@ -204,9 +205,10 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
     }
   }
 
-  // read once: a link builds its whole value table on each read, and reading it per tag made Play take
-  // (wired tags) x (table size)
-  const programValues = link?.watch
+  // What each tag holds, from its declaration where that says: a link builds its whole value table on each read
+  // (reading it per tag made Play take wired tags x table size), and even one read is a third of a second on a large
+  // program. The reader builds it at most once, for a tag only the table can answer.
+  const programKind = link ? valueKinds(link) : undefined
   const programReadSet = new Set(link?.inputs ?? [])
   const programWriteSet = new Set(link?.outputs ?? [])
   const tags: WiredTag[] = []
@@ -247,9 +249,9 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
 
     // a part's declared type vs what the program declared. `watch` is a snapshot of the program's scalars,
     // so it separates BOOL from numeric but not INT from REAL - only the mismatch it can prove is reported.
-    const seen = ours ? programValues?.[link?.aliases?.get(tag) ?? tag] : undefined
-    if (type !== null && seen !== undefined && typeof seen !== 'string') {
-      const programIsBool = typeof seen === 'boolean'
+    const seen = ours ? programKind?.(tag) : undefined
+    if (type !== null && seen !== undefined && seen !== 'string') {
+      const programIsBool = seen === 'boolean'
       const partIsBool = type === 'BOOL'
       if (programIsBool !== partIsBool) {
         problems.push({
