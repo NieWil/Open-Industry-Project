@@ -46,7 +46,8 @@ const SAVED_PROJECT = {
 }
 const ids = (scene) => JSON.stringify(scene?.parts?.map((p) => p.id))
 
-const hookReady = () => !!(window.__oip?.store && window.__oip.store.getState().scene.parts.length > 0)
+// (the store is up before App mounts, and `savedProject` is one of the hooks App adds: wait for it too)
+const hookReady = () => !!(window.__oip?.store && window.__oip.store.getState().scene.parts.length > 0 && typeof window.__oip.savedProject === 'function')
 const isColdStartNoise = (t) => /Failed to fetch|custom-part mesh load failed|\[vite\]/.test(t)
 
 const documentId = (page) => page.evaluate(() => localStorage.getItem('oip-web/document-id'))
