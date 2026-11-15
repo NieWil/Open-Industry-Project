@@ -4,7 +4,8 @@ import type { CargoShapeRef, FrameBeamHit, FrameDressing } from '../core/frame'
 import type { FlowFact } from '../core/flow/flowFacts'
 import type { SubPose } from '../core/rig/rigPose'
 import type { PartDiagnosticsEvent } from '../core/parts/partDiagnostics'
-import type { PlcFrameWire } from './plcHost'
+import type { FrameRecordField, RecordPatch } from './frameWire'
+import type { PlcFrameSent } from './plcHost'
 import type { WiredBindings } from '../plc/link/plcLink'
 import type { PlcRun } from './plcGroup'
 import type { TagValue } from '../plc/types'
@@ -175,6 +176,8 @@ export type WorkerToMain =
       // present; neither `dressings` nor `dressingsPatch` = nothing is dressed.
       partIds?: readonly (string | null)[]
       partIdsKept?: true
+      // The records by part cross only as far as they changed too (frameWire.ts FRAME_RECORDS): each is here whole,
+      // or patched in `recordPatches`, or named in `recordsKept`; none of the three = the frame has no such record.
       joints?: Record<string, Record<string, number>>
       subPoses?: Record<string, Record<string, SubPose>>
       copySpeeds?: Record<string, Record<string, number[]>>
@@ -185,6 +188,8 @@ export type WorkerToMain =
       basePoses?: Record<string, { pos: [number, number, number]; yaw: number }>
       conveyorSpeeds?: Record<string, number>
       beamHits?: Record<string, Record<string, FrameBeamHit>>
+      recordsKept?: readonly FrameRecordField[]
+      recordPatches?: Partial<Record<FrameRecordField, RecordPatch>>
       dressings?: readonly Readonly<FrameDressing>[]
       dressingsPatch?: { length: number; changed: [number, Readonly<FrameDressing>][] }
       // each body's own shape key, and the shapes the client has not had yet (frameWire.ts); none = no body has one
@@ -198,7 +203,7 @@ export type WorkerToMain =
       paused?: true
       // in-worker PLC state (watch / %I / %Q / scan telemetry), present while a program is attached -
       // the main thread's watch table and IO monitor render from this, at frame cadence
-      plc?: PlcFrameWire
+      plc?: PlcFrameSent
       // Flow facts (core/flow/flowFacts.ts) collected by the steps since the last posted frame: what physically happened to
       // the cargo (dropped, lost, tipped, a sensor flicker, a stall). The sim computes them every step and ships them
       // batched here, so none is lost to the frame cadence. A fact that unfolds (a stall) is sent when it starts and

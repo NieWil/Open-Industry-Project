@@ -11,10 +11,10 @@ import { StError } from '../plc'
 import { catchUpSteps } from './catchUp'
 import { WATCH_HZ } from './plcHost'
 import { PlcGroup } from './plcGroup'
-import type { PlcFrameWire } from './plcHost'
+import type { PlcFrameSent, PlcFrameWire } from './plcHost'
 import type { WatchPlan } from '../plc/types'
 import type { MainToWorker, WorkerToMain } from './protocol'
-import { FrameWireEncoder } from './frameWire'
+import { FrameWireEncoder, RecordEncoder } from './frameWire'
 import { applyScenePatch } from './scenePatch'
 import { SimWorld } from './world'
 import type { JoltModule } from './world'
@@ -104,7 +104,33 @@ let watchKeys = 0
 // where the attached program's watch values are in its memory, when its memory is one buffer (PlcGroup.watchPlan)
 let watchPlan: WatchPlan | null = null
 /** The frame's PLC state. A copy of the program's memory it carries goes into `transfer`, to be handed over, not cloned. */
-function plcFrame(host: PlcGroup, force: boolean, transfer: Transferable[]): PlcFrameWire {
+// The program's inputs and outputs are a value per tag, on every frame: 73 KB on an 800-part line, where a frame
+// changes a few of them. They cross as far as they changed (frameWire.ts RecordEncoder), from whole for each program
+// attached.
+const plcIo = { inputs: new RecordEncoder(), outputs: new RecordEncoder() }
+let plcIoSentFor: PlcGroup | null = null
+function plcIoSent(host: PlcGroup, shot: PlcFrameWire): PlcFrameSent {
+  if (plcIoSentFor !== host) {
+    plcIoSentFor = host
+    plcIo.inputs.reset()
+    plcIo.outputs.reset()
+  }
+  const { inputs, outputs, ...rest } = shot
+  const out: PlcFrameSent = rest
+  for (const [field, record] of [['inputs', inputs], ['outputs', outputs]] as const) {
+    const sent = plcIo[field].encode(record)
+    if (sent === 'kept') (out.ioKept ??= []).push(field)
+    else if (sent !== 'none' && 'patch' in sent) (out.ioPatches ??= {})[field] = sent.patch
+    else if (sent !== 'none') out[field] = sent.whole
+  }
+  return out
+}
+
+function plcFrame(host: PlcGroup, force: boolean, transfer: Transferable[]): PlcFrameSent {
+  return plcIoSent(host, plcFrameWhole(host, force, transfer))
+}
+
+function plcFrameWhole(host: PlcGroup, force: boolean, transfer: Transferable[]): PlcFrameWire {
   const now = performance.now()
   if (!force && watchSentFor === host && now - watchSentAt < 1000 / WATCH_HZ) return host.snapshot({ watch: false })
   const first = watchSentFor !== host
@@ -451,6 +477,7 @@ function advance(w: SimWorld, stepSec: number): void {
 const frameWire = new FrameWireEncoder()
 function resetFrameWire(): void {
   frameWire.reset()
+  plcIoSentFor = null
 }
 
 /**
@@ -477,17 +504,7 @@ function postFrame(w: SimWorld, held: boolean, fullWatch = false): void {
       kinds: f.kinds,
       caps: f.caps!,
       ...frameWire.encode(f.partIds, f.dressings, f.shapes, f.shapeRefs),
-      ...(f.joints ? { joints: f.joints } : {}),
-      ...(f.subPoses ? { subPoses: f.subPoses } : {}),
-      ...(f.copySpeeds ? { copySpeeds: f.copySpeeds } : {}),
-      ...(f.lamps ? { lamps: f.lamps } : {}),
-      ...(f.values ? { values: f.values } : {}),
-      ...(f.displays ? { displays: f.displays } : {}),
-      ...(f.tags ? { tags: f.tags } : {}),
-      ...(f.basePoses ? { basePoses: f.basePoses } : {}),
-      ...(f.conveyorSpeeds ? { conveyorSpeeds: f.conveyorSpeeds } : {}),
-      ...(f.beamHits ? { beamHits: f.beamHits } : {}),
-      ...(f.marks ? { marks: f.marks } : {}),
+      ...frameWire.encodeRecords(f),
       ...(held ? { paused: true as const } : {}),
       ...(plc ? { plc: plcFrame(plc, fullWatch, plcTransfer) } : {}),
       ...(flowFacts.length > 0 ? { flowFacts } : {}),

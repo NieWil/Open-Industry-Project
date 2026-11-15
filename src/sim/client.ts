@@ -13,7 +13,7 @@ import type { PlcFrameState } from './plcHost'
 import { scenePatch } from './scenePatch'
 import type { MainToWorker, StepStats, WorkerToMain } from './protocol'
 import { SimClockRate } from './simClockRate'
-import { FrameWireDecoder } from './frameWire'
+import { FrameWireDecoder, RecordDecoder } from './frameWire'
 
 /** how a {@link SimClient.stepBy} request ended (protocol.ts 'stepped') */
 export type StepDone = Omit<Extract<WorkerToMain, { type: 'stepped' }>, 'type' | 'seq'>
@@ -46,6 +46,9 @@ export class SimClient {
   /** the in-worker PLC's latest state (watch / %I / %Q / scan telemetry), refreshed with every
    *  frame while a program is attached; null when none is (or before the first frame lands) */
   plcState: PlcFrameState | null = null
+  // the last whole copy of the program's inputs and outputs, which a frame carries only the changes to
+  private readonly plcInputs = new RecordDecoder<TagValue>()
+  private readonly plcOutputs = new RecordDecoder<TagValue>()
   /** the running program's held forces, last set by {@link setForces} */
   forces: Readonly<Record<string, number | boolean>> = {}
 
@@ -141,13 +144,16 @@ export class SimClient {
         if (msg.plc) {
           // the table itself, or a copy of the program's memory to read it from (core/watchTable.ts); neither on a
           // frame between two sends, where the last one stands
-          const { watchBytes, watchLayout, watchKeys, ...plc } = msg.plc
+          const { watchBytes, watchLayout, watchKeys, inputs: inputsSent, outputs: outputsSent, ioKept, ioPatches, ...plc } = msg.plc
+          // the inputs and outputs cross as far as they changed (frameWire.ts): these are the whole of each
+          const inputs = this.plcInputs.accept(inputsSent, ioPatches?.inputs, ioKept?.includes('inputs') === true) ?? {}
+          const outputs = this.plcOutputs.accept(outputsSent, ioPatches?.outputs, ioKept?.includes('outputs') === true) ?? {}
           if (watchKeys !== undefined && this.watchKeySet?.of !== watchKeys) this.watchKeySet = { of: watchKeys, set: {}, layout: null }
           if (watchLayout && this.watchKeySet) this.watchKeySet.layout = watchLayout
           const layout = this.watchKeySet?.layout
           const watch = plc.watch ?? (watchBytes && layout ? memoryTable(layout, watchBytes) : undefined)
           if (watch && watchKeys !== undefined && this.watchKeySet) markKeySet(watch, this.watchKeySet.set)
-          this.plcState = { ...plc, watch: watch ?? this.plcState?.watch ?? {} }
+          this.plcState = { ...plc, inputs, outputs, watch: watch ?? this.plcState?.watch ?? {} }
         } else this.plcState = null
         if (!this._running) return
         // a paused frame advanced no sim time: sampling it would measure real time passing with the sim still
@@ -163,18 +169,9 @@ export class SimClient {
           caps: msg.caps,
           partIds: this.frameWire.partIds,
           simTime: msg.simTime,
-          ...(msg.joints ? { joints: msg.joints } : {}),
-          ...(msg.subPoses ? { subPoses: msg.subPoses } : {}),
-          ...(msg.copySpeeds ? { copySpeeds: msg.copySpeeds } : {}),
-          ...(msg.lamps ? { lamps: msg.lamps } : {}),
-          ...(msg.values ? { values: msg.values } : {}),
-          ...(msg.displays ? { displays: msg.displays } : {}),
-          ...(msg.tags ? { tags: msg.tags } : {}),
-          ...(msg.basePoses ? { basePoses: msg.basePoses } : {}),
-          ...(msg.conveyorSpeeds ? { conveyorSpeeds: msg.conveyorSpeeds } : {}),
-          ...(msg.beamHits ? { beamHits: msg.beamHits } : {}),
+          // (the records by part, each the last copy where the frame did not change it: frameWire.ts)
+          ...this.frameWire.records,
           ...(this.frameWire.dressings ? { dressings: this.frameWire.dressings } : {}),
-          ...(msg.marks ? { marks: msg.marks } : {}),
           ...(this.frameWire.shapes ? { shapes: this.frameWire.shapes, shapeRefs: this.frameWire.shapeRefs } : {}),
         })
       } else if (msg.type === 'alive') {

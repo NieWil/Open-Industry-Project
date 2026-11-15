@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FrameDressing } from '../core/frame'
-import { FrameWireDecoder, FrameWireEncoder } from './frameWire'
+import { FrameWireDecoder, FrameWireEncoder, RecordDecoder, RecordEncoder } from './frameWire'
 
 // The worker sends partIds / dressings only as far as they changed; the client must still hand every consumer
 // the same complete frame the worker built. Each case runs the pair end to end through a structured clone, the
@@ -128,5 +128,117 @@ describe("each body's own shape (core/cargoBody.ts)", () => {
     enc.encode([], undefined, ['a'], { a: ref('acme.drum', 1) })
     enc.reset()
     expect(enc.encode([], undefined, ['a'], { a: ref('acme.drum', 1) }).shapeRefsNew).toEqual({ a: ref('acme.drum', 1) })
+  })
+})
+
+describe('a record that crosses only as far as it changed', () => {
+  /** send `record` through a fresh wire copy, as postMessage would, and give the receiver's whole copy */
+  const wire = (): { send: (record: Record<string, unknown> | undefined) => { got: Readonly<Record<string, unknown>> | undefined; how: string } } => {
+    const encoder = new RecordEncoder()
+    const decoder = new RecordDecoder<unknown>()
+    return {
+      send: (record) => {
+        const sent = structuredClone(encoder.encode(record))
+        const how = typeof sent === 'string' ? sent : 'patch' in sent ? 'patch' : 'whole'
+        const got = decoder.accept(typeof sent !== 'string' && 'whole' in sent ? sent.whole : undefined, typeof sent !== 'string' && 'patch' in sent ? sent.patch : undefined, sent === 'kept')
+        return { got, how }
+      },
+    }
+  }
+
+  it('goes whole first, then not at all while nothing changes, then as the entries that did', () => {
+    const { send } = wire()
+    const lamps = { eye1: { on: false }, eye2: { on: false }, eye3: { on: true } }
+    expect(send(lamps)).toEqual({ got: lamps, how: 'whole' })
+    expect(send(lamps)).toEqual({ got: lamps, how: 'kept' })
+    lamps.eye2.on = true // the world changes its records in place
+    expect(send(lamps)).toEqual({ got: lamps, how: 'patch' })
+    expect(send(lamps).how).toBe('kept')
+  })
+
+  it("keeps the receiver's copy listing its keys as the sender's does", () => {
+    const { send } = wire()
+    let record: Record<string, number> = { a: 1, b: 2, c: 3 }
+    send(record)
+    record = { a: 1, c: 4 } // one dropped, one changed
+    let r = send(record)
+    expect(r.how).toBe('patch')
+    expect(Object.entries(r.got!)).toEqual(Object.entries(record))
+    record = { a: 1, b0: 9, c: 4 } // a new key, in the middle
+    r = send(record)
+    expect(r.how).toBe('whole')
+    expect(Object.entries(r.got!)).toEqual(Object.entries(record))
+    expect(send({}).got).toEqual({})
+  })
+
+  it('hands on a new object when the record changed, and the same entries where they did not', () => {
+    const { send } = wire()
+    const first = send({ a: { v: 1 }, b: { v: 2 } }).got!
+    const same = send({ a: { v: 1 }, b: { v: 2 } }).got!
+    expect(same).toBe(first)
+    const next = send({ a: { v: 1 }, b: { v: 3 } }).got!
+    expect(next).not.toBe(first)
+    expect(next['a']).toBe(first['a'])
+    expect(next['b']).toEqual({ v: 3 })
+    expect(first['b']).toEqual({ v: 2 }) // the last frame's copy is not changed under whoever holds it
+  })
+
+  it('is no record again when the frame has none, and whole when it comes back', () => {
+    const { send } = wire()
+    send({ a: 1 })
+    expect(send(undefined)).toEqual({ got: undefined, how: 'none' })
+    expect(send({ a: 1 })).toEqual({ got: { a: 1 }, how: 'whole' })
+  })
+
+  it('gives the receiver every frame the sender had, over a long run of small changes', () => {
+    const { send } = wire()
+    const parts = Array.from({ length: 60 }, (_, i) => `part${i}`)
+    const record: Record<string, Record<string, number | boolean>> = Object.fromEntries(parts.map((p, i) => [p, { speed: i, on: false }]))
+    let seed = 7
+    const random = (n: number): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n
+    for (let frame = 0; frame < 300; frame++) {
+      const touched = random(4)
+      for (let k = 0; k < touched; k++) {
+        const p = parts[random(parts.length)]!
+        if (random(10) === 0) delete record[p]
+        else record[p] = { speed: random(50), on: random(2) === 0 }
+      }
+      const { got } = send(record)
+      expect(JSON.stringify(got), `frame ${frame}`).toBe(JSON.stringify(record))
+    }
+  })
+})
+
+describe("a frame's records by part", () => {
+  it('reach the client whole on every frame, sent as far as each changed', () => {
+    const encoder = new FrameWireEncoder()
+    const decoder = new FrameWireDecoder()
+    const frame = {
+      lamps: { eye1: { on: false }, eye2: { on: true } },
+      tags: { belt1: { run: true, speed: 1.2 }, eye1: { seen: false } },
+      conveyorSpeeds: { belt1: 1.2 },
+    }
+    const pass = (f: Parameters<FrameWireEncoder['encodeRecords']>[0]): ReturnType<FrameWireEncoder['encodeRecords']> => {
+      const sent = structuredClone(encoder.encodeRecords(f))
+      decoder.accept(sent)
+      return sent
+    }
+    expect(pass(frame)).toEqual(frame)
+    expect(decoder.records).toEqual(frame)
+    // nothing changed: nothing but the names crosses
+    expect(pass(frame)).toEqual({ recordsKept: ['lamps', 'tags', 'conveyorSpeeds'] })
+    expect(decoder.records).toEqual(frame)
+    // one sensor sees a box
+    frame.tags.eye1.seen = true
+    frame.lamps.eye1.on = true
+    expect(pass(frame)).toEqual({ recordsKept: ['conveyorSpeeds'], recordPatches: { lamps: { set: { eye1: { on: true } } }, tags: { set: { eye1: { seen: true } } } } })
+    expect(decoder.records).toEqual(frame)
+    // a record the frame no longer has is gone from the client's too
+    const { conveyorSpeeds: _gone, ...rest } = frame
+    pass(rest)
+    expect(decoder.records).toEqual(rest)
+    // a new world starts whole
+    encoder.reset()
+    expect(pass(rest)).toEqual(rest)
   })
 })

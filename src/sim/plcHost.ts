@@ -13,6 +13,7 @@
 // this samples at the sim's own rate, the true information rate of the world. See src/plc/DEVICE-IO.md.
 
 import { LocalPlcLink, SimController, TaskScheduler } from '../plc'
+import type { RecordPatch } from './frameWire'
 import type { Schedulable, TaskInfo, WiredBindings } from '../plc'
 import type { TagValue } from '../plc'
 import type { WatchLayout } from '../core/watchTable'
@@ -109,6 +110,15 @@ export function shortestHeldIntervalSec(stepHz: number): number {
 export const WATCH_HZ = 10
 
 /** {@link PlcFrameState} as a frame carries it: the variable table only on the frames that bring a new one. */
+/** {@link PlcFrameWire} as a frame carries it: `inputs` and `outputs` only as far as they changed since the last
+ *  frame (frameWire.ts RecordEncoder). One of the record, a patch on the last one, or its name in `ioKept`. */
+export type PlcFrameSent = Omit<PlcFrameWire, 'inputs' | 'outputs'> & {
+  inputs?: PlcFrameState['inputs']
+  outputs?: PlcFrameState['outputs']
+  ioKept?: ('inputs' | 'outputs')[]
+  ioPatches?: Partial<Record<'inputs' | 'outputs', RecordPatch>>
+}
+
 export type PlcFrameWire = Omit<PlcFrameState, 'watch'> & {
   watch?: PlcFrameState['watch']
   /** in place of `watch`: a copy of the controller's memory, read through the layout its program sent (core/watchTable.ts) */
