@@ -147,6 +147,8 @@ export interface AppliedRigInputs {
 /** value-equality for the flat command records a behavior replaces each tick (fresh object, usually
  *  identical content; identity comparison would report every tick as a change) */
 export function flatRecEq(a: Record<string, number | boolean> | undefined, b: Record<string, number | boolean>): boolean {
+  // the same table handed again: a PLC whose outputs did not change hands back the one it built last (LocalPlcLink)
+  if (a === b) return true
   const ka = a ? Object.keys(a) : []
   if (ka.length !== Object.keys(b).length) return false
   for (const k of ka) if (a![k] !== b[k]) return false

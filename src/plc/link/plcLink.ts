@@ -297,6 +297,7 @@ export class LocalPlcLink implements PlcLink {
     this.#inputs = bound.inputs
     this.#outputs = bound.outputs
     this.#inPorts = this.#outPorts = null
+    this.#outTable = null
   }
 
   /** The same compiled program (and so the same variables) with other bindings, for a caller that compiled it once already. */
@@ -407,13 +408,41 @@ export class LocalPlcLink implements PlcLink {
     if (this.#forces.length > 0) this.#applyForces()
     scan()
     if (this.#forces.length > 0) this.#applyForces()
-    const out: Record<string, TagValue> = {}
+    return this.#outputTable()
+  }
+
+  // each output's value as of the last scan, and the table built from them
+  #outValues: (TagValue | undefined)[] = []
+  #outTable: Readonly<Record<string, TagValue>> | null = null
+
+  /**
+   * The output image after a scan. A line's outputs are the same as the scan before on nearly every scan (a 675-output
+   * program changed one on 2 steps in 1,000), and building a named table of them each time cost a quarter of the
+   * program's own scan. So each output is read and held against its last value, and the table is built again only
+   * when one differs. While none does, the same table is handed back: frozen, so a caller cannot write the copy the
+   * next scan returns. "Differs" is by the value itself: 0 and -0 differ, and a NaN equals a NaN.
+   */
+  #outputTable(): Record<string, TagValue> {
     const outs = this.#outputs
-    const outPorts = (this.#outPorts ??= outs.map((n) => this.prog.port(this.#resolve(n))))
+    const ports = (this.#outPorts ??= outs.map((n) => this.prog.port(this.#resolve(n))))
+    let last = this.#outValues
+    let same = this.#outTable !== null && last.length === ports.length
+    if (last.length !== ports.length) last = this.#outValues = new Array<TagValue | undefined>(ports.length).fill(undefined)
+    for (let i = 0; i < ports.length; i++) {
+      const v = ports[i]!.get()
+      const l = last[i]
+      if (v === l ? v === 0 && 1 / v !== 1 / (l as number) : v === v || l === l) {
+        same = false
+        last[i] = v
+      }
+    }
+    if (same) return this.#outTable as Record<string, TagValue>
+    const out: Record<string, TagValue> = {}
     for (let i = 0; i < outs.length; i++) {
-      const v = outPorts[i]!.get()
+      const v = last[i]
       if (v !== undefined) out[outs[i]!] = v
     }
+    this.#outTable = Object.freeze(out)
     return out
   }
 }
