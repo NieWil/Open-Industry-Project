@@ -44,9 +44,9 @@ describe('partScript compile chokepoint', () => {
     const b = instantiatePartScript(src).def!
     const ctxA = { count: 0 } as unknown as PartContext & { count: number }
     const ctxB = { count: 0 } as unknown as PartContext & { count: number }
-    a.step(ctxA)
-    a.step(ctxA)
-    b.step(ctxB)
+    a.step!(ctxA)
+    a.step!(ctxA)
+    b.step!(ctxB)
     expect(ctxA.count).toBe(2)
     expect(ctxB.count).toBe(1) // a shared def would read 3 here
   })
@@ -56,14 +56,14 @@ describe('partScript compile chokepoint', () => {
       // `const m = Math; m.random()` never mentions the banned `Math.random` token pair
       const { def, error } = instantiatePartScript(`const m = Math; definePart({ step() { return m.random() } })`)
       expect(error).toBe('')
-      expect(() => def!.step(ctxStub)).toThrowError(/Math\.random.*ctx\.rng/)
+      expect(() => def!.step!(ctxStub)).toThrowError(/Math\.random.*ctx\.rng/)
     })
 
     it('deterministic Math survives the shim', () => {
       const src = `const m = Math; definePart({ step(ctx) { ctx.out = m.sin(m.PI / 2) } })`
       const { def } = instantiatePartScript(src)
       const ctx = { out: 0 } as unknown as PartContext & { out: number }
-      def!.step(ctx)
+      def!.step!(ctx)
       expect(ctx.out).toBeCloseTo(1)
     })
 
@@ -85,7 +85,7 @@ describe('partScript compile chokepoint', () => {
     it('the Error a part sees is not the host realm Error', () => {
       const { def } = instantiatePartScript(`definePart({ step(ctx) { ctx.same = Error === ctx.hostError } })`)
       const ctx = { same: true, hostError: Error } as unknown as PartContext & { same: boolean }
-      def!.step(ctx)
+      def!.step!(ctx)
       expect(ctx.same).toBe(false)
     })
 
@@ -97,7 +97,7 @@ describe('partScript compile chokepoint', () => {
           `definePart({ step() { Error.prepareStackTrace = () => 'PWNED'; TypeError.prepareStackTrace = () => 'PWNED' } })`,
         )
         expect(error).toBe('')
-        def!.step(ctxStub)
+        def!.step!(ctxStub)
         expect(hostError.prepareStackTrace).toBe(before)
         expect(String(new Error('host').stack)).not.toContain('PWNED')
         expect(String(new TypeError('host').stack)).not.toContain('PWNED')
@@ -110,7 +110,7 @@ describe('partScript compile chokepoint', () => {
       const { def } = instantiatePartScript(`definePart({ step() { throw new Error('belt jammed') } })`)
       let caught: unknown
       try {
-        def!.step(ctxStub)
+        def!.step!(ctxStub)
       } catch (e) {
         caught = e
       }

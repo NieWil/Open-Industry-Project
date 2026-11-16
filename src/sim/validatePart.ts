@@ -280,6 +280,7 @@ export function validatePart(manifest: PackageManifest, behaviorSource: string):
   }
   // A behavior with no step() loads (definePart accepts it) and then crashes the host's first tick.
   if (!decl.hasStep) diagnostics.push({ kind: 'load', message: 'definePart({...}) has no step(ctx) - every part needs one, even an empty `step() {}` for passive cargo' })
+  if (decl.hasBoth) diagnostics.push({ kind: 'load', message: 'definePart({...}) has both step(ctx) and react(ctx) - a part runs every tick (step) or when its inputs change (react), not both' })
 
   const ok = diagnostics.length === 0
   // the level this part was last changed under: kept from the manifest while the part is unchanged (core/parts/partSdk.ts)

@@ -181,7 +181,7 @@ definePart({
   geometry(g) {
     return photoeyeHousing(g)
   },
-  step(ctx) {
+  react(ctx) {
     const s = ctx.sense('lens')
     const present = s.hit && s.distance <= ctx.params.maxRange
     const code = present ? classify(s.color, colorList(ctx.params.colors), ctx.params.tolerance) : 0

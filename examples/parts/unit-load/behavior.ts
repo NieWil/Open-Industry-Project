@@ -34,6 +34,6 @@ definePart({
     filmColor: { type: 'color', default: '#dcecf2', label: 'Film color', group: 'Film', desc: 'Colour of the stretch film: clear film has a faint blue, and loads are also wrapped in white or black film to hide what is inside.' },
     filmOpacity: { type: 'number', unit: '%', default: 0.42, min: 0.1, max: 1, step: 0.01, label: 'Film opacity', group: 'Film', desc: 'How see-through the film is. Clear film shows the cases through it; white or black film is nearly opaque.' },
   },
-  step() {
+  react() {
   },
 })

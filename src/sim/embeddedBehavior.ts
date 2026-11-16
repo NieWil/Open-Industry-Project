@@ -45,6 +45,10 @@ interface Instance {
   ctx: MutableContext
   /** init() is still owed: it runs at the start of the first step, not in create() - see create() */
   needsInit: boolean
+  /** the part asked to be called on the next step (ctx.again) */
+  again: { v: boolean }
+  /** the part read a conveyor's speed this step: one that did not is not called for a speed changing (partSleep.ts) */
+  readSpeeds: { v: boolean }
   out: {
     sv: [number, number, number]
     tags: Record<string, TagVal>
@@ -316,6 +320,11 @@ export interface BehaviorOutput {
   /** ctx.setSurfaceSpeed(speed, link, i): each copy of a posable conveying array at its own speed along its own
    *  local +X, by link, in copy order (0 = stopped). Present only when commanded this tick. */
   copySpeeds?: Record<string, number[]>
+  /** a reactive part (definePart's `react`) that did not ask to be called again: the host calls it next when
+   *  something it is handed changes (partSleep.ts). Never set for a part with `step`. */
+  idle?: boolean
+  /** the part read a conveyor's speed this step (ctx.conveyorRunning / conveyorSpeed) */
+  readSpeeds?: boolean
 }
 
 const instances = new Map<number, Instance>()
@@ -465,6 +474,8 @@ export function create(source: string, paramsJson = '{}', jointsJson?: string, a
       lampState[name] = v
       out.lamps[name] = v
     }
+    const again = { v: false }
+    const readSpeeds = { v: false }
     const ctx: MutableContext = {
       dt: 0,
       simTime: 0,
@@ -723,8 +734,12 @@ export function create(source: string, paramsJson = '{}', jointsJson?: string, a
       rising: (name: string) => readBoolTag(tagsBox.cur[name]) && !readBoolTag(tagsBox.prev[name]),
       falling: (name: string) => !readBoolTag(tagsBox.cur[name]) && readBoolTag(tagsBox.prev[name]),
       used: () => inUsed.used,
+      again: () => {
+        again.v = true
+      },
       conveyorRunning: (id: string): boolean => {
         if (typeof id !== 'string' || id === '') return true // unset ⇒ no interlock
+        readSpeeds.v = true
         const s = inConveyorSpeeds.v[id]
         return s === undefined ? true : s !== 0 // dangling / non-conveyor ⇒ inert; only a real stopped conveyor ⇒ false
       },
@@ -772,7 +787,7 @@ export function create(source: string, paramsJson = '{}', jointsJson?: string, a
     // gave (a joint, a lamp), so an author's "start pose" would silently never happen; a throw would also leave the
     // half-built instance registered. At the first step it sees the real pose, params and tags, and its commands
     // stay in that tick's output unless step() overrides them.
-    instances.set(handle, { def, ctx, out, tags: tagsBox, measuredJoints, measuredGrips, heldWidths, sensed, inUsed, inConveyorSpeeds, servos, needsInit: typeof def.init === 'function' })
+    instances.set(handle, { def, ctx, out, tags: tagsBox, measuredJoints, measuredGrips, heldWidths, sensed, inUsed, inConveyorSpeeds, servos, again, readSpeeds, needsInit: typeof def.init === 'function' })
     return handle
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e))
@@ -782,7 +797,7 @@ export function create(source: string, paramsJson = '{}', jointsJson?: string, a
 
 /** The joint/gripper names a part declared (definePart({ joints, grippers })) - for buildPackage to
  *  cross-check them against the rig geometry, making the typed-bag's "typo = error" promise true at build. */
-export function declarations(handle: number): { joints: string[]; grippers: string[]; lamps: string[]; servos: string[]; interactive: boolean; hasStep: boolean; hasInit: boolean; useParam?: string; snap?: SnapSpec; unit?: UnitLoadDecl; robot?: RobotDecl } {
+export function declarations(handle: number): { joints: string[]; grippers: string[]; lamps: string[]; servos: string[]; interactive: boolean; hasStep: boolean; hasBoth?: boolean; hasInit: boolean; useParam?: string; snap?: SnapSpec; unit?: UnitLoadDecl; robot?: RobotDecl } {
   const inst = instances.get(handle)
   if (!inst) {
     fail(`oip-behavior: bad handle ${handle}`)
@@ -804,7 +819,8 @@ export function declarations(handle: number): { joints: string[]; grippers: stri
     lamps: names(def.lamps),
     servos: names(def.servos),
     interactive: def.interactive === true,
-    hasStep: typeof def.step === 'function',
+    hasStep: typeof def.step === 'function' || typeof def.react === 'function',
+    hasBoth: typeof def.step === 'function' && typeof def.react === 'function',
     hasInit: typeof def.init === 'function',
     ...(useParam !== undefined ? { useParam } : {}),
     ...(snap ? { snap } : {}),
@@ -946,6 +962,8 @@ export function stepDirect(handle: number, input: BehaviorInput, dt: number): Be
     inst.out.arc = null
     inst.out.deckSpeed = null
     inst.out.copySpeeds = null
+    inst.again.v = false
+    inst.readSpeeds.v = false
     const t2 = timed ? now() : 0
 
     if (inst.needsInit) {
@@ -953,7 +971,7 @@ export function stepDirect(handle: number, input: BehaviorInput, dt: number): Be
       inst.def.init!(ctx)
     }
     // dt is also passed positionally for behavior code stored before format 4, whose step(ctx, dt) read it there
-    ;(inst.def.step as (c: typeof ctx, dt: number) => void)(ctx, dt)
+    ;((inst.def.react ?? inst.def.step) as (c: typeof ctx, dt: number) => void)(ctx, dt)
     // the servos run after the tick's commands, so a command takes effect this tick, and each poses its joint
     for (const [name, ax] of inst.servos) {
       stepAxis(ax, dt)
@@ -984,6 +1002,10 @@ export function stepDirect(handle: number, input: BehaviorInput, dt: number): Be
       arc: o.arc ?? undefined,
       deckSpeed: o.deckSpeed ?? undefined,
       copySpeeds: o.copySpeeds ?? undefined,
+      // a servo is the host's to move every step, so a part with one is never idle
+      // (both absent when false, like the fields above: the string boundary's output is then what it was)
+      idle: inst.def.react !== undefined && !inst.again.v && inst.servos.size === 0 ? true : undefined,
+      readSpeeds: inst.readSpeeds.v ? true : undefined,
     }
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e))

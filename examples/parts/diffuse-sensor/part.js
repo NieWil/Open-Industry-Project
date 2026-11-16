@@ -102,7 +102,7 @@ definePart({
     }
     return out
   },
-  step(ctx) {
+  react(ctx) {
     // the host casts the beam out to the maxRange param (its rangeParam); the gate below keeps that explicit
     const s = ctx.sense('lens')
     const want = ctx.params.mark

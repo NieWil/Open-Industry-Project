@@ -84,7 +84,7 @@ definePart({
       Object.assign({ desc: g.merge(...leds), material: 'gray' }, both),
     ]
   },
-  step(ctx) {
+  react(ctx) {
     const s = ctx.sense('lens')
     const inRange = s.hit && s.distance <= ctx.params.maxRange
     const dist = inRange ? s.distance : ctx.params.maxRange

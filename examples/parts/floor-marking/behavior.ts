@@ -129,7 +129,7 @@ definePart({
       { desc: sec.build(), finish: 'mesh', colorParam: 'secondaryColor' },
     ]
   },
-  step() {
+  react() {
     // pure paint — nothing to do
   },
 })

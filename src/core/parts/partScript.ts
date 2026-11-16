@@ -154,7 +154,7 @@ function enterPart<T>(run: () => T, label: Uint8Array | null = null): T {
 }
 // Every entry point a host calls on a definition: wrapping them here budgets every host at once (the sim's
 // step/init/dispose, the renderer's geometry) without each one having to remember a reset.
-const ENTRY_POINTS = ['geometry', 'init', 'step', 'dispose'] as const
+const ENTRY_POINTS = ['geometry', 'init', 'step', 'react', 'dispose'] as const
 function budgeted(captured: PartDefinition, label: Uint8Array | null): PartDefinition {
   // a part may hand over a frozen definition (harden() exists in its sandbox); wrap a copy then
   const def = Object.isFrozen(captured) ? { ...captured } : captured

@@ -59,7 +59,7 @@ definePart({
     parts.push({ desc: g.lathe([[0, 0], [0.017, 0], [0.017, 0.03], [0.012, 0.045], [0, 0.05]], { axis: 'y', center: [-rx, top, 0], segments: 16 }), material: 'lens', lamps: [{ name: 'muting', emissive: [1, 0.45, 0.02] }] })
     return parts
   },
-  step(ctx) {
+  react(ctx) {
     const w = ctx.params.width
     let clear = true
     for (const b of BEAMS) {

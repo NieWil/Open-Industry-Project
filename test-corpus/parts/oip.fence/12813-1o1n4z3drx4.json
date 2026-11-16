@@ -1,0 +1,144 @@
+{
+  "format": 6,
+  "id": "oip.fence",
+  "name": "Fence",
+  "params": {
+    "length": {
+      "type": "number",
+      "default": 4,
+      "min": 0.2,
+      "step": 0.1,
+      "label": "Length (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "x"
+      },
+      "desc": "Fence run length along local +X. Drag the dot on either end face to resize in the viewport; short runs are legitimate filler panels where a guard line meets a machine."
+    },
+    "height": {
+      "type": "number",
+      "default": 2,
+      "min": 0.5,
+      "max": 4,
+      "step": 0.1,
+      "label": "Height (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "y"
+      },
+      "desc": "Panel height. The base stays on the floor and the top face moves, so the viewport dot drags the top."
+    },
+    "postColor": {
+      "type": "color",
+      "default": "#f2bd0f",
+      "label": "Post color",
+      "group": "Colors",
+      "desc": "Post tint."
+    },
+    "meshColor": {
+      "type": "color",
+      "default": "#0d0d0d",
+      "label": "Mesh color",
+      "group": "Colors",
+      "desc": "Tint of the frame and the wire panel it holds."
+    },
+    "omitPostStart": {
+      "type": "boolean",
+      "default": false,
+      "label": "Omit start post",
+      "group": "Posts",
+      "desc": "Suppress the post at local -X so a snapped neighbour draws the shared one instead. Snapping sets this for you."
+    },
+    "omitPostEnd": {
+      "type": "boolean",
+      "default": false,
+      "label": "Omit end post",
+      "group": "Posts",
+      "desc": "Suppress the post at local +X so a snapped neighbour draws the shared one instead. Snapping sets this for you."
+    }
+  },
+  "behavior": "// Fence — a safety barrier: yellow posts auto-spaced along the length (each with a cap and a floor plate) + a\n// black wire-mesh grid (a frame rectangle + vertical/horizontal wires) filling every span, clamped to its posts and\n// anchored to the floor — not a solid slab. Demonstrates a\n// rig dressed by procedural geometry: geometry() emits the mesh (render-only); the hidden full-span 'barrier'\n// rig link is the collision. Length/height-parametric (both with viewport resize dots) + per-surface colour.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// fixed dimensions (m)\n\n// ---- from examples/parts/_shared/hardware.js ----\n// SEAT: how far a piece sinks into the face it stands on. VERT_CAP: stop adding to one submesh well short of\n// the host's per-mesh vertex budget.\nvar SEAT = 0.0005, VERT_CAP = 150000\n// one submesh under construction, counting its vertices against VERT_CAP\nfunction mesh(g) { return { sb: g.surface(), n: 0, full: false } }\nfunction room(m, k) {\n  if (m.full || m.n + k > VERT_CAP) { m.full = true; return false }\n  m.n += k\n  return true\n}\n// an oriented box: centre c, half-extent axes e[0..2] (right-handed: e0 x e1 = e2), each face its own four\n// vertices wound CCW from outside\nfunction obox(m, c, e) {\n  if (!room(m, 24)) return\n  var sb = m.sb\n  var pt = function (s0, s1, s2) {\n    return sb.vertex(c[0] + s0 * e[0][0] + s1 * e[1][0] + s2 * e[2][0], c[1] + s0 * e[0][1] + s1 * e[1][1] + s2 * e[2][1], c[2] + s0 * e[0][2] + s1 * e[1][2] + s2 * e[2][2])\n  }\n  // the face normal to axis n (sign sg): its other two axes a, b with a x b = +n, walked CCW seen from outside\n  var face = function (n, sg) {\n    var a = (n + 1) % 3, b = (n + 2) % 3\n    var q = [[-1, -1], [1, -1], [1, 1], [-1, 1]]\n    var idx = []\n    for (var k = 0; k < 4; k++) {\n      var sv = [0, 0, 0]\n      sv[n] = sg\n      sv[a] = q[k][0] * sg // flipping one in-plane axis reverses the winding for the negative face\n      sv[b] = q[k][1]\n      idx.push(pt(sv[0], sv[1], sv[2]))\n    }\n    sb.quad(idx[0], idx[1], idx[2], idx[3])\n  }\n  for (var n = 0; n < 3; n++) { face(n, 1); face(n, -1) }\n}\n// an axis-aligned box from its min and max corners\nfunction abox(m, x0, y0, z0, x1, y1, z1) {\n  obox(m, [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2], [[(x1 - x0) / 2, 0, 0], [0, (y1 - y0) / 2, 0], [0, 0, (z1 - z0) / 2]])\n}\n// the in-plane axes (u, v) of a face normal to axis ax, with u x v = +ax\nvar PLANE = [[1, 2], [2, 0], [0, 1]]\n// a hex prism (bolt head, nut, thread end) standing on a face: base centre p, rising h along axis ax in\n// direction s (+1/-1), af across flats. The base sits on the face and is never seen, so it isn't emitted.\nfunction hex(m, p, ax, s, af, h) {\n  if (!room(m, 31)) return\n  var sb = m.sb, u = PLANE[ax][0], v = PLANE[ax][1], r = af / Math.sqrt(3)\n  var ring = function (t) {\n    var out = []\n    for (var k = 0; k < 6; k++) {\n      var a = (k * Math.PI) / 3, q = [p[0], p[1], p[2]]\n      q[u] += r * Math.cos(a)\n      q[v] += r * Math.sin(a)\n      q[ax] += s * t\n      out.push(q)\n    }\n    return out\n  }\n  var lo = ring(-SEAT), hi = ring(h)\n  var V = function (q) { return sb.vertex(q[0], q[1], q[2]) }\n  for (var k = 0; k < 6; k++) {\n    var k1 = (k + 1) % 6\n    var b0 = V(lo[k]), b1 = V(lo[k1]), f1 = V(hi[k1]), f0 = V(hi[k])\n    // CCW about +ax, so tangent x (+ax) points outward; a prism rising along -ax walks the other way\n    if (s > 0) sb.quad(b0, b1, f1, f0)\n    else sb.quad(b1, b0, f0, f1)\n  }\n  var cc = [p[0], p[1], p[2]]\n  cc[ax] += s * h\n  var c = V(cc), cap = []\n  for (var k2 = 0; k2 < 6; k2++) cap.push(V(hi[k2]))\n  for (var k3 = 0; k3 < 6; k3++) {\n    if (s > 0) sb.triangle(c, cap[k3], cap[(k3 + 1) % 6])\n    else sb.triangle(c, cap[(k3 + 1) % 6], cap[k3])\n  }\n}\n// a floor anchor on a plate whose top is at y: a square washer, a hex nut, and the stud end standing out of it\nfunction anchor(m, x, y, z, af) {\n  af = af || 0.022\n  var w = af * 1.45, wt = 0.003, nh = af * 0.55\n  abox(m, x - w / 2, y - SEAT, z - w / 2, x + w / 2, y + wt, z + w / 2)\n  hex(m, [x, y + wt, z], 1, 1, af, nh)\n  hex(m, [x, y + wt + nh, z], 1, 1, af * 0.55, af * 0.4)\n}\n\nvar POST = 0.06, MAX_SPACING = 1.5, FRAME = 0.03, WIRE = 0.008, SPACING = 0.1\nvar CAP_H = 0.03, CAP_FP = POST * 1.08, INSET = 0.08\n// Post hardware, SHARED with the Safety Gate (same numbers, same heights) so a gate in a fence line matches it:\n// a floor plate under every post, and a clamp COLLAR round the post at each clamp height with a STRAP from the\n// collar into the panel frame. Every piece is a little bigger or smaller than what it meets, never flush with it,\n// so no two faces share a plane (a shared plane z-fights). Four floor anchors on every plate, ANCHOR_IN out from\n// the post's centre on each diagonal. Render-only: the hidden 'barrier' is the collision.\nvar FOOT = 0.12, FOOT_T = 0.01, COLLAR = POST + 0.012, COLLAR_H = 0.05, STRAP_H = 0.04, STRAP_T = 0.012\nvar CLAMP_IN = 0.2, SINK = 0.005, ANCHOR_IN = 0.043, ANCHOR_AF = 0.016\n// the clamp heights for a panel spanning yb..yt: near the top and the bottom, or one mid-height on a short panel\nfunction clampHeights(yb, yt) { return yt - yb > CLAMP_IN * 3 ? [yb + CLAMP_IN, yt - CLAMP_IN] : [(yb + yt) / 2] }\n\ndefinePart({\n  params: {\n    // both sizes are viewport-editable: a 'face' handle puts a resize dot on that axis's faces (docs/part-gizmos.md).\n    // X is centre-origin (the opposite end holds); Y is base-origin, so the +Y dot drags the top and the base stays put.\n    // The floor is a FILLER PANEL, not a usable run. A guard line is only closed where it meets the machine,\n    // and the piece that closes it is whatever the leftover measures — commonly a few hundred mm, as where the\n    // demo cell's north run returns to the case line (a 0.48 m slot, so 0.40 m of fence). At 0.5 no fence could\n    // shut that at all and the param quietly clamped, which reads as a guarded cell with a person-sized hole in\n    // it. 0.2 is where a panel stops being one: the two end posts leave 0.12 of mesh between them.\n    length: { type: 'number', default: 4, min: 0.2, step: 0.1, label: 'Length (m)', handle: { kind: 'face', axis: 'x' }, desc: 'Fence run length along local +X. Drag the dot on either end face to resize in the viewport; short runs are legitimate filler panels where a guard line meets a machine.' },\n    height: { type: 'number', default: 2, min: 0.5, max: 4, step: 0.1, label: 'Height (m)', handle: { kind: 'face', axis: 'y' }, desc: 'Panel height. The base stays on the floor and the top face moves, so the viewport dot drags the top.' },\n    postColor: { type: 'color', default: '#f2bd0f', label: 'Post color', group: 'Colors', desc: 'Post tint.' },\n    meshColor: { type: 'color', default: '#0d0d0d', label: 'Mesh color', group: 'Colors', desc: 'Tint of the frame and the wire panel it holds.' },\n    omitPostStart: { type: 'boolean', default: false, label: 'Omit start post', group: 'Posts', desc: 'Suppress the post at local -X so a snapped neighbour draws the shared one instead. Snapping sets this for you.' },\n    omitPostEnd: { type: 'boolean', default: false, label: 'Omit end post', group: 'Posts', desc: 'Suppress the post at local +X so a snapped neighbour draws the shared one instead. Snapping sets this for you.' },\n  },\n  geometry(g, p) {\n    var length = typeof p.length === 'number' && p.length > 0 ? p.length : 4\n    var height = typeof p.height === 'number' && p.height > 0 ? p.height : 2\n    var omitStart = p.omitPostStart === true\n    var omitEnd = p.omitPostEnd === true\n    var box = function (cx, cy, cz, sx, sy, sz) { return g.box([sx, sy, sz], [cx, cy, cz]) }\n    var posts = []\n    var wires = [] // the frame, wires, caps and clamps: one meshColor submesh\n    var hw = mesh(g) // the floor anchors, merged into it (the fixings share the clamps' colour, and a fence line is\n    //                  many fences, so a draw of their own each would add up)\n    // fill [xa,xb] x [yb,yt] with a frame rectangle + a wire grid\n    var panel = function (xa, xb, yb, yt) {\n      var cx = (xa + xb) / 2, cy = (yb + yt) / 2, w = xb - xa, h = yt - yb\n      wires.push(box(cx, yb, 0, w, FRAME, FRAME), box(cx, yt, 0, w, FRAME, FRAME))\n      wires.push(box(xa, cy, 0, FRAME, h, FRAME), box(xb, cy, 0, FRAME, h, FRAME))\n      var cols = Math.max(1, Math.round(w / SPACING)), colStep = w / cols\n      for (var i = 1; i < cols; i++) wires.push(box(xa + i * colStep, cy, 0, WIRE, h, WIRE))\n      var rows = Math.max(1, Math.round(h / SPACING)), rowStep = h / rows\n      for (var j = 1; j < rows; j++) wires.push(box(cx, yb + j * rowStep, 0, w, WIRE, WIRE))\n    }\n    var hl = length / 2\n    var numSpans = Math.max(1, Math.ceil(length / MAX_SPACING))\n    var span = length / numSpans\n    var inset = Math.min(INSET, height * 0.1)\n    var yb = inset, yt = height - inset\n    var margin = POST * 0.5 + 0.01\n    var clampYs = clampHeights(yb, yt)\n    var postXs = []\n    for (var s0 = 0; s0 <= numSpans; s0++) postXs.push(-hl + s0 * span)\n    for (var i = 0; i < postXs.length; i++) {\n      if ((i === 0 && omitStart) || (i === numSpans && omitEnd)) continue // a snapped neighbour supplies the corner post\n      var x = postXs[i]\n      posts.push(box(x, height / 2, 0, POST, height, POST))\n      posts.push(box(x, FOOT_T / 2, 0, FOOT, FOOT_T, FOOT))\n      wires.push(box(x, height + CAP_H / 2, 0, CAP_FP, CAP_H, CAP_FP))\n      for (var c = 0; c < clampYs.length; c++) wires.push(box(x, clampYs[c], 0, COLLAR, COLLAR_H, COLLAR))\n      for (var ax = -1; ax <= 1; ax += 2) for (var az = -1; az <= 1; az += 2) anchor(hw, x + ax * ANCHOR_IN, FOOT_T, az * ANCHOR_IN, ANCHOR_AF)\n    }\n    // a strap from the collar round the post at px into the frame's vertical bar at fx (either side)\n    var strap = function (px, fx, y) {\n      var dir = fx > px ? 1 : -1\n      var x0 = px + dir * (COLLAR / 2 - SINK)\n      wires.push(box((x0 + fx) / 2, y, 0, Math.abs(fx - x0), STRAP_H, STRAP_T))\n    }\n    for (var s = 0; s < numSpans; s++) {\n      var xa = postXs[s] + margin, xb = postXs[s + 1] - margin\n      if (xb > xa) {\n        panel(xa, xb, yb, yt)\n        for (var k = 0; k < clampYs.length; k++) { strap(postXs[s], xa, clampYs[k]); strap(postXs[s + 1], xb, clampYs[k]) }\n      }\n    }\n    var parts = []\n    if (posts.length) parts.push({ desc: g.merge.apply(g, posts), material: 'postMetal', colorParam: 'postColor' })\n    wires.push(hw.sb.build())\n    parts.push({ desc: g.merge.apply(g, wires), material: 'meshMetal', colorParam: 'meshColor' })\n    return parts\n  },\n  react() {},\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "barrier",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            2,
+            0.06
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            },
+            {
+              "axis": 1,
+              "param": "height",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          1,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": 0.5
+          }
+        ],
+        "hidden": true
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 4,
+      "width": 0.12,
+      "top": 2
+    }
+  },
+  "category": "Structure",
+  "snap": {
+    "chain": {
+      "group": "barrierFence",
+      "lengthParam": "length",
+      "reach": 1,
+      "omitStartParam": "omitPostStart",
+      "omitEndParam": "omitPostEnd"
+    }
+  },
+  "materials": [
+    {
+      "id": "postMetal",
+      "color": [
+        0.949,
+        0.741,
+        0.059
+      ],
+      "metalness": 0.1,
+      "roughness": 0.45
+    },
+    {
+      "id": "meshMetal",
+      "color": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "metalness": 0.3,
+      "roughness": 0.6
+    }
+  ],
+  "sdk": {
+    "level": 16,
+    "of": "v2:11601:10dgs728vpv"
+  }
+}

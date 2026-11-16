@@ -1,6 +1,6 @@
 {
   "name": "@oip/part-sdk",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Type definitions for authoring Open Industry Project custom parts. Types only; the simulator provides the definePart() global at runtime.",
   "license": "MIT",
   "author": "Automation Standard LLC and Contributors",

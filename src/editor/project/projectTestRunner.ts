@@ -184,7 +184,7 @@ export function runProjectTest(
   Jolt: JoltModule,
   project: ProjectJSON,
   spec: TestSpec,
-  opts?: { lockstep?: Lockstep; trace?: TraceRecorder; onFrame?: (frame: Readonly<BoxFrame>, extras: FrameExtras) => void; flowFacts?: boolean },
+  opts?: { lockstep?: Lockstep; trace?: TraceRecorder; onFrame?: (frame: Readonly<BoxFrame>, extras: FrameExtras) => void; flowFacts?: boolean; wakeAllParts?: boolean },
 ): ProjectTestOutcome {
   const { scene, stProgram, controller, stScanMs, hz } = prepareScene(project)
   const badProbes = probePartErrors(scene.parts, spec.checks)
@@ -192,7 +192,7 @@ export function runProjectTest(
   // The scene's own step rate. It is the rate the editor's Play runs at, and a test
   // stepping at another one validates a different machine: sensors sampled coarser or finer, PLC
   // outputs landing a different number of milliseconds after the input that caused them.
-  const world = new SimWorld(Jolt, scene, { hz, ...(opts?.flowFacts === false ? { flowFacts: false } : {}) })
+  const world = new SimWorld(Jolt, scene, { hz, ...(opts?.flowFacts === false ? { flowFacts: false } : {}), ...(opts?.wakeAllParts ? { wakeAllParts: true } : {}) })
   // what onFrame may ask beyond the frame, each read only when asked (the cargo snapshots' contacts)
   const frameExtras: FrameExtras = { contacts: () => world.cargoContacts() }
   // The scan time Play uses: the project's own (what the editor loads, sceneFile.ts), or the editor's default when it

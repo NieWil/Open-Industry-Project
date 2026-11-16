@@ -246,6 +246,10 @@ export interface BehaviorRecord {
    *  tick (no per-tick object churn). The runtime copies every field into its own persistent state, so it's
    *  safe to reuse / share references (b.pos, the tag tables) here. */
   input?: BehaviorInput
+  /** a reactive part's last inputs, and whether it is waiting for one to change (sim/partSleep.ts) */
+  sleep?: import('./partSleep').SleepState
+  /** where this part's conveyor entries are in the native facet table (ConveyorFacets.syncPart) */
+  facetSlots?: { rev: number; entries: ConveyorEntry[]; slots: number[] }
 }
 
 /**
@@ -283,6 +287,8 @@ export function behaviorRecord(handle: number, pos: [number, number, number], fw
     tags: undefined,
     mobile: undefined,
     input: undefined,
+    sleep: undefined,
+    facetSlots: undefined,
   }
 }
 

@@ -60,6 +60,7 @@ import { CargoFlow } from './cargoFlow'
 import { CargoRegistry } from './cargoRegistry'
 import { DECK_AXES } from './conveyorContacts'
 import { ConveyorFacets } from './conveyorFacets'
+import { newSleepState, noteCall, waits } from './partSleep'
 import { driveDeckEntries } from './deckDrive'
 import { SimFlowFacts } from './flowFacts'
 import { buildFrame } from './frameBuild'
@@ -217,6 +218,7 @@ export class SimWorld implements SimCore<BoxFrame> {
    *  8 of them per step, ~2.8 us, most of its reported cost. That overhead makes the per-part script floor
    *  look flat and body-independent. Probes turn it on; shipping runs leave it off. */
   perfParts = false
+  private readonly wakeAllParts: boolean // a test's check: call every reactive part on every step
   private disposed = false
 
   /** benchRaw (?joltraw, bench-only): skip the contact listener entirely and disable sleeping, so
@@ -227,7 +229,8 @@ export class SimWorld implements SimCore<BoxFrame> {
    *  hz: the scene's physics step rate; absent steps at DEFAULT_SIM_HZ; anything else goes through toSimRate.
    *  flowFacts: false skips collecting flow facts (sim/flowFacts.ts): the A/B lever that shows they cost little and
    *  change nothing. */
-  constructor(jolt: JoltModule, scene: SceneJSON, opts: { benchRaw?: boolean; forceJsListener?: boolean; perfParts?: boolean; hz?: number; flowFacts?: boolean } = {}) {
+  constructor(jolt: JoltModule, scene: SceneJSON, opts: { benchRaw?: boolean; forceJsListener?: boolean; perfParts?: boolean; hz?: number; flowFacts?: boolean; wakeAllParts?: boolean } = {}) {
+    this.wakeAllParts = opts.wakeAllParts === true
     const J = jolt
     this.J = J
     this.hz = toSimRate(opts.hz)
@@ -417,7 +420,7 @@ export class SimWorld implements SimCore<BoxFrame> {
     this.pilot.drive(this.dt)
     this.rigDriver.drive(this.perfParts)
     const t3 = performance.now()
-    this.facets.sync() // After behaviors mutate entries, before the solver reads the table
+    for (const b of this.called) this.facets.syncPart(b) // only a called part drove an entry; the solver reads the table next
     const t4 = performance.now()
     this.joltInterface.Step(this.dt, 1)
     const p = this.phaseMs
@@ -448,6 +451,7 @@ export class SimWorld implements SimCore<BoxFrame> {
   // Run each attached custom-part script and fold its surface-velocity output into the live conveyor
   // entry, before the physics Step so cargo is dragged this tick. Event-cheap: a handful of parts, a
   // flat JSON in/out per part - dwarfed by the solver. simTime/dt are sim time (deterministic).
+  private readonly called: BehaviorRecord[] = [] // this tick: every `step` part, and the `react` parts with a reason
   private tickBehaviors(): void {
     const bus = this.bus
     const behaviors = bus.behaviors
@@ -469,6 +473,7 @@ export class SimWorld implements SimCore<BoxFrame> {
     // this tick's conveyor updates (which happen below), invisible at spawn cadences. undefined ⇒ no conveyors.
     const conveyorSpeeds = bus.speedSnapshot()
     const sensors = this.sensors
+    this.called.length = 0
     for (const b of behaviors) {
       // C-sensing: cast this part's sensor beams against cargo and hand the nearest hits in as `input.beams`
       const emitters = b.partId ? sensors.beamsOf(b.partId) : undefined
@@ -527,6 +532,10 @@ export class SimWorld implements SimCore<BoxFrame> {
       inp.gripWidths = b.heldWidths
       inp.used = used
       inp.conveyorSpeeds = conveyorSpeeds
+      // A reactive part with nothing new to answer is not called, and its outputs stand (partSleep.ts)
+      const sl = (b.sleep ??= newSleepState())
+      if (waits(sl, inp, this.wakeAllParts)) continue
+      this.called.push(b)
       const ts = this.perfParts ? performance.now() : 0
       const parsed = behavior.stepDirect(b.handle, inp, dt)
       if (this.perfParts) {
@@ -618,6 +627,7 @@ export class SimWorld implements SimCore<BoxFrame> {
           b.pos = [b.pos[0] + b.fwd[0] * v, b.pos[1], b.pos[2] + b.fwd[2] * v]
           b.mobile = true
         }
+        noteCall(sl, inp, parsed)
       } catch {
         // a script error already surfaced via behavior.error(); leave the last velocity/joints in place
       }

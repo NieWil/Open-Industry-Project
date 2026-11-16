@@ -12,7 +12,7 @@
 // This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the
 // _shared/ modules it imports joined in and `manifest` left out) and rig.json (the manifest).
 
-import { commandedSpeed, conveyorDrive, driveFeedbackParams, driveRampParams, publishDrive, rampedSpeed } from '../_shared/conveyorDrive.js'
+import { commandedSpeed, conveyorDrive, driveAgain, driveFeedbackParams, driveRampParams, publishDrive, rampedSpeed } from '../_shared/conveyorDrive.js'
 import { frictionParam } from '../_shared/conveyorFriction.js'
 import { METRIC_ONLY, reportSpeed, speedFpmTagParam, speedUnitParams } from '../_shared/conveyorUnits.js'
 import { guardGapRuns, guardGapsParam } from '../_shared/guardGaps.js'
@@ -399,7 +399,7 @@ definePart({
     if (railFills.length) parts.push({ desc: g.merge.apply(g, railFills), finish: 'frame' })
     return parts
   },
-  step(ctx) {
+  react(ctx) {
     // Tag precedence: speedTag (REAL in) replaces the speed param; runTag (BOOL) gates the commanded speed to 0
     // only while a controller DRIVES it (ctx.tagDriven — undriven, the authored speed rules); runningTag (BOOL out)
     // = effective speed ≠ 0.
@@ -415,5 +415,7 @@ definePart({
     // drive feedback: the velocity as a share of the speed at 30, an encoder pulse and the odometer
     publishDrive(ctx, drive, cmd, s)
     ctx.setSurfaceVelocity({ x: ctx.forward.x * s, y: 0, z: ctx.forward.z * s })
+    // the next tick is needed only while the drive ramps or counts travel (conveyorDrive.js)
+    driveAgain(ctx, drive, running ? commanded : 0)
   },
 })

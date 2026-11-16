@@ -86,5 +86,5 @@ definePart({
       { desc: boltTemplate, finish: 'bolt', instances: bolts },
     ]
   },
-  step() {},
+  react() {},
 })

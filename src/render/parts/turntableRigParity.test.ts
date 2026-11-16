@@ -257,7 +257,7 @@ function turntable(overrides: Record<string, ParamValue>, tags: Record<string, n
     sv = null
     arc = null
     out = {}
-    def.step(ctx as never)
+    def.step!(ctx as never)
     ctx.simTime += ctx.dt
     return { joint: joints.rotate, sv, arc, tags: out, gripped: grips.deck === true }
   }

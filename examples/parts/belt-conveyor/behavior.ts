@@ -117,6 +117,14 @@ function publishDrive(ctx, drive, cmd, v) {
   if (ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)
 }
 
+/** In react(), last: ask for the next tick while the drive has work of its own. It has while it ramps toward
+ *  `target` (the command, gates applied, as handed to rampedSpeed), and while it runs with a pulse or an encoder tag
+ *  to count travel on. A conveyor at its commanded speed with neither waits for a tag to change, and its surface
+ *  keeps the speed it was last given. */
+function driveAgain(ctx, drive, target) {
+  if (drive.driven !== target || (drive.driven !== 0 && (ctx.params.pulseTag || ctx.params.encoderTag))) ctx.again()
+}
+
 // ---- from examples/parts/_shared/conveyorFriction.js ----
 /** The `friction` param, with the surface's default grip against a carton. */
 function frictionParam(carton) {
@@ -944,10 +952,10 @@ definePart({
     if (railFills.length) parts.push({ desc: g.merge.apply(g, railFills), finish: 'frame' })
     return parts
   },
-  step(ctx) {
+  react(ctx) {
     // Tag precedence: speedTag (REAL in) replaces the speed param as the commanded speed; runTag (BOOL)
     // gates it to 0, but ONLY while a controller actually drives the tag (ctx.tagDriven, output ownership) —
-    // undriven, the authored speed rules; runningTag (BOOL out) = effective speed ≠ 0, written every step.
+    // undriven, the authored speed rules; runningTag (BOOL out) = effective speed ≠ 0, written on every call.
     // the unit the conveyor is set up in: everything below this line is m/s
     const cmd = commandedSpeed(ctx)
     const fpm = cmd.fpm, commanded = cmd.commanded
@@ -962,5 +970,7 @@ definePart({
     // flow axis = the part's local +X in world space; the host redistributes this speed along each segment's
     // own tangent, so cargo is carried up/over an incline too.
     ctx.setSurfaceVelocity({ x: ctx.forward.x * s, y: 0, z: ctx.forward.z * s })
+    // the next tick is needed only while the drive ramps or counts travel (conveyorDrive.js)
+    driveAgain(ctx, drive, running ? commanded : 0)
   },
 })

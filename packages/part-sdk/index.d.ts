@@ -1023,6 +1023,7 @@ export interface PartContext<P extends ParamSchema = ParamSchema, J extends stri
      * tag). Only fires while the sim runs (the behavior isn't ticking at idle). Deterministic given the inputs.
      */
     used(): boolean;
+    again(): void;
     /**
      * Is the conveyor part with this `id` currently running (commanding a non-zero surface speed)? The
      * cross-part interlock primitive: a spawner passes its `partRef` param to pause the line while the feeding
@@ -1793,8 +1794,12 @@ export interface PartDefinition<P extends ParamSchema = ParamSchema, J extends s
      *  already holds the placed position, the params and the tags, and anything it commands (a joint, a lamp)
      *  takes effect in that tick unless step() overrides it. A throw is reported as that tick's error. */
     init?(ctx: PartContext<P, J, G, L, S>): void;
-    /** run every fixed sim tick; the tick's length is `ctx.dt` (seconds) */
-    step(ctx: PartContext<P, J, G, L, S>): void;
+    /** run every fixed sim tick; the tick's length is `ctx.dt` (seconds). A part has `step` or {@link react}, not both. */
+    step?(ctx: PartContext<P, J, G, L, S>): void;
+    /** In place of `step`, for a part that only answers its inputs: called on the first tick, when something the host
+     *  hands it changed, and after a call that asked with `ctx.again()`. Else what it last commanded stands. The part
+     *  authoring guide's "`react`" section has the rules. */
+    react?(ctx: PartContext<P, J, G, L, S>): void;
     /** teardown when the part is removed */
     dispose?(ctx: PartContext<P, J, G, L, S>): void;
 }

@@ -102,3 +102,11 @@ export function publishDrive(ctx, drive, cmd, v) {
   drive.odo += v * ctx.dt
   if (ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)
 }
+
+/** In react(), last: ask for the next tick while the drive has work of its own. It has while it ramps toward
+ *  `target` (the command, gates applied, as handed to rampedSpeed), and while it runs with a pulse or an encoder tag
+ *  to count travel on. A conveyor at its commanded speed with neither waits for a tag to change, and its surface
+ *  keeps the speed it was last given. */
+export function driveAgain(ctx, drive, target) {
+  if (drive.driven !== target || (drive.driven !== 0 && (ctx.params.pulseTag || ctx.params.encoderTag))) ctx.again()
+}

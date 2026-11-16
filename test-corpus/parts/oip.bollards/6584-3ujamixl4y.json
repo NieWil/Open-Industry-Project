@@ -1,0 +1,64 @@
+{
+  "format": 6,
+  "id": "oip.bollards",
+  "name": "Safety Bollards",
+  "params": {
+    "count": {
+      "type": "number",
+      "default": 5,
+      "min": 1,
+      "max": 16,
+      "step": 1,
+      "label": "Posts",
+      "desc": "How many posts in the row. They run along local X from the part origin."
+    },
+    "spacing": {
+      "type": "number",
+      "default": 1.2,
+      "min": 0.4,
+      "max": 3,
+      "step": 0.05,
+      "label": "Spacing (m)",
+      "desc": "Centre-to-centre gap between posts. Set it narrower than whatever you mean to keep out, since the posts stop nothing that fits between them."
+    },
+    "height": {
+      "type": "number",
+      "default": 0.9,
+      "min": 0.4,
+      "max": 1.5,
+      "step": 0.05,
+      "label": "Height (m)",
+      "desc": "Height of each post above the floor."
+    },
+    "radius": {
+      "type": "number",
+      "default": 0.06,
+      "min": 0.03,
+      "max": 0.2,
+      "step": 0.005,
+      "label": "Post radius (m)",
+      "desc": "Thickness of each post."
+    },
+    "color": {
+      "type": "color",
+      "default": "#f2b90c",
+      "label": "Color",
+      "desc": "Post tint."
+    }
+  },
+  "behavior": "// Safety Bollards — a row of protective steel posts. Demonstrates MeshPart.instances: geometry(g, p) builds\n// one unit bollard template (a capped cylinder, radius 1 x height 1, base at y=0) and returns it as a single\n// MeshPart whose 'instances' place 'count' copies along X, each scaled to the chosen post radius/height. The\n// host draws the row as one InstancedMesh — one draw call regardless of count — and since the template is built\n// from constants (only the per-instance transforms use params), two bollard parts share the same unit geometry\n// in the scene-global instance pool. Each post stands on a painted base plate held to the slab by four anchor\n// bolts, the way a surface-mounted bollard is installed; both are banks of their own, built from constants too.\n// Render-only: no collision, no conveying.\n\ndefinePart({\n  params: {\n    count: { type: 'number', default: 5, min: 1, max: 16, step: 1, label: 'Posts', desc: 'How many posts in the row. They run along local X from the part origin.' },\n    spacing: { type: 'number', default: 1.2, min: 0.4, max: 3, step: 0.05, label: 'Spacing (m)', desc: 'Centre-to-centre gap between posts. Set it narrower than whatever you mean to keep out, since the posts stop nothing that fits between them.' },\n    height: { type: 'number', default: 0.9, min: 0.4, max: 1.5, step: 0.05, label: 'Height (m)', desc: 'Height of each post above the floor.' },\n    radius: { type: 'number', default: 0.06, min: 0.03, max: 0.2, step: 0.005, label: 'Post radius (m)', desc: 'Thickness of each post.' },\n    color: { type: 'color', default: '#f2b90c', label: 'Color', desc: 'Post tint.' },\n  },\n  geometry(g, p) {\n    // one unit bollard: a straight shaft (y 0..0.86) + a chamfered shoulder (0.86..1.0, radius 1 -> 0.6) + top\n    // and base caps, all at radius 1 / height 1 so every size shares one pooled geometry (size lives in 'scale')\n    var N = 16\n    var sfc = g.surface()\n    function ring(y, r) {\n      var v = []\n      for (var k = 0; k < N; k++) { var a = (k / N) * Math.PI * 2; v.push(sfc.vertex(Math.cos(a) * r, y, Math.sin(a) * r)) }\n      return v\n    }\n    var r0 = ring(0, 1), r1 = ring(0.86, 1), r2 = ring(1, 0.6)\n    function wall(L, U) { for (var k = 0; k < N; k++) { var k2 = (k + 1) % N; sfc.quad(L[k], U[k], U[k2], L[k2]) } } // CCW from outside\n    wall(r0, r1)\n    wall(r1, r2)\n    for (var k = 1; k < N - 1; k++) sfc.triangle(r2[0], r2[k + 1], r2[k]) // top cap (+Y)\n    for (var k = 1; k < N - 1; k++) sfc.triangle(r0[0], r0[k], r0[k + 1]) // base cap (-Y, hidden against floor)\n    var template = sfc.build()\n\n    // base plate: a unit box (half-size 1 in X/Z, 1 tall, base at y=0); its size lives in the instance scale\n    var pl = g.surface()\n    function boxCorner(x, y, z) { return pl.vertex(x, y, z) }\n    var b0 = boxCorner(-1, 0, -1), b1 = boxCorner(1, 0, -1), b2 = boxCorner(1, 0, 1), b3 = boxCorner(-1, 0, 1)\n    var t0 = boxCorner(-1, 1, -1), t1 = boxCorner(1, 1, -1), t2 = boxCorner(1, 1, 1), t3 = boxCorner(-1, 1, 1)\n    pl.quad(t0, t3, t2, t1) // top\n    pl.quad(b0, b1, b2, b3) // bottom (hidden against the floor)\n    pl.quad(b0, t0, t1, b1) // -Z\n    pl.quad(b2, t2, t3, b3) // +Z\n    pl.quad(b1, t1, t2, b2) // +X\n    pl.quad(b3, t3, t0, b0) // -X\n    var plateTemplate = pl.build()\n\n    // anchor bolt, at its real size (an M12 wedge anchor): a hex nut on the plate with the threaded end standing\n    // proud of it. Fixed size whatever the post, so every row's bolts share one template.\n    var bs = g.surface()\n    function bring(n, y, r, phase) {\n      var v = []\n      for (var k = 0; k < n; k++) { var a = phase + (k / n) * Math.PI * 2; v.push(bs.vertex(Math.cos(a) * r, y, Math.sin(a) * r)) }\n      return v\n    }\n    function bwall(L, U) { for (var k = 0; k < L.length; k++) { var k2 = (k + 1) % L.length; bs.quad(L[k], U[k], U[k2], L[k2]) } }\n    function bcap(R) { for (var k = 1; k < R.length - 1; k++) bs.triangle(R[0], R[k + 1], R[k]) } // facing +Y\n    var nutLo = bring(6, 0, 0.011, Math.PI / 6), nutHi = bring(6, 0.01, 0.011, Math.PI / 6)\n    bwall(nutLo, nutHi)\n    bcap(nutHi)\n    var studLo = bring(8, 0.01, 0.006, 0), studHi = bring(8, 0.022, 0.006, 0)\n    bwall(studLo, studHi)\n    bcap(studHi)\n    var boltTemplate = bs.build()\n\n    var count = Math.max(1, Math.min(16, Math.round(typeof p.count === 'number' ? p.count : 5)))\n    var spacing = typeof p.spacing === 'number' && p.spacing > 0 ? p.spacing : 1.2\n    var height = typeof p.height === 'number' && p.height > 0 ? p.height : 0.9\n    var radius = typeof p.radius === 'number' && p.radius > 0 ? p.radius : 0.06\n    var x0 = -((count - 1) * spacing) / 2\n    var PLATE_T = 0.012 // plate thickness (m)\n    var plateHalf = radius * 2.25 // a square plate 4.5 post radii across\n    var boltOff = plateHalf * 0.72 // bolts on the plate's diagonals, clear of the post\n    var insts = [], plates = [], bolts = []\n    for (var i = 0; i < count; i++) {\n      var x = x0 + i * spacing\n      insts.push({ position: [x, 0, 0], scale: [radius, height, radius] })\n      plates.push({ position: [x, 0, 0], scale: [plateHalf, PLATE_T, plateHalf] })\n      for (var sx = -1; sx <= 1; sx += 2) for (var sz = -1; sz <= 1; sz += 2) bolts.push({ position: [x + sx * boltOff, PLATE_T, sz * boltOff], scale: [1, 1, 1] })\n    }\n\n    return [\n      { desc: template, finish: 'guard', colorParam: 'color', instances: insts },\n      { desc: plateTemplate, finish: 'guard', colorParam: 'color', instances: plates },\n      { desc: boltTemplate, finish: 'bolt', instances: bolts },\n    ]\n  },\n  react() {},\n})\n",
+  "geometry": {
+    "kind": "drawn",
+    "bounds": {
+      "length": 5.07,
+      "width": 0.27,
+      "top": 0.9
+    }
+  },
+  "category": "Structure",
+  "materials": [],
+  "sdk": {
+    "level": 16,
+    "of": "v2:5812:18f6vklfku8"
+  }
+}

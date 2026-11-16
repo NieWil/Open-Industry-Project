@@ -115,6 +115,14 @@ function publishDrive(ctx, drive, cmd, v) {
   if (ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)
 }
 
+/** In react(), last: ask for the next tick while the drive has work of its own. It has while it ramps toward
+ *  `target` (the command, gates applied, as handed to rampedSpeed), and while it runs with a pulse or an encoder tag
+ *  to count travel on. A conveyor at its commanded speed with neither waits for a tag to change, and its surface
+ *  keeps the speed it was last given. */
+function driveAgain(ctx, drive, target) {
+  if (drive.driven !== target || (drive.driven !== 0 && (ctx.params.pulseTag || ctx.params.encoderTag))) ctx.again()
+}
+
 // ---- from examples/parts/_shared/conveyorFriction.js ----
 /** The `friction` param, with the surface's default grip against a carton. */
 function frictionParam(carton) {
@@ -454,10 +462,10 @@ definePart({
     parts.push.apply(parts, arcHolePanels(g, holePanels))
     return parts
   },
-  step(ctx) {
+  react(ctx) {
     // Tag precedence: 1. speedTag (REAL in) replaces the speed param; 2. runTag (BOOL) gates it to 0, but
     // ONLY while a controller drives the tag (ctx.tagDriven = output ownership) — undriven, the authored
-    // speed rules; 3. runningTag (BOOL out) is written every step.
+    // speed rules; 3. runningTag (BOOL out) is written on every call.
     // the unit the conveyor is set up in: everything below this line is m/s
     const cmd = commandedSpeed(ctx)
     const fpm = cmd.fpm, commanded = cmd.commanded
@@ -476,5 +484,7 @@ definePart({
     const rc = (ctx.params.innerRadius > 0 ? ctx.params.innerRadius : 0.825) + (ctx.params.width > 0 ? ctx.params.width : 1.524) / 2
     const omega = speed / Math.max(rc, 1e-3)
     ctx.setArcSurfaceVelocity({ center: { x: ctx.position.x, z: ctx.position.z }, omega })
+    // the next tick is needed only while the drive ramps or counts travel (conveyorDrive.js)
+    driveAgain(ctx, drive, running ? commanded : 0)
   },
 })

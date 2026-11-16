@@ -1,7 +1,7 @@
 // Pallet — authored pallet cargo. Demonstrates the cargo geometry kind: the package geometry declares
 // { kind: 'cargo', cargoKind: 'pallet' } and the host builds the part as one dynamic physics body, a four-way block
 // pallet at the footprint its `size` picks (core/pallet.ts), rendered through the instanced cargo batch.
-// Passive payload: step() is empty.
+// Passive payload: react() is empty.
 
 definePart({
   params: {
@@ -21,6 +21,6 @@ definePart({
     // the colour is a tint over the pallet wood texture
     color: { type: 'color', default: '#ffffff', label: 'Color', desc: 'Tint over the pallet wood texture. White leaves it untinted.' },
   },
-  step() {
+  react() {
   },
 })

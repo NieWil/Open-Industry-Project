@@ -9,7 +9,7 @@
 // _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the
 // rig compiled from rig()).
 
-import { commandedSpeed, conveyorDrive, driveFeedbackParams, driveRampParams, publishDrive, rampedSpeed } from '../_shared/conveyorDrive.js'
+import { commandedSpeed, conveyorDrive, driveAgain, driveFeedbackParams, driveRampParams, publishDrive, rampedSpeed } from '../_shared/conveyorDrive.js'
 import { frictionParam } from '../_shared/conveyorFriction.js'
 import { METRIC_ONLY, reportSpeed, speedFpmTagParam, speedUnitParams } from '../_shared/conveyorUnits.js'
 import { rollerBandMaterial, rollerBed } from '../_shared/rollerBed.js'
@@ -247,10 +247,10 @@ definePart({
       return [{ desc: s.build(), finish: 'gapfill', link: 'roller', castShadow: false, doubleSided: true }]
     }
   },
-  step(ctx) {
+  react(ctx) {
     // Tag precedence: speedTag (REAL in) replaces the speed param as the commanded speed; runTag (BOOL)
     // gates it to 0, but ONLY while a controller actually drives the tag (ctx.tagDriven, output ownership) —
-    // undriven, the authored speed rules; runningTag (BOOL out) = effective speed ≠ 0, written every step.
+    // undriven, the authored speed rules; runningTag (BOOL out) = effective speed ≠ 0, written on every call.
     // the unit the conveyor is set up in: everything below this line is m/s
     const cmd = commandedSpeed(ctx)
     const fpm = cmd.fpm
@@ -271,5 +271,7 @@ definePart({
     const mag = Math.abs(c) > 1e-3 ? s / c : s
     const fx = ctx.forward.x, fz = ctx.forward.z
     ctx.setSurfaceVelocity({ x: (fx * c + fz * sn) * mag, y: 0, z: (-fx * sn + fz * c) * mag })
+    // the next tick is needed only while the drive ramps or counts travel (conveyorDrive.js)
+    driveAgain(ctx, drive, running ? cmd.commanded : 0)
   },
 })

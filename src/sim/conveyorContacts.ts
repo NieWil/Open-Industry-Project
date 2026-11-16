@@ -254,20 +254,24 @@ export function syncFacetBlock(t: Float64Array | null, entries: readonly Conveyo
   if (!t) return
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i]
-    if (!e) continue
-    const o = (base + i) * FACET_STRIDE
-    t[o + 13] = e.friction ?? 0
-    if (e.kind === 'linear') {
-      t[o] = 1
-      t[o + 1] = e.vx
-      t[o + 2] = e.vy
-      t[o + 3] = e.vz
-    } else {
-      t[o] = 2
-      t[o + 4] = e.omega
-      t[o + 5] = e.cx
-      t[o + 6] = e.cz
-    }
+    if (e) syncFacet(t, e, base + i)
+  }
+}
+
+/** One entry's live values into its slot of the facet table. */
+export function syncFacet(t: Float64Array, e: ConveyorEntry, slot: number): void {
+  const o = slot * FACET_STRIDE
+  t[o + 13] = e.friction ?? 0
+  if (e.kind === 'linear') {
+    t[o] = 1
+    t[o + 1] = e.vx
+    t[o + 2] = e.vy
+    t[o + 3] = e.vz
+  } else {
+    t[o] = 2
+    t[o + 4] = e.omega
+    t[o + 5] = e.cx
+    t[o + 6] = e.cz
   }
 }
 

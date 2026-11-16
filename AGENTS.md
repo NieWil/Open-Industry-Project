@@ -165,6 +165,13 @@ projectTestsRun.ts); eslint enforces both.
 - **In a part folder with a `part.js`, `behavior.ts` and `rig.json` are output.** Edit the `part.js` (or the
   `examples/parts/_shared/` module it imports) and run `npm run build-parts -- <dir>`; `--check` fails CI on an edit
   to the output. They carry no header saying so, because the same text ships in every project's copy.
+- **A part runs on every step (`step`) or when its inputs change (`react`).** A reactive part is not called on a
+  step where nothing the host hands it differs from its last call and it did not ask with `ctx.again()`. What it last
+  commanded stands ([partSleep.ts](src/sim/partSleep.ts), the authoring guide's "`react`" section). Anything new the
+  host hands a part must be compared in `inputsSame`, or a reactive part never hears it change. Only a part that was
+  called has its conveyor surfaces written to the physics table (`ConveyorFacets.syncPart`), so nothing else may write
+  a surface entry during a run. A first-party reactive part must give the same run with `wakeAllParts`. Gated by
+  `partReact.test.ts`.
 - **After changing a first-party part, re-record it: `npm run parts:record`.** It runs
   `scripts/shipped-behaviors.mjs` (older rooms recognise built-ins by their behavior copies), `scripts/part-corpus.mjs`
   (every shipped part version must still load and behave as recorded; `test-corpus/` is append-only) and, when a model

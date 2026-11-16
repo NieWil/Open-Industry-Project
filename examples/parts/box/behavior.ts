@@ -1,7 +1,7 @@
 // Box — a piece of authored cargo. Demonstrates the cargo geometry kind: the package geometry declares
 // { kind: 'cargo', cargoKind: 'box' } and the host builds the part as one dynamic physics body sized/tinted
 // from the params below (instanced batch render, gizmo grab, pilot carry). There is nothing to simulate
-// here: cargo is passive payload, so step() is empty.
+// here: cargo is passive payload, so react() is empty.
 
 definePart({
   params: {
@@ -13,6 +13,6 @@ definePart({
     mass: { type: 'number', default: 10, min: 0.5, max: 100, step: 0.5, label: 'Mass (kg)', desc: 'Physical mass. Heavier cargo is harder for a conveyor to accelerate and pushes lighter cargo out of the way.' },
     color: { type: 'color', default: '#ffffff', label: 'Color', desc: 'Tint over the cardboard texture. White leaves it untinted.' },
   },
-  step() {
+  react() {
   },
 })
