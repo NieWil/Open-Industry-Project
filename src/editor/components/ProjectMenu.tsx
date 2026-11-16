@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { ownSharedProject } from '../project/sharedProject'
+import { currentDocumentId, documentsOpenInTabs, listDocuments, supportsDocumentLibrary } from '../project/documentStore'
+import { getOipProjectApi } from '../desktop/desktopProjectApi'
+import { openDocumentInNewWindow, openStoredDocument } from '../desktop/desktopProjectBridge'
 import { commandChord, commandDisabledReason, commandEnabled, getCommand, runCommand } from '../commands'
 import { DEMO_SCENE_NAME } from '../demo/demoScenes'
 import { DESKTOP_SHELL } from '../desktop/desktopMenuBridge'
 import { withKey } from '../keyHint'
-import type { EditorState } from '../store/store'
+import type { EditorState, EditorStore } from '../store/store'
 import { focusFirstMenuItem, fromKeyboard, menuKeys, useDismiss } from './popover'
 import { ChevronIcon } from './toolbarIcons'
 import { defineMessages, t, type MessageId } from '../../core/i18n'
@@ -22,6 +26,10 @@ const M = defineMessages('projectMenu', {
   exampleTitle: '{project}, the built-in example: edit it and it becomes a project of your own; open another project to leave it',
   projectTitle: 'Project “{project}”',
   menu: 'Project',
+  recentHead: 'Recent projects',
+  openRecent: 'Open “{name}”',
+  openRecentFolder: 'Open “{name}” from {folder}',
+  recentElsewhere: '“{name}” is open in another window. Bring it forward',
 })
 
 // The project menu: the top bar's one document control, for the project on screen (or the built-in example)
@@ -32,7 +40,8 @@ const M = defineMessages('projectMenu', {
 // Example badge, and leaving it means opening another project.
 //
 // Every action row is a command (editor/commands.ts): label, chord and enablement are the registry's, so this,
-// the desktop File menu and the palette cannot drift apart.
+// the desktop File menu and the palette cannot drift apart. The one exception is the "Recent projects" block
+// after the project's own rows: the few changed last, one click from open. They are data, so they are not commands.
 
 /** projects split off an older multi-scene project, waiting to be downloaded (shown only while some wait) */
 const SPLIT_OFF_ROWS: readonly string[] = ['file.exportSplitOff']
@@ -100,14 +109,99 @@ function visibleRows(ids: readonly (string | null)[], state: EditorState): (stri
   return kept.filter((id, i) => id !== null || (i > 0 && i < kept.length - 1 && kept[i - 1] !== null))
 }
 
-function CommandRows({ ids, state, onPick }: { ids: readonly (string | null)[]; state: EditorState; onPick: () => void }) {
+/** how many other projects the menu lists; the projects list has them all */
+const RECENT_COUNT = 4
+
+interface RecentProject {
+  id: string
+  name: string
+  /** its folder on the desktop; null in the browser, and for a project stored in the app only */
+  folder: string | null
+  /** another window has it open (desktop), so the row brings that window forward */
+  elsewhere: boolean
+}
+
+/**
+ * The projects changed most recently, without the one on screen. In the example the working copy still holds the
+ * user's own project, which is not on screen, so it is listed (ProjectsOverlay `onScreen`).
+ */
+async function readRecentProjects(demoSession: boolean): Promise<RecentProject[]> {
+  if (!supportsDocumentLibrary()) return []
+  const api = getOipProjectApi()
+  const [docs, folders, inTabs] = await Promise.all([listDocuments(), api ? api.folders() : [], api ? documentsOpenInTabs() : null])
+  const openId = currentDocumentId()
+  return docs
+    .filter((doc) => doc.id !== openId || demoSession)
+    .slice(0, RECENT_COUNT)
+    .map((doc) => ({
+      id: doc.id,
+      name: doc.name,
+      folder: folders.find((f) => f.docId === doc.id)?.path ?? null,
+      elsewhere: doc.id !== openId && (inTabs?.has(doc.id) ?? false),
+    }))
+}
+
+/** Open a recent row as the projects list opens its row. The menu has closed by then, so a failure is an alert. */
+function openRecentProject(store: EditorStore, row: RecentProject): void {
+  const opened = row.elsewhere ? openDocumentInNewWindow(row.id, row.folder) : openStoredDocument(store, row.id, row.folder)
+  void opened
+    .then((error) => error !== null && alert(error))
+    .catch((e: unknown) => alert(e instanceof Error ? e.message : String(e)))
+}
+
+function RecentRows({ rows, store, onPick }: { rows: readonly RecentProject[]; store: EditorStore; onPick: () => void }) {
+  if (rows.length === 0) return null
+  return (
+    <>
+      {/* a block of its own with a heading: a bare project name among the actions does not say what a click does */}
+      <div className="help-sep" role="separator" />
+      <div className="project-recent-head" role="presentation">
+        {t(M.recentHead)}
+      </div>
+      {rows.map((row) => (
+        <button
+          key={row.id}
+          className="help-item project-recent"
+          role="menuitem"
+          data-recent-project={row.id}
+          title={
+            row.elsewhere
+              ? t(M.recentElsewhere, { name: row.name })
+              : row.folder !== null
+                ? t(M.openRecentFolder, { name: row.name, folder: row.folder })
+                : t(M.openRecent, { name: row.name })
+          }
+          onClick={() => {
+            onPick()
+            openRecentProject(store, row)
+          }}
+        >
+          <span className="help-item-label">{row.name}</span>
+        </button>
+      ))}
+    </>
+  )
+}
+
+function CommandRows({
+  ids,
+  state,
+  onPick,
+  after,
+}: {
+  ids: readonly (string | null)[]
+  state: EditorState
+  onPick: () => void
+  /** rows that are not commands, shown after the command with this id; they bring their own leading separator */
+  after?: { id: string; rows: ReactNode }
+}) {
   return (
     <>
       {visibleRows(ids, state).map((id, i) => {
         if (id === null) return <div key={`sep-${i}`} className="help-sep" role="separator" />
         const cmd = getCommand(id)!
         const chord = commandChord(cmd)
-        return (
+        const row = (
           <button
             key={id}
             className="help-item"
@@ -124,12 +218,13 @@ function CommandRows({ ids, state, onPick }: { ids: readonly (string | null)[]; 
             {chord && <kbd className="help-item-key">{chord}</kbd>}
           </button>
         )
+        return after?.id === id ? [row, <Fragment key={`after-${id}`}>{after.rows}</Fragment>] : row
       })}
     </>
   )
 }
 
-export function ProjectMenu({ state }: { state: EditorState }) {
+export function ProjectMenu({ store, state }: { store: EditorStore; state: EditorState }) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -140,6 +235,21 @@ export function ProjectMenu({ state }: { state: EditorState }) {
   useEffect(() => {
     if (open && byKey.current) focusFirstMenuItem(listRef.current)
   }, [open])
+
+  // The other projects, read each time the menu opens. The last answer stays between opens, so on every open
+  // after the first the rows are there from the first frame and the rows under them do not move.
+  const [recent, setRecent] = useState<readonly RecentProject[]>([])
+  const demoSession = state.demoSession
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    void readRecentProjects(demoSession)
+      .then((rows) => live && setRecent(rows))
+      .catch((e: unknown) => console.warn('[oip] listing recent projects failed', e))
+    return () => {
+      live = false
+    }
+  }, [open, demoSession])
 
   // The demo is a project of its own, the built-in example (sceneFile.openDemoScene): it is named, and tagged as
   // the example, because nothing of it is saved until it is edited. In a room the document is the room's, and
@@ -179,7 +289,13 @@ export function ProjectMenu({ state }: { state: EditorState }) {
       {open && (
         <div className="overflow-popover project-popover" role="menu" aria-label={t(M.menu)} ref={listRef} onKeyDown={menuKeys(close)}>
           {/* one list, so a block with nothing to show (the split-off projects, usually) leaves no doubled separator */}
-          <CommandRows ids={[...SAVE_ROWS, null, ...SPLIT_OFF_ROWS, null, ...PROJECT_ROWS]} state={state} onPick={close} />
+          <CommandRows
+            ids={[...SAVE_ROWS, null, ...SPLIT_OFF_ROWS, null, ...PROJECT_ROWS]}
+            state={state}
+            onPick={close}
+            // where the projects list is refused (a view-only link), so is opening a project from here
+            after={commandEnabled('file.projects') ? { id: 'file.renameProject', rows: <RecentRows rows={recent} store={store} onPick={close} /> } : undefined}
+          />
         </div>
       )}
     </div>

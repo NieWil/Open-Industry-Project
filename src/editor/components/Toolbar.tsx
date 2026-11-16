@@ -365,7 +365,7 @@ export function Toolbar({ store, state, controller }: ToolbarProps) {
             <ChevronIcon dir="down" size={12} />
           </button>
         )}
-        <ProjectMenu state={state} />
+        <ProjectMenu store={store} state={state} />
       </div>
       <div className="toolbar-run">
         <LiveControl collab={collab} store={store} state={state} openPeople={() => setPeopleOpen(true)} />

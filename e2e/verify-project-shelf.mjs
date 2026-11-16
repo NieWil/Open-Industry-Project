@@ -259,6 +259,36 @@ async function main() {
     expect((await page.title()) === `Line A - ${APP_TITLE}`, `back in Line A (${await page.title()})`)
     expect((await tabs(page)) === 'Sorter', `with its part intact (${await tabs(page)})`)
 
+    console.log('--- the project menu lists the other projects, one click from open ---')
+    // read from the library when the menu opens, so the rows arrive after the menu does
+    const recentRows = async () => {
+      await page.getByTestId('project-menu').click({ force: true })
+      await waitFor(page, () => document.querySelectorAll('[role="menu"] [data-recent-project]').length > 0)
+      return page.evaluate(() => [...document.querySelectorAll('[role="menu"] > *')].map((e) => 
+        e.hasAttribute('data-recent-project')
+          ? `recent:${e.textContent}`
+          : (e.getAttribute('data-command') ?? (e.getAttribute('role') === 'separator' ? '|' : e.textContent)),
+      ))
+    }
+    let menu = await recentRows()
+    expect(
+      menu.filter((r) => r.startsWith('recent:')).join() === 'recent:Line B',
+      `Line A's menu lists Line B and not itself (${menu.filter((r) => r.startsWith('recent:'))})`,
+    )
+    const at = menu.indexOf('recent:Line B')
+    expect(
+      menu.slice(at - 2, at + 2).join() === '|,Recent projects,recent:Line B,|',
+      `as a block of its own under a heading (${menu.slice(at - 2, at + 2)})`,
+    )
+    await clickAndReload(page, page.locator('[data-recent-project]'))
+    expect((await page.title()) === `Line B - ${APP_TITLE}`, `the row opened Line B (${await page.title()})`)
+    expect((await tabs(page)) === '', 'with its own (empty) scene')
+    menu = await recentRows()
+    expect(menu.filter((r) => r.startsWith('recent:')).join() === 'recent:Line A', 'from there the menu lists Line A')
+    await clickAndReload(page, page.locator('[data-recent-project]'))
+    expect((await page.title()) === `Line A - ${APP_TITLE}`, `and its row leads back (${await page.title()})`)
+    expect((await tabs(page)) === 'Sorter', `to Line A with its part (${await tabs(page)})`)
+
     console.log('--- delete, and survive a reload ---')
     await openShelf(page)
     await page.locator('.projects-action[aria-label="Delete Line B"]').click({ force: true })

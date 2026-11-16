@@ -172,6 +172,17 @@ export async function openLibraryStandIn(store: EditorStore, docId: string): Pro
 }
 
 /**
+ * Open one of the library's projects in this window, as the projects list and the project menu's recent rows do.
+ * `root` is its folder on the desktop, null for a project stored in the app only. A folder that cannot be read
+ * (moved, deleted, mid-edit) must not strand the project: the library's last copy opens as a stand-in, and the
+ * sync's banner says what is wrong with the folder. Returns an error, or null (and the page reloads).
+ */
+export async function openStoredDocument(store: EditorStore, docId: string, root: string | null): Promise<string | null> {
+  if (root === null) return openDocument(docId, store.outgoingProject())
+  return (await openFolderDocument(store, docId, root)) === null ? null : openLibraryStandIn(store, docId)
+}
+
+/**
  * The shelf's New project, on the desktop: a folder of its own under the default projects folder, made
  * and written before the switch, so the new project is on disk from its first moment.
  */

@@ -353,7 +353,9 @@ opens on your last work.
 
 **The project menu is the top bar's one document control** (`ProjectMenu.tsx`). Its label is the project's name,
 or "Palletizing demo" with an Example badge while the demo is open. It holds the project's actions: New Project
-(Ctrl+N), the projects list, Save, Import / Export Project, Open Demo. There are no scene actions in it, because a
+(Ctrl+N), the projects list, Save, Import / Export Project, Open Demo. A "Recent projects" block lists up to
+four other projects, the ones changed last, and a click opens one as its row in the projects list does
+(`openStoredDocument`). There are no scene actions in it, because a
 project holds one scene (format 4), so project and scene actions never sit side by side. New
 always means a new project, filed beside the one you leave. No action empties the current scene. New Project
 starts over without destroying anything, and select + Delete starts over in the same project, keeping its parts

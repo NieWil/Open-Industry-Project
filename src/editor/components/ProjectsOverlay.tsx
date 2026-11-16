@@ -6,13 +6,12 @@ import {
   deleteDocument,
   documentsOpenInTabs,
   listDocuments,
-  openDocument,
   renameDocument,
   requestDurableStorage,
   supportsDocumentLibrary,
 } from '../project/documentStore'
 import type { DocumentMeta } from '../project/documentStore'
-import { openDocumentInNewWindow, openFolderDocument, openLibraryStandIn } from '../desktop/desktopProjectBridge'
+import { openDocumentInNewWindow, openStoredDocument } from '../desktop/desktopProjectBridge'
 import { createNewProject, UNTITLED_PROJECT } from '../project/newProject'
 import { getOipProjectApi } from '../desktop/desktopProjectApi'
 import type { FolderRecord } from '../desktop/desktopProjectApi'
@@ -157,12 +156,6 @@ export function ProjectsOverlay({ store, state, onClose }: { store: EditorStore;
     return () => window.removeEventListener('keydown', onKey)
   }, [editing, creating, onClose])
 
-  /**
-   * The document being left, for the library to file before the switch (store.outgoingProject: null in a
-   * room, and in a demo preview with no project behind it; a preview with one files that project).
-   */
-  const outgoing = (): ReturnType<EditorStore['outgoingProject']> => store.outgoingProject()
-
   const run = (work: () => Promise<string | null>): void => {
     if (busy) return
     setBusy(true)
@@ -183,11 +176,7 @@ export function ProjectsOverlay({ store, state, onClose }: { store: EditorStore;
     if (onScreen(id)) return onClose() // already what you are looking at: the click means "never mind"
     // on the desktop a project open in another window is that window's: bring it forward rather than open it twice
     if (desktop && inOtherTab(id)) return onOpenInNewWindow(id)
-    const folder = folderOf(id)
-    if (folder === null) return run(() => openDocument(id, outgoing()))
-    // A folder that cannot be read (moved, deleted, mid-edit) must not strand the project: open the
-    // library's last copy as a stand-in, and the sync's banner says what is wrong with the folder.
-    run(async () => ((await openFolderDocument(store, id, folder)) === null ? null : openLibraryStandIn(store, id)))
+    run(() => openStoredDocument(store, id, folderOf(id)))
   }
 
   /** Desktop: open the row in a window of its own, or bring forward the window that has it. */
