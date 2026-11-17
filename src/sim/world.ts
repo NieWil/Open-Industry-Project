@@ -480,13 +480,29 @@ export class SimWorld implements SimCore<BoxFrame> {
       let beams: Record<string, FrameBeamHit> | undefined
       if (emitters) {
         const tb = this.perfParts ? performance.now() : 0
-        beams = {}
+        // The record by link name is built again only on a step where a beam reads something new. Most beams
+        // read the same on most steps, and on a line with 840 of them building every entry each step cost a third of
+        // the time this loop spends outside the parts.
+        const list = (b.beamList ??= [])
+        const n = emitters.length
+        let changed = b.beamHits === undefined || list.length !== n
         let hitBoxes: Record<string, LiveBox> | undefined
-        for (const e of emitters) {
-          beams[e.name] = sensors.castBeam(e.origin, e.dir, e.range)
+        for (let i = 0; i < n; i++) {
+          const e = emitters[i]!
+          const was = list[i]
+          const now = sensors.castBeam(e.origin, e.dir, e.range, was)
           const hit = sensors.lastBeamHit.box
           if (hit) (hitBoxes ??= {})[e.name] = hit
+          if (now !== was) {
+            changed = true
+            list[i] = now
+          }
         }
+        if (changed) {
+          list.length = n
+          beams = {}
+          for (let i = 0; i < n; i++) beams[emitters[i]!.name] = list[i]!
+        } else beams = b.beamHits
         b.beamHits = beams // captured for the frame - the view draws beams from this, never re-casting
         b.beamBoxes = hitBoxes // what ctx.markHit marks, so the mark lands on the body the part saw
         if (this.perfParts) this.phaseMs.beams += performance.now() - tb

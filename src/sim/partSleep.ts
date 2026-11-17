@@ -86,7 +86,7 @@ function rememberInputs(s: SleepState, inp: BehaviorInput): void {
   s.speeds = inp.conveyorSpeeds
   s.position = inp.position
   s.forward = inp.forward
-  s.beams = inp.beams // a new object every step, so holding it is safe
+  s.beams = inp.beams // replaced when a beam reads something new and never written in place, so holding it is safe
   s.zones = inp.zones
   s.zoneAges = inp.zoneAges
   // the measured joints and grips are objects the rig driver rewrites, so copies

@@ -82,7 +82,8 @@ export class SensorRegistry {
   }
 
   // Cast one world beam against every cargo box; return the nearest hit (or a clear result at full range).
-  castBeam(origin: Vec3, dir: Vec3, range: number): FrameBeamHit {
+  // `prev` is the beam's last reading, returned as it is when the beam reads the same (castBeamRows).
+  castBeam(origin: Vec3, dir: Vec3, range: number, prev?: FrameBeamHit): FrameBeamHit {
     const cargo = this.cargo
     const snap = cargo.stepSnapshot() // one batched read per tick shared by every beam; null = stock build
     // only the rows near the beam (rowsNear): the segment's box, widened by the largest body's bounding radius,
@@ -94,7 +95,7 @@ export class SensorRegistry {
     const ex = ox + dir[0] * range
     const ez = oz + dir[2] * range
     const near = cargo.rowsNear(snap, Math.min(ox, ex) - reach, Math.min(oz, ez) - reach, Math.max(ox, ex) + reach, Math.max(oz, ez) + reach)
-    return castBeamRows(origin, dir, range, this.boxes, snap, near, this.beamScratch, this.pilot.body, this.lastBeamHit)
+    return castBeamRows(origin, dir, range, this.boxes, snap, near, this.beamScratch, this.pilot.body, this.lastBeamHit, prev)
   }
 
   // Count cargo whose centre is inside a zone (→ ctx.zone()), leaving their summed age in lastZoneAge.
