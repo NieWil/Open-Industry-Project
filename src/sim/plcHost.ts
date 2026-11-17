@@ -79,7 +79,7 @@ const emptyTally = (): ScanTally => ({ scans: 0, totalMs: 0, lastMs: 0, maxMs: 0
  * the one boundary) keeps the simulation side numeric instead of threading `string` through
  * every behaviour that reads a tag.
  */
-function driveable(tags: Record<string, TagValue>): Record<string, number | boolean> {
+function driveable(tags: Readonly<Record<string, TagValue>>): Record<string, number | boolean> {
   // nearly always nothing to drop: then the image itself goes on (a scan's output image is built fresh and never
   // written after, and the world holds what it is handed by reference, read-only), instead of a copy per scan
   let strings = false
@@ -135,6 +135,9 @@ export class PlcHost {
   readonly #engine: TaskScheduler
   // one tally per task, or one for a program with no tasks; indexed as the scheduler numbers them
   #tallies: ScanTally[] = []
+  /** the output image last handed on, and what the world was given of it ({@link driveable}) */
+  #drivenFrom: Readonly<Record<string, TagValue>> | null = null
+  #driven: Record<string, number | boolean> = {}
 
   /** Compile + attach a program. Throws StError on a compile error (the main thread validated
    *  the same source before shipping it, so a throw here is only a defensive backstop). */
@@ -255,7 +258,15 @@ export class PlcHost {
     // of values for a large one). Rebuilt after every scan, it measured five times the scan's own cost on a large
     // line, and 38% of the demo's IEC program's PLC time. The table is for the watch views, and is built when a
     // frame carries one (snapshot()).
-    world.setBehaviorInputTags(driveable(this.#ctl.processImage.outputs))
+    // The link hands back the same table until an output changes (LocalPlcLink), so what the world is given of it
+    // is worked out once per table. Looking through 675 outputs for a STRING on every step cost as much as
+    // building the table had.
+    const image = this.#ctl.processImage.outputs
+    if (image !== this.#drivenFrom) {
+      this.#drivenFrom = image
+      this.#driven = driveable(image)
+    }
+    world.setBehaviorInputTags(this.#driven)
     p.imageMs += performance.now() - t2
   }
 

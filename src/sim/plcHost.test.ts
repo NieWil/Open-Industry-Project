@@ -338,3 +338,41 @@ describe('PlcHost: a program bound by wiring', () => {
     expect(host.snapshot().watch['n']).toBe(before + 1) // one more scan, not a fresh program
   })
 })
+
+describe('what the world is handed of the output image', () => {
+  const TEXT = `VAR_INPUT Go : BOOL; END_VAR
+VAR_OUTPUT Run : BOOL; Label : STRING; Count : INT; END_VAR
+Run := Go;
+IF Go THEN Label := 'running'; Count := Count + 1; ELSE Label := 'stopped'; END_IF;
+`
+
+  it('is the same table while no output changes, and a new one when one does, never with a STRING in it', () => {
+    const host = new PlcHost(TEXT, 0.005)
+    const port = new StubPort()
+    for (let i = 0; i < 4; i++) host.interleave(port, STEP)
+    const idle = port.held!
+    expect(idle).toEqual({ Run: false, Count: 0 })
+    expect(port.pushes[port.pushes.length - 2]).toBe(idle)
+    port.writes = { Go: true }
+    host.interleave(port, STEP)
+    const running = port.held!
+    expect(running).not.toBe(idle)
+    expect(running['Run']).toBe(true)
+    expect('Label' in running).toBe(false)
+    expect(idle).toEqual({ Run: false, Count: 0 }) // the table handed before was not written over
+    port.writes = { Go: false }
+    host.interleave(port, STEP)
+    const count = port.held!['Count']
+    host.interleave(port, STEP)
+    host.interleave(port, STEP)
+    expect(port.held).toEqual({ Run: false, Count: count })
+    expect(port.pushes[port.pushes.length - 2]).toBe(port.held)
+  })
+
+  it('hands the image itself on when it holds no STRING', () => {
+    const host = new PlcHost(ECHO, 0.005)
+    const port = new StubPort()
+    host.interleave(port, STEP)
+    expect(port.held).toBe(host.snapshot().outputs)
+  })
+})
