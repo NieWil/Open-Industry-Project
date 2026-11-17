@@ -254,6 +254,52 @@ END_PROGRAM`, 1, { p: 1, p2: 1 })
   })
 })
 
+describe('the typed engine scans exactly as the walker does: a STRING copied from one place to another', () => {
+  // scanCodegen.ts moves the code units in memory (strCopy) where a STRING place is stored into another. Each line
+  // here is one of the stores that does: into a shorter and a longer capacity, onto itself, between elements and
+  // fields, a block's VAR_IN_OUT in and back out, its outputs. `arr[Pick(j)] := gs` is the store that must not: finding
+  // its place changes gs, and the walker has read gs by then.
+  const src = `TYPE Rec : STRUCT name : STRING[12]; tag : STRING[4]; END_STRUCT; END_TYPE
+VAR_GLOBAL gs : STRING[20]; END_VAR
+FUNCTION Pick : INT VAR_INPUT i : INT; END_VAR VAR_EXTERNAL gs : STRING[20]; END_VAR
+gs := CONCAT(gs, 'x'); Pick := i;
+END_FUNCTION
+FUNCTION_BLOCK Relay
+VAR_INPUT msg : STRING[10]; END_VAR
+VAR_IN_OUT io : STRING[6]; END_VAR
+VAR_OUTPUT last : STRING[30]; short : STRING[3]; END_VAR
+VAR held : STRING[8]; END_VAR
+held := msg; last := held; short := msg; io := CONCAT(short, io);
+END_FUNCTION_BLOCK
+PROGRAM Main
+VAR_EXTERNAL gs : STRING[20]; END_VAR
+VAR k : INT; j : INT; a : STRING[80]; b : STRING[5]; c : STRING[80]; d : STRING; arr : ARRAY[0..3] OF STRING[7];
+  recs : ARRAY[1..3] OF Rec; r : Rec; fb : Relay; o1 : STRING[4]; o2 : STRING[40]; io1 : STRING[6]; ios : ARRAY[0..2] OF STRING[6]; END_VAR
+k := k + 1; j := ABS(k MOD 3);
+IF LEN(a) > 70 THEN a := ''; END_IF;
+a := CONCAT(a, INT_TO_STRING(k));
+b := a; c := b; d := c; a := a; c := a;
+arr[j] := a; arr[3] := arr[j]; arr[j] := arr[j];
+recs[j + 1].name := a; r := recs[j + 1]; recs[3].tag := r.name; r.tag := arr[3];
+gs := a;
+arr[Pick(j)] := gs;
+io1 := b;
+fb(msg := a, io := io1, last => o1, short => o2);
+fb(msg := o2, io := ios[j], last => recs[2].name);
+END_PROGRAM`
+
+  it('as written, and with every variable overwritten between scans', () => {
+    const steps: OracleStep[] = Array.from({ length: 120 }, () => ({ dt: 0.01 }))
+    for (const between of [undefined, randomWrites(seeded(1), 4), randomWrites(seeded(2), 4)]) {
+      const r = compareEngines(src, steps, { between })
+      expect(r.fault).toBeNull()
+      expect(r.refused).toBeUndefined()
+      expect(r.diffs).toEqual([])
+      expect(r.compared).toBeGreaterThan(120 * 15)
+    }
+  })
+})
+
 describe('the typed engine', () => {
   it('generated every body it was given and refused no program: none fell back to the walker (which would make the comparisons above vacuous)', () => {
     expect(codegenFallbacks).toEqual([])

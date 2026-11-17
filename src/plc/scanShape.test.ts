@@ -51,4 +51,16 @@ IF On THEN n := Target; END_IF; END_FUNCTION_BLOCK
 PROGRAM Main VAR z : Zone; t : DINT; END_VAR z(On := TRUE, Target := t); END_PROGRAM`)
     expect(src).not.toMatch(/\b(bool|coI)\(/)
   })
+
+  it('copies a STRING place into another in memory, and builds the text only where finding the place runs code', () => {
+    const decls = 'VAR a : STRING[80]; b : STRING[5]; arr : ARRAY[0..3] OF STRING[7]; i : INT; END_VAR'
+    const copied = generated(`PROGRAM Main ${decls} b := a; arr[i] := b; a := arr[2]; END_PROGRAM`)
+    expect(copied.match(/\bstrCopy\(/g)).toHaveLength(3)
+    expect(copied).not.toMatch(/\bstr(At|Put)\(/)
+    // the capacity a store cuts to: the shorter place's own
+    expect(copied).toMatch(/strCopy\([^,]+, 5, /)
+    const called = generated(`FUNCTION Pick : INT VAR_INPUT i : INT; END_VAR Pick := i; END_FUNCTION
+PROGRAM Main ${decls} arr[Pick(i)] := a; END_PROGRAM`)
+    expect(called).not.toMatch(/\bstrCopy\(/)
+  })
 })

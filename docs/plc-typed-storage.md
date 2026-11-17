@@ -63,7 +63,9 @@ exactly that kind, planted on purpose, passes silently.
 
 - **Strings live in the arena.** A side table of JS strings would read faster, but an aggregate holding a string would
   span two address spaces, and a copy, a clear and a field address would each need both. In the arena a STRING is its
-  length (the U16 at its address) and its code units (the one at `+2+2i`).
+  length (the U16 at its address) and its code units (the one at `+2+2i`). A STRING place stored into another
+  (`a := b`, a block's VAR_IN_OUT and outputs) is copied there unit for unit (`strCopy`), with no JS string built.
+  Any other read builds the text (`strAt`).
 - **BOOL is a byte**, read `!== 0` and written `? 1 : 0` in generated code. Every surface outside the scan (watch,
   memory, get, ports) answers `true` / `false`, as `TagValue` promises.
 - **The coercions do not disappear.** An integer view stores modulo its width, but IEC narrows a REAL by

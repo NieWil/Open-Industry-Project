@@ -63,6 +63,7 @@ export function finish(tp: TypedProgram): void {
     I8: arena.I8, U8: arena.U8, I16: arena.I16, U16: arena.U16, I32: arena.I32, U32: arena.U32, F32: arena.F32, F64: arena.F64,
     strAt: (a: number) => arena.strAt(a),
     strPut: (a: number, cap: number, s: string) => arena.strPut(a, cap, s),
+    strCopy: (dst: number, cap: number, src: number) => arena.strCopy(dst, cap, src),
     copyBytes: (dst: number, src: number, n: number) => arena.copy(dst, src, n),
     clearAt: (dst: number, ranges: readonly number[]) => arena.clear(dst, ranges),
     ...blocksOver(arena),

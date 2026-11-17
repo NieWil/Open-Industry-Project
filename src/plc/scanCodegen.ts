@@ -577,7 +577,7 @@ ${lines.join(NL)}
     for (const a of e.args) {
       if (!a.inout || frame.byKey.get(identKey(a.name))!.ref) continue
       const r = `r${this.id()}`
-      lines.push(`{ const ${r} = ${this.loadAt(at(a.name))}; ${this.place(a.value, r)} }`)
+      lines.push(this.strCopyTo(a.value, at(a.name)) ?? `{ const ${r} = ${this.loadAt(at(a.name))}; ${this.place(a.value, r)} }`)
     }
     for (const a of e.args) {
       if (!a.out) continue
@@ -585,7 +585,7 @@ ${lines.join(NL)}
       if (a.copy) lines.push(`copyBytes(${addrCode(this.addr(a.value))}, ${addrCode(p)}, ${p.layout.size});`)
       else {
         const q = `q${this.id()}`
-        lines.push(`{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, this.loadAt(p))}; ${this.place(a.value, q)} }`)
+        lines.push(this.strCopyTo(a.value, p, this.x.placeMaxLen(a.value)) ?? `{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, this.loadAt(p))}; ${this.place(a.value, q)} }`)
       }
     }
     if (sig.ret === null) lines.push('const r = 0;')
@@ -731,7 +731,7 @@ ${lines.join(NL)}
       if (!field || field.hidden || field.layout.kind !== 'scalar') return this.unsupported(`the output '${a.name}'`)
       const read = this.loadAt({ dyn: f, off: field.off, layout: field.layout })
       const q = `q${this.id()}`
-      lines.push(`{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, read)}; ${this.place(a.value, q)} }`)
+      lines.push(this.strCopyTo(a.value, { dyn: f, off: field.off, layout: field.layout }, this.x.placeMaxLen(a.value)) ?? `{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, read)}; ${this.place(a.value, q)} }`)
     }
     lines.push('}')
     return lines.join(NL)
@@ -797,6 +797,31 @@ ${lines.join(NL)}
     return { dyn: `U32[${at}]`, off: 0, layout }
   }
 
+  /** where the text `e` reads is, when `e` is a whole STRING place: the cases `expr` answers with a plain load */
+  strSource(e: Expr): Address | null {
+    if (e.t !== 'STRING') return null
+    if (e.node === 'var' ? e.constValue !== undefined : e.node !== 'member' && e.node !== 'index') return null
+    const a = this.addr(e)
+    return a.layout.kind === 'scalar' && a.layout.scalar === 'STRING' ? a : null
+  }
+  /** a statement copying the STRING at `src` into the STRING at `dst`, cut as a store cuts it (`maxLen`, then the
+   *  capacity): the code units moved in memory, where a load and a store would build the text and take it apart
+   *  again (measured: a fifth of the scan of a large program whose blocks pass status strings around). Null when
+   *  either end is not a STRING. `src` is worked out first, as the value is before its place. */
+  strCopyAt(dst: Address, src: Address | null, maxLen?: number): string | null {
+    if (!src || dst.layout.kind !== 'scalar' || dst.layout.scalar !== 'STRING') return null
+    const cap = dst.layout.cap!
+    const z = `z${this.id()}`
+    return `{ const ${z} = ${addrCode(src)}; strCopy(${addrCode(dst)}, ${maxLen === undefined ? cap : Math.min(cap, maxLen)}, ${z}); }`
+  }
+  /** {@link strCopyAt} into the place `target`. Only where finding the place runs nothing but loads: the walker
+   *  reads the value before it finds the place, and here the text is read after. */
+  strCopyTo(target: Expr, src: Address | null, maxLen?: number): string | null {
+    if (!src || target.t !== 'STRING' || !readsOnly(target)) return null
+    if (target.node !== 'var' && target.node !== 'member' && target.node !== 'index') return null
+    return this.strCopyAt(this.addr(target), src, maxLen)
+  }
+
   /** a statement storing `v` (already in the slot's form) into the scalar at an address */
   storeAt(a: Address, v: string): string {
     if (a.layout.kind !== 'scalar') return this.unsupported('a whole array or struct here')
@@ -843,7 +868,7 @@ ${lines.join(NL)}
         if (!m) continue
         const slot: Address = { dyn: f, off: m.off, layout: m.layout }
         if (m.ref) lines.push(this.storeAt(slot, addrCode(this.addr(a.value)))) // bound by reference: its address
-        else lines.push(this.storeAt(slot, this.expr(a.value))) // a scalar: its value, in, and back out below
+        else lines.push(this.strCopyAt(slot, this.strSource(a.value)) ?? this.storeAt(slot, this.expr(a.value))) // a scalar: its value, in, and back out below
       }
     }
     for (const { arg, v, e: given } of scalars) {
@@ -858,7 +883,7 @@ ${lines.join(NL)}
       const m = rec.byKey.get(identKey(a.name))
       if (!m || m.ref) continue
       const r = `r${this.id()}`
-      lines.push(`{ const ${r} = ${this.loadAt({ dyn: f, off: m.off, layout: m.layout })}; ${this.place(a.value, r)} }`)
+      lines.push(this.strCopyTo(a.value, { dyn: f, off: m.off, layout: m.layout }) ?? `{ const ${r} = ${this.loadAt({ dyn: f, off: m.off, layout: m.layout })}; ${this.place(a.value, r)} }`)
     }
     for (const a of s.args) {
       if (!a.out) continue
@@ -869,7 +894,7 @@ ${lines.join(NL)}
         lines.push(`copyBytes(${addrCode(dst)}, ${addrCode(m)}, ${m.layout.size});`)
       } else {
         const q = `q${this.id()}`
-        lines.push(`{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, this.loadAt(m))}; ${this.place(a.value, q)} }`)
+        lines.push(this.strCopyTo(a.value, m, this.x.placeMaxLen(a.value)) ?? `{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, this.loadAt(m))}; ${this.place(a.value, q)} }`)
       }
     }
     lines.push('}')
@@ -1003,6 +1028,8 @@ ${lines.join(NL)}
         }
         const v = `v${this.id()}`
         const ranged = (s.target.node === 'var' || s.target.node === 'member' || s.target.node === 'index') && s.target.range !== undefined
+        const copied = ranged ? null : this.strCopyTo(s.target, this.strSource(s.value), this.x.placeMaxLen(s.target))
+        if (copied) return copied
         const coerced = this.coerce(s.target.t as ScalarType, this.x.placeMaxLen(s.target), s.pos, this.expr(s.value), s.value)
         const value = ranged ? `checkRange(${this.k(s.target)}, ${coerced}, ${this.k(s.pos)})` : coerced
         return `{ const ${v} = ${value}; ${this.place(s.target, v)} }`
