@@ -120,7 +120,7 @@ export class CargoRegistry {
     caps: number = capsOfKind(kind),
   ): number {
     if (own && !this.shapeRefs.has(own.key)) {
-      if (own.pieces) this.partShapes.set(own.key, buildPartCargoShape(this.J, own.pieces))
+      if (own.pieces) this.partShapes.set(own.key, this.keep(buildPartCargoShape(this.J, own.pieces)))
       this.shapeRefs.set(own.key, { packageId: own.product, params: own.params })
     }
     const body = makeCargoBody(this.J, this.bodyInterface, this.axisY, this.cargoShape(kind, hx, hy, hz, own?.key), x, y, z, rotation, mass, friction, (caps & CARGO_CAP_HEAVY) !== 0, (caps & CARGO_CAP_SEPARATE_CONTACTS) !== 0)
@@ -131,11 +131,19 @@ export class CargoRegistry {
     return id
   }
 
+  /** Take a reference for the cache on a shape it is about to share. Jolt frees a shape with the last body that
+   *  uses it. Without a reference of its own the cache would hand the freed shape to the next body once every
+   *  body of that shape had been removed, and that body is then built on memory Jolt has given to something else. */
+  private keep(shape: Jolt.Shape): Jolt.Shape {
+    shape.AddRef()
+    return shape
+  }
+
   private palletShape(hx: number, hz: number): Jolt.Shape {
     const key = `${Math.round(hx * 2000)}x${Math.round(hz * 2000)}`
     let shape = this.palletShapes.get(key)
     if (!shape) {
-      shape = buildPalletShape(this.J, hx * 2, hz * 2)
+      shape = this.keep(buildPalletShape(this.J, hx * 2, hz * 2))
       this.palletShapes.set(key, shape)
     }
     return shape
@@ -145,7 +153,7 @@ export class CargoRegistry {
     const key = `${Math.round(hx * 2000)}x${Math.round(hy * 2000)}x${Math.round(hz * 2000)}`
     let shape = this.toteShapes.get(key)
     if (!shape) {
-      shape = buildToteShape(this.J, hx * 2, hy * 2, hz * 2)
+      shape = this.keep(buildToteShape(this.J, hx * 2, hy * 2, hz * 2))
       this.toteShapes.set(key, shape)
     }
     return shape
@@ -475,6 +483,11 @@ export class CargoRegistry {
 
   /** free the snapshot reader; after the world's JoltInterface is gone */
   dispose(): void {
+    // the cache's own references (keep): the bodies are gone, so this frees the shapes
+    for (const shapes of [this.palletShapes, this.toteShapes, this.partShapes]) {
+      for (const shape of shapes.values()) shape.Release()
+      shapes.clear()
+    }
     if (this.bodySnapshot) {
       this.J.destroy(this.bodySnapshot)
       this.bodySnapshot = null

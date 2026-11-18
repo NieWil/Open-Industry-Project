@@ -127,6 +127,30 @@ describe('cargo with its own body', () => {
     expect(keys.size).toBe(1)
     expect([...keys][0]).toMatch(/^acme\.drum-side\|/)
   })
+
+  // Jolt frees a shape with the last body that uses it. A line whose sink removed every carton of one product then
+  // built the next carton on the freed collider, and the step after it read a body record something else had
+  // overwritten ("memory access out of bounds", and a world that never finished disposing).
+  it('keeps the shared collider when the last body of its shape is removed', { timeout: 60000 }, () => {
+    const drum = load(drumManifest(true))
+    const parts = [0, 1].map((i) => createSdkPart(drum, `d${i}`, [i * 1.2, R + 0.01, 0], 0))
+    world = new SimWorld(J, { version: SCENE_VERSION, parts, packages: [drum] }, { hz: 60 })
+    const shape = live(world, 'd0').body.GetShape()
+    // Jolt.js holds the last shape result it handed out, and so a reference to that shape, until the next one
+    const other = new J.StaticCompoundShapeSettings()
+    const at = new J.Vec3(0, 0, 0)
+    const turn = new J.Quat(0, 0, 0, 1)
+    const half = new J.Vec3(0.1, 0.1, 0.1)
+    other.AddShapeShape(at, turn, new J.BoxShape(half, 0.01), 0)
+    other.Create()
+    for (const o of [other, at, turn, half]) J.destroy(o)
+    // the two bodies, and the cache
+    expect(shape.GetRefCount()).toBe(3)
+    const cargo = (world as unknown as { cargo: { removeBox(index: number): void } }).cargo
+    cargo.removeBox(1)
+    cargo.removeBox(0)
+    expect(shape.GetRefCount()).toBe(1)
+  })
 })
 
 describe("validating a part's own cargo body", () => {
