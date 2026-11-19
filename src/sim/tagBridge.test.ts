@@ -37,6 +37,11 @@ describe('numeric + bool tags at the SDK boundary (embeddedBehavior)', () => {
   it('ignores a non-finite numeric write (keeps the bus clean)', () => {
     expect(run(`definePart({ step(ctx){ ctx.writeNumber('bad', 1/0); ctx.writeNumber('ok', 2) } })`, {}).tags).toEqual({ ok: 2 })
   })
+
+  it('writeTag writes a number as a numeric tag, as writeNumber does', () => {
+    const src = `definePart({ step(ctx){ ctx.writeTag('pos', 0.25); ctx.writeTag('zero', 0); ctx.writeTag('bad', 0/0); ctx.writeTag('flag', true) } })`
+    expect(run(src, {}).tags).toEqual({ pos: 0.25, zero: 0, flag: true })
+  })
 })
 
 // A minimal articulated part driven by a PLC handshake: the same pattern the bundled Six-Axis robot uses

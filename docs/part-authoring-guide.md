@@ -1381,7 +1381,7 @@ never share one. There is no `ctx.state`.
 | Cargo | `spawn({ part, params, color, mass, offset, marks })` makes a product: the cargo part `part` names, as if placed, with `params` over its own and `marks` the facts it starts with (a label's code, a destination) ([spawner](../examples/parts/box-spawner/behavior.ts)). The other form, `spawn({ kind, size, ... })` (`kind` `'box'`, the default, `'pallet'` or `'tote'`), makes a bare body. At most 8 a tick, the rest dropped. `despawn(zone)`. See cargo conservation below |
 | Product state | See below |
 | Lamps | `lamps.name = bool` (`setEmissive(name, on)` for a computed name) |
-| PLC tags | `readTag` / `writeTag` (BOOL), `readNumber` / `writeNumber` (INT/REAL), `rising` / `falling` edges |
+| PLC tags | `readTag` (BOOL) / `readNumber` (INT/REAL), `writeTag` (a boolean or a number; `writeNumber` takes only a number), `rising` / `falling` edges |
 | Ownership | `tagDriven(name)`: is the tag an attached program's output (a controller owns it)? |
 | Interaction | `used()`: one-tick pulse on pilot Use |
 | Reactive parts | `again()`: in `react`, call me on the next tick too |

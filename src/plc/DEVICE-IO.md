@@ -28,7 +28,7 @@ drops the program to STOP worker-side and comes back as a `plcFault` message.
 ## The device-IO tag bridge (the whole bus)
 
 An SDK part's behavior reads and writes PLC tags **by name**: `ctx.readTag`/`writeTag` (BOOL) and
-`ctx.readNumber`/`writeNumber` (INT/REAL). There is no per-type binding table: a part authored to read
+`ctx.readNumber`/`writeNumber` (INT/REAL). `writeTag` also takes a number and writes it as `writeNumber` does. There is no per-type binding table: a part authored to read
 `"Run"` and write `"AtEnd"` is wired as soon as a program declares those tags.
 
 ```

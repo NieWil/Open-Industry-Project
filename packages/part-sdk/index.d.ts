@@ -836,11 +836,15 @@ export interface PartContext<P extends ParamSchema = ParamSchema, J extends stri
      * only on program attach/detach, never mid-scan.
      */
     tagDriven(name: string): boolean;
-    /** write a BOOL PLC tag (device I/O bus) - a signal the PLC program can read as an input */
-    writeTag(name: string, value: boolean): void;
+    /**
+     * Write a PLC tag (device I/O bus) - a signal the PLC program can read as an input. A boolean writes a BOOL
+     * tag and a number writes a numeric one (INT/REAL). A number that is not finite is ignored.
+     */
+    writeTag(name: string, value: boolean | number): void;
     /** read a numeric PLC tag (INT/REAL) - e.g. a commanded setpoint or selector; absent reads as 0 */
     readNumber(name: string): number;
-    /** write a numeric PLC tag (INT/REAL) - e.g. a position/count feedback the PLC program reads */
+    /** write a numeric PLC tag (INT/REAL) - e.g. a position/count feedback the PLC program reads. The
+     *  number-only form of {@link writeTag}. */
     writeNumber(name: string, value: number): void;
     /**
      * Report the effective value your part is using for one of its own params - `param` is a param name, not

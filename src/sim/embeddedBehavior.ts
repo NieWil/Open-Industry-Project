@@ -702,8 +702,11 @@ export function create(source: string, paramsJson = '{}', jointsJson?: string, a
       // presence-keyed: the host hands in the controller's output tags projected exactly like the value
       // table, so this resolves scoped/absolute names identically to readTag
       tagDriven: (name: string) => tagsBox.driven[tagKey(name)] !== undefined,
-      writeTag: (name: string, value: boolean) => {
-        out.tags[tagKey(name)] = value === true
+      // a number goes the way writeNumber sends it; anything else that is not `true` writes FALSE
+      writeTag: (name: string, value: boolean | number) => {
+        if (typeof value === 'number') {
+          if (Number.isFinite(value)) out.tags[tagKey(name)] = value
+        } else out.tags[tagKey(name)] = value === true
       },
       readNumber: (name: string) => {
         const v = tagsBox.cur[tagKey(name)]
