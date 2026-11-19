@@ -109,6 +109,14 @@ imported MASK model brings the cost. Measure its frame cost before adding a patc
 
 These use public API but lean on r187 *behavior*. Each has a canary or gate.
 
+- **GPU time per frame** ([frameMeter.ts](../src/render/viewport/frameMeter.ts)) - after each
+  `resolveTimestampsAsync()` the view reads `backend.timestampQueryPool.render.timestamps` (documented fields,
+  the map three's own Inspector reads through `getTimestamp(uid)`), whose keys end `:f<frameId>` (`Backend`'s
+  timestamp uid), and counts every frame once. It relies on three inserting a frame's passes together and frames
+  in order. If the pool or the key format moves, the stats window's gpu line shows "-" and "limited by the GPU"
+  falls back to elimination; nothing else reads it. Canary: `frameMeter.test.ts` pins the parsing; after a bump,
+  `?stats` on the demo must show a gpu line with a value.
+
 - **OrbitControls private fields** ([view.ts](../src/render/viewport/view.ts)) - the wheel belongs to
   the view's cursor zoom ([wheelZoom.ts](../src/render/viewport/wheelZoom.ts)), so the constructor
   detaches `OrbitControls._onMouseWheel` from the canvas (`enableZoom = false` would also kill the

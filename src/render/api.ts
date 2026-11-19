@@ -32,11 +32,23 @@ export interface RenderStats {
   cpuTotalMs: number
   frames: number
   /**
-   * EMA of the GPU's render-pass execution time, ms: the part of the frame cost that cpuMs excludes
-   * (shown as a CPU/GPU frame-time pair). Measured with WebGPU timestamp queries (trackTimestamp,
-   * resolved off-frame). null on WebGL, which has no equivalent query on the classic renderer.
+   * EMA of one frame's GPU render-pass time, ms: the part of the frame cost that cpuMs excludes. Measured with
+   * WebGPU timestamp queries, each frame counted once (frameMeter.ts). null on WebGL, on a WebGPU device without
+   * timestamp queries, and until the first frame resolves.
    */
   gpuMs: number | null
+  /**
+   * GPU ms summed over every resolved frame, and how many frames that is: window-diff two reads the way
+   * cpuTotalMs is. gpuTotalMs is null whenever gpuMs is. The frames resolve a frame or two late, so gpuFrames
+   * trails `frames` by that much and a window divides by its own count.
+   */
+  gpuTotalMs: number | null
+  gpuFrames: number
+  /**
+   * The display's refresh interval in ms: 60 Hz, or faster once the frames show it (frameMeter.ts
+   * RefreshEstimate). null only before there is a view.
+   */
+  refreshMs: number | null
   /**
    * Frames whose interval exceeded 1.5x the rolling median of the frames around them, since the
    * view mounted. Catches hitches (pipeline compiles, GC, resize) that the EMAs smooth over;

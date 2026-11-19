@@ -118,10 +118,13 @@ export function splitRows(split: StepSplit | null, msPerStep: number | null): Sp
 /** a row's ms, never rounded down to a reassuring 0.00 when it cost something */
 export const rowMs = (ms: number): string => (ms > 0 && ms < 0.005 ? '<0.01' : ms.toFixed(2))
 
-/** the view's cumulative frame counters (RenderStats.cpuTotalMs / frames) and the time they were read at */
+/** the view's cumulative frame counters (RenderStats cpuTotalMs / frames / gpuTotalMs / gpuFrames) and the time they were read at */
 export interface RenderSample {
   cpuTotalMs: number
   frames: number
+  /** null when the GPU isn't measured (WebGL, no timestamp queries, nothing resolved yet) */
+  gpuTotalMs: number | null
+  gpuFrames: number
   at: number
 }
 
@@ -132,6 +135,10 @@ export interface RenderWindow {
   msPerFrame: number | null
   /** main-thread busy ms per real ms: 1 = the main thread did nothing but produce frames */
   load: number
+  /** average GPU ms per frame; null when the GPU isn't measured or no frame resolved in the window */
+  gpuMsPerFrame: number | null
+  /** GPU busy ms per real ms, at most 1; null with gpuMsPerFrame */
+  gpuLoad: number | null
 }
 
 /**
@@ -139,36 +146,110 @@ export interface RenderWindow {
  * used for this: the interval it advances by is clamped to 100 ms and the work is not, so under hitches the averaged
  * interval overstates the frame rate and work / interval reads several times 100% (RenderStats.cpuTotalMs). Sampled
  * on the main thread, so a sample can never fall inside a frame: a 1.5 s frame is wholly inside the window that
- * waited for it, and the load needs no cap.
+ * waited for it, and the main thread's load needs no cap.
  *
- * The GPU's time stays out: it comes from an async timestamp resolve that can cover several frames (measured: 645 ms
- * "per frame" against a 29 ms interval), so it is a details line, not something to divide by.
+ * The GPU side divides by its own frame count, since its frames resolve a frame or two after they ran. Its time per
+ * frame is capped at the window's frame interval, as three's Inspector caps it: pass timestamps can overlap work
+ * the GPU did for the next frame, and a GPU can't be busier than the time that passed.
  */
 export function renderWindow(a: RenderSample, b: RenderSample): RenderWindow | null {
   const elapsed = b.at - a.at
   const dFrames = b.frames - a.frames
   const dCpu = b.cpuTotalMs - a.cpuTotalMs
   if (elapsed <= 0 || dFrames < 0 || dCpu < 0) return null
-  return { fps: (dFrames * 1000) / elapsed, msPerFrame: dFrames > 0 ? dCpu / dFrames : null, load: dCpu / elapsed }
+  const fps = (dFrames * 1000) / elapsed
+  let gpuMsPerFrame: number | null = null
+  let gpuLoad: number | null = null
+  const dGpuFrames = b.gpuFrames - a.gpuFrames
+  if (a.gpuTotalMs !== null && b.gpuTotalMs !== null && dGpuFrames > 0 && dFrames > 0) {
+    gpuMsPerFrame = Math.min((b.gpuTotalMs - a.gpuTotalMs) / dGpuFrames, elapsed / dFrames)
+    gpuLoad = Math.min(1, (gpuMsPerFrame * fps) / 1000)
+  }
+  return { fps, msPerFrame: dFrames > 0 ? dCpu / dFrames : null, load: dCpu / elapsed, gpuMsPerFrame, gpuLoad }
 }
 
-export interface RenderMeter {
+/** what holds the run back, for the stats window's warning line */
+export type Limit = 'sim' | 'render' | 'gpu'
+
+/**
+ * A side's time against its budget: the main thread's and the GPU's ms per frame against the display's refresh
+ * interval, the sim's ms per step against the time one step has at its rate and speed. Over 1 is too slow, by that
+ * much; under 1 is headroom. This is the stats window's percentage, not the busy share (ms per real ms): when frames
+ * run late there are fewer of them, so a busy share stays under 100% however far over budget each frame is (a GPU at
+ * 18.3 ms a frame on a 60 Hz display reads 90% busy at 49 fps). null when the side isn't measured.
+ */
+export function budgetShare(ms: number | null, budgetMs: number | null): number | null {
+  return ms === null || budgetMs === null || !(budgetMs > 0) ? null : ms / budgetMs
+}
+
+/** each side's budgetShare, limitOf's input; gpu is null where the GPU isn't measured */
+export interface Shares {
+  render: number | null
+  gpu: number | null
+  sim: number | null
+}
+
+/** a frame rate under this share of the display's rate is behind it */
+const BEHIND = 0.87
+
+/**
+ * Which side limits the run, or null when none does: the side furthest into its budget, once it is at LIMIT_LOAD of
+ * it. Without a GPU measurement, a frame rate behind the display that neither CPU side explains is put down to the
+ * GPU, by elimination, as drei's PerformanceMonitor judges from the frame rate alone.
+ */
+export function limitOf(shares: Shares, fps: number | null, refreshMs: number | null): Limit | null {
+  const sides: [Limit, number | null][] = [
+    ['sim', shares.sim],
+    ['render', shares.render],
+    ['gpu', shares.gpu],
+  ]
+  let top: Limit | null = null
+  let topShare = LIMIT_LOAD
+  for (const [side, share] of sides) {
+    if (share !== null && share >= topShare) {
+      top = side
+      topShare = share
+    }
+  }
+  if (top || shares.gpu !== null) return top
+  if (fps === null || fps <= 0 || refreshMs === null) return null
+  return fps * (refreshMs / 1000) < BEHIND ? 'gpu' : null
+}
+
+/** the render side as the stats window reads it */
+export interface RenderReading {
   fps: number | null
-  msPerFrame: number | null
+  /** the main thread's busy share */
   load: number | null
+  /** null when the GPU isn't measured */
+  gpuMsPerFrame: number | null
+  /** the GPU's busy share */
+  gpuLoad: number | null
+}
+
+export interface RenderMeter extends RenderReading {
+  msPerFrame: number | null
 }
 
 /** poll the view's frame counters; empty until the first window completes */
 export function useRenderMeter(view: IRenderView | null, intervalMs = 500): RenderMeter {
-  const [meter, setMeter] = useState<RenderMeter>({ fps: null, msPerFrame: null, load: null })
+  const [meter, setMeter] = useState<RenderMeter>({ fps: null, msPerFrame: null, load: null, gpuMsPerFrame: null, gpuLoad: null })
   useEffect(() => {
     if (!view) return
     const samples: RenderSample[] = []
     const id = setInterval(() => {
       const s = view.getStats()
-      const w = slide(samples, { cpuTotalMs: s.cpuTotalMs, frames: s.frames, at: performance.now() }, renderWindow)
+      const sample = { cpuTotalMs: s.cpuTotalMs, frames: s.frames, gpuTotalMs: s.gpuTotalMs, gpuFrames: s.gpuFrames, at: performance.now() }
+      const w = slide(samples, sample, renderWindow)
       if (!w) return
-      setMeter((m) => ({ fps: w.fps, msPerFrame: w.msPerFrame ?? m.msPerFrame, load: w.load }))
+      setMeter((m) => ({
+        fps: w.fps,
+        msPerFrame: w.msPerFrame ?? m.msPerFrame,
+        load: w.load,
+        // a window in which no GPU frame resolved keeps the last reading; a GPU that stopped being measured clears it
+        gpuMsPerFrame: s.gpuTotalMs === null ? null : (w.gpuMsPerFrame ?? m.gpuMsPerFrame),
+        gpuLoad: s.gpuTotalMs === null ? null : (w.gpuLoad ?? m.gpuLoad),
+      }))
     }, intervalMs)
     return () => clearInterval(id)
   }, [view, intervalMs])

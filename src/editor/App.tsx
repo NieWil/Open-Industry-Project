@@ -446,7 +446,7 @@ function nullView(): IRenderView {
     setPilotAimLive() {},
     setPilotAvatars() {},
     showRotationFeedback() {},
-    getStats: () => ({ drawCalls: 0, drawPath: null, triangles: 0, cpuMs: 0, cpuTotalMs: 0, frames: 0, gpuMs: null, missedFrames: 0, backend: 'WebGL', matrixLiveParts: 0, textures: 0, geometries: 0 }),
+    getStats: () => ({ drawCalls: 0, drawPath: null, triangles: 0, cpuMs: 0, cpuTotalMs: 0, frames: 0, gpuMs: null, gpuTotalMs: null, gpuFrames: 0, refreshMs: null, missedFrames: 0, backend: 'WebGL', matrixLiveParts: 0, textures: 0, geometries: 0 }),
     dispose() {},
   }
 }

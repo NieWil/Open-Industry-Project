@@ -86,7 +86,8 @@ async function main() {
     const phys = Number(m?.[1]), budget = Number(m?.[2])
     check('sim line carries ms per step and its budget', Number.isFinite(phys) && Number.isFinite(budget), JSON.stringify(runningText))
     check('ms per step plausible (0 < phys < budget = 1000/60)', phys > 0 && phys < budget && Math.abs(budget - 16.7) < 0.05, `phys=${phys} budget=${budget}`)
-    check('render line carries its ms alongside', /render\s+\d+%\s+[\d.]+ ms/.test(runningText), JSON.stringify(runningText))
+    // a frame's ms against the display's refresh interval
+    check('render line carries its ms and its budget', /render\s+\d+%\s+[\d.]+ \/ [\d.]+ ms/.test(runningText), JSON.stringify(runningText))
     // the split under `sim` is shown at any load, as one row per cost in ms per step, adding up to the sim
     // line's ms; it names the PLC because a program is attached
     const splitRows = () => page.evaluate(() => [...document.querySelectorAll('[data-testid="stats-sim-split"] > div')].map((d) => d.textContent ?? ''))

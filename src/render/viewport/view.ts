@@ -84,6 +84,7 @@ import type { OutlineMaskMergeSurface } from './outlineMaskMerge'
 import { ViewXR } from './xr'
 import { renderQuality, createAdaptiveQuality } from '../quality'
 import { HitchCounter } from './frameHitch'
+import { FrameMeter } from './frameMeter'
 import type { AdaptiveQuality } from '../quality'
 import type { PartVisual } from '../parts/registry'
 import { advanceAnimClock, animClockValue } from '../parts/animClock'
@@ -340,7 +341,8 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
   // (RenderStats.cpuTotalMs says why the EMA alone can't give a frame rate or a load)
   private cpuMsTotal = 0
   private framesTotal = 0
-  private gpuMsEma = 0 // WebGPU only: EMA of render-pass GPU time from timestamp queries; stays 0 on WebGL
+  // GPU ms per frame (WebGPU timestamps; empty on WebGL) and the display's refresh interval
+  private readonly frameMeter = new FrameMeter()
   // hitch detection (frameHitch.ts): a rolling median baseline. A running-minimum estimate
   // would count a 120 Hz panel's fast frames as evidence that the app's own healthy 60 fps
   // cadence was janking
@@ -1917,9 +1919,11 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
       cpuMs: this.cpuMsEma,
       cpuTotalMs: this.cpuMsTotal,
       frames: this.framesTotal,
-      // 0 means "no resolved sample yet" (first frames) - report null until real data exists,
-      // so the overlay never renders a misleading 0.00 gpu line
-      gpuMs: backend === 'WebGPU' && this.gpuMsEma > 0 ? this.gpuMsEma : null,
+      // null until a frame has been resolved, so the overlay never shows a misleading 0.00
+      gpuMs: this.frameMeter.gpu.frames > 0 ? this.frameMeter.gpu.ema : null,
+      gpuTotalMs: this.frameMeter.gpu.frames > 0 ? this.frameMeter.gpu.totalMs : null,
+      gpuFrames: this.frameMeter.gpu.frames,
+      refreshMs: this.frameMeter.refresh.intervalMs,
       missedFrames: this.hitchCounter.missed,
       backend,
       matrixLiveParts: this.matrices.matrixLiveParts,
@@ -2030,31 +2034,31 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
   private readonly tick = (now: number): void => {
     const synthetic = this.lastTime === null // first frame / resetFrameClock: dt is a placeholder, not a real interval
     const dt = this.lastTime === null ? 1 / 60 : Math.min((now - this.lastTime) / 1000, 0.1)
-    this.lastTime = now
     if (!synthetic) {
       this.hitchCounter.push(dt)
+      this.frameMeter.refresh.push(now - this.lastTime!)
     }
+    this.lastTime = now
     const cpuStart = performance.now()
     this.tickBody(dt)
     const cpuMs = performance.now() - cpuStart
     this.cpuMsEma = this.cpuMsEma === 0 ? cpuMs : this.cpuMsEma + 0.1 * (cpuMs - this.cpuMsEma)
     this.cpuMsTotal += cpuMs
     this.framesTotal++
-    // GPU frame time (WebGPU only): the backend wrote per-pass timestamps this frame
-    // (trackTimestamp, createRenderer.ts). Resolving is async and completes a frame or two later,
-    // which is fine for an EMA. The pool self-guards against overlapping resolves. WebGL's classic
-    // renderer has no equivalent, so gpuMsEma stays 0 and getStats reports null.
+    // GPU frame time (WebGPU only): the backend wrote per-pass timestamps this frame (trackTimestamp,
+    // createRenderer.ts). They resolve a frame or two later in batches, and each resolved frame is counted
+    // once (frameMeter.ts says why the resolve's return value isn't used). A device without the
+    // timestamp-query feature has no render pool, and WebGL's classic renderer has none at all: the gpu
+    // stats stay empty and the overlay shows "-".
     if (!(this.renderer instanceof WebGLRenderer) && !this.disposed) {
       const gpu = this.renderer
       void gpu
         .resolveTimestampsAsync()
-        .then((ms) => {
-          const val = typeof ms === 'number' && Number.isFinite(ms) ? ms : (gpu.info.render as { timestamp?: number }).timestamp
-          if (typeof val === 'number' && Number.isFinite(val) && val >= 0) {
-            this.gpuMsEma = this.gpuMsEma === 0 ? val : this.gpuMsEma + 0.1 * (val - this.gpuMsEma)
-          }
+        .then(() => {
+          const pool = (gpu.backend as unknown as { timestampQueryPool?: { render?: { timestamps?: Map<string, number> } } }).timestampQueryPool?.render
+          if (pool?.timestamps) this.frameMeter.gpu.collect(pool.timestamps)
         })
-        .catch(() => {}) // timestamp-query unavailable (feature absent) - HUD just shows no gpu line
+        .catch(() => {})
     }
   }
 
