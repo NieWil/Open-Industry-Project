@@ -38,6 +38,11 @@ describe('numeric + bool tags at the SDK boundary (embeddedBehavior)', () => {
     expect(run(`definePart({ step(ctx){ ctx.writeNumber('bad', 1/0); ctx.writeNumber('ok', 2) } })`, {}).tags).toEqual({ ok: 2 })
   })
 
+  it('rising finds a tag named by an address in any spelling, as readTag does', () => {
+    const src = `definePart({ step(ctx){ ctx.writeTag('read', ctx.readTag('%qx0.1')); ctx.writeTag('rose', ctx.rising('%qx0.1')); ctx.writeTag('fell', ctx.falling('%qx0.1')) } })`
+    expect(run(src, { '%QX0.1': true }).tags).toEqual({ read: true, rose: true, fell: false })
+  })
+
   it('writeTag writes a number as a numeric tag, as writeNumber does', () => {
     const src = `definePart({ step(ctx){ ctx.writeTag('pos', 0.25); ctx.writeTag('zero', 0); ctx.writeTag('bad', 0/0); ctx.writeTag('flag', true) } })`
     expect(run(src, {}).tags).toEqual({ pos: 0.25, zero: 0, flag: true })

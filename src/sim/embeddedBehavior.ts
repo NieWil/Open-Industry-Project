@@ -734,8 +734,14 @@ export function create(source: string, paramsJson = '{}', jointsJson?: string, a
       },
       // synchronous edge detection over the begin-of-tick tag tables (prev = last tick, cur = this tick).
       // No callbacks/refs - same value every part reads, so it stays deterministic + order-independent.
-      rising: (name: string) => readBoolTag(tagsBox.cur[name]) && !readBoolTag(tagsBox.prev[name]),
-      falling: (name: string) => !readBoolTag(tagsBox.cur[name]) && readBoolTag(tagsBox.prev[name]),
+      rising: (name: string) => {
+        const key = tagKey(name)
+        return readBoolTag(tagsBox.cur[key]) && !readBoolTag(tagsBox.prev[key])
+      },
+      falling: (name: string) => {
+        const key = tagKey(name)
+        return !readBoolTag(tagsBox.cur[key]) && readBoolTag(tagsBox.prev[key])
+      },
       used: () => inUsed.used,
       again: () => {
         again.v = true
