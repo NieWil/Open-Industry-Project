@@ -64,6 +64,14 @@ camera, so nothing is applied there. Someone followed while walking in pilot mod
 (`lookPose` in render/api.ts): pilot turns the camera and leaves the orbit target behind, so the target would point a
 follower the wrong way.
 
+### The view a link opens on
+
+A copied link carries the camera it was copied at (`cam`, [controller/linkCamera.ts](../src/editor/controller/linkCamera.ts)):
+position, look point, and whether it is orthographic. A visitor opens on it, over a camera remembered from an earlier
+visit to the room. It is read once, filed as the visitor's camera for the room, and taken off the address, so a reload
+reopens where the visitor left off. It is never in the room's document. A link copied from part focus carries none.
+Following still applies after it: a view link with the owner present eases to the owner's live view.
+
 ### PLC values: Watch and displays
 
 The Watch panel ([components/plc/WatchPanel.tsx](../src/editor/components/plc/WatchPanel.tsx)) watches whichever

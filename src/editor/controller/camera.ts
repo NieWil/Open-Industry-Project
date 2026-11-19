@@ -5,7 +5,8 @@
 import { Vector3 } from 'three'
 import { partDisplayName } from '../../core/parts/partDisplayName'
 import { DEMO_OPENING_VIEW } from '../demo/demoScenes'
-import { clearViewportState, readViewportState } from '../store/storePrefs'
+import { clearViewportState, persistViewportState, readViewportState } from '../store/storePrefs'
+import { takeLinkCamera } from './linkCamera'
 import { SCENE_SLOT, sceneSlotKey } from '../project/documentStore'
 import { DEFAULT_CAMERA_POSE } from '../../render/api'
 import type { IRenderView, ProjectionMode } from '../../render/api'
@@ -62,7 +63,16 @@ export function restoreCamera(c: CameraState, ec: CameraDeps): void {
   c.key = key
   // a scene slot framed before cameras were kept per document is under its bare id: the first document to
   // ask for it takes it (storePrefs.readViewportState)
-  const saved = readViewportState(key, key.startsWith('@') ? undefined : SCENE_SLOT)
+  let saved = readViewportState(key, key.startsWith('@') ? undefined : SCENE_SLOT)
+  // A room link may carry the camera its sender copied it at. That is this visit's opening view, over a camera
+  // remembered from an earlier one. It is filed as the room's camera at once, since an instant pose is not a
+  // gesture that settles, and the address no longer has it on a reload.
+  const linked = key.startsWith('@room:') ? takeLinkCamera() : null
+  if (linked) {
+    const { ortho, ...pose } = linked
+    saved = { pose, projection: ortho ? 'orthographic' : 'perspective', auto: false }
+    persistViewportState(key, saved)
+  }
   ec.view.setCameraPose(saved ? saved.pose : openingView(ec.store), { instant: true })
   // the projection is saved with the pose: an orthographic frustum is derived from the camera→target
   // distance (EditorCamera.setFocusDistance), so restored without the pose it was framed at it

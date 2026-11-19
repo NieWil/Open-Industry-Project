@@ -13,6 +13,7 @@ import { commandChord, commandEnabled, getCommand, runCommand, SIM_SPEEDS } from
 import { DESKTOP_MAC, DESKTOP_SHELL, getOipMenuApi } from '../desktop/desktopMenuBridge'
 import { keyHint, withKey } from '../keyHint'
 import type { EditorController } from '../controller'
+import { CAMERA_PARAM, formatLinkCamera } from '../controller/linkCamera'
 import type { EditorState, EditorStore } from '../store/store'
 import { ForcesStatus } from './plc/ForcesStatus'
 import { PlcLinkStatus } from './plc/PlcLinkStatus'
@@ -285,6 +286,11 @@ export function Toolbar({ store, state, controller }: ToolbarProps) {
     }
     // a display opens with only the scene (components/PresentOverlay.tsx); it follows the owner like any view link
     if (mode === 'display') linkToCopy.searchParams.set('present', '1')
+    // where the sender is looking, as the visitor's opening view (controller/linkCamera.ts). lookPose, since in
+    // pilot the orbit target is not where the camera points. Not from part focus: that close-up is of one part,
+    // and the visitor opens on the scene.
+    const view = controller?.view
+    if (view && store.getState().focusedPartId === null) linkToCopy.searchParams.set(CAMERA_PARAM, formatLinkCamera(view.lookPose(), view.projectionMode() === 'orthographic'))
     try {
       await navigator.clipboard?.writeText(shareableLink(linkToCopy).toString())
       setShareLabel(mint === 'scene' ? M.linkCopiedShared : mode === 'view' ? M.viewLinkCopied : mode === 'display' ? M.displayLinkCopied : M.inviteLinkCopied)

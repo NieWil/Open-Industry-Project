@@ -1184,7 +1184,10 @@ export class EditorController {
     if (demoRetired) {
       // A demo peek just ended, and the store says how (EditorStore.demoForkedSlot). The two endings
       // want opposite things from the camera and are the same flag flip from here.
-      if (this.store.demoForkedSlot !== null) {
+      // Shared (roomEntry.ts): the tab took the demo into a room in place. The address names the room before the
+      // session ends, and it is the same scene on screen, so the camera carries over as it does for a fork. A room
+      // has no camera filed yet, and a restore would jump the sharer to the default view mid-share.
+      if (this.store.demoForkedSlot !== null || this.viewportKey().startsWith('@room:')) {
         // Forked (stashDemoSession): the document did not change (the same scene continues under a new
         // identity), so the camera carries over to the new slot instead of being swapped. Without this the
         // demo's opening frame is recorded under a key nothing reads again, and the next reload opens the
