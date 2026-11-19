@@ -633,9 +633,8 @@ export interface PartContext<P extends ParamSchema = ParamSchema, J extends stri
    * gates, AGVs). `value` is a revolute joint's angle in radians or a prismatic joint's extension in
    * metres; the host clamps it to the joint's declared limits and moves the link kinematically (real
    * manipulators are position-commanded, not physics-flopped). Joints are declared in the package's rig
-   * geometry; setting an unknown name is ignored. Write-only and deterministic: command the pose every
-   * tick (e.g. from `simTime`/`params`), don't read it back.
-   */
+   * geometry; setting an unknown name is ignored. Deterministic: command the pose every tick. {@link joints}
+   * reads the last command back and {@link measured} the applied position. */
   setJoint(name: string, value: number): void
   /**
    * Open/close a gripper to carry cargo - the manipulator primitive. `gripper` is a rig link name; when
@@ -764,15 +763,11 @@ export interface PartContext<P extends ParamSchema = ParamSchema, J extends stri
    * only on program attach/detach, never mid-scan.
    */
   tagDriven(name: string): boolean
-  /**
-   * Write a PLC tag (device I/O bus) - a signal the PLC program can read as an input. A boolean writes a BOOL
-   * tag and a number writes a numeric one (INT/REAL). A number that is not finite is ignored.
-   */
+  /** write a PLC tag the program reads as an input: a boolean for a BOOL tag, a finite number for INT/REAL */
   writeTag(name: string, value: boolean | number): void
   /** read a numeric PLC tag (INT/REAL) - e.g. a commanded setpoint or selector; absent reads as 0 */
   readNumber(name: string): number
-  /** write a numeric PLC tag (INT/REAL) - e.g. a position/count feedback the PLC program reads. The
-   *  number-only form of {@link writeTag}. */
+  /** write a numeric PLC tag (INT/REAL), e.g. position or count feedback - the number-only form of {@link writeTag} */
   writeNumber(name: string, value: number): void
   /**
    * Report the effective value your part is using for one of its own params - `param` is a param name, not
@@ -945,7 +940,8 @@ export interface PartContext<P extends ParamSchema = ParamSchema, J extends stri
    * tag). Only fires while the sim runs (the behavior isn't ticking at idle). Deterministic given the inputs.
    */
   used(): boolean
-  again(): void // in `react`: call me on the next tick too; asked on every call while the part times or moves something
+  /** in `react`: call me on the next tick too; ask on every call while the part is timing or moving something */
+  again(): void
   /**
    * Is the conveyor part with this `id` currently running (commanding a non-zero surface speed)? The
    * cross-part interlock primitive: a spawner passes its `partRef` param to pause the line while the feeding
