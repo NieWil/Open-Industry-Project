@@ -570,6 +570,8 @@ export function TextField({ label, value, placeholder, disabled, mixed, tooltip,
         <input
           type="text"
           value={text}
+          // the whole value on hover: the box shows only the start of a long one
+          title={text || undefined}
           placeholder={mixed ? '--' : placeholder}
           disabled={disabled}
           list={list}
