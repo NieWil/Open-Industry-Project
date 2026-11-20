@@ -105,6 +105,46 @@ async function main() {
     await page.waitForTimeout(500)
     check('...and choosing it jumps there', (await caretLine(page)) === 'Drive : Axis;', await caretLine(page))
 
+    // back and forward through the jumps: Count -> its declaration, then Drive.Ticks -> the block's variable
+    const press = async (chord) => {
+      await page.locator('.cm-content').first().focus()
+      await page.keyboard.press(chord)
+      await page.waitForTimeout(300)
+    }
+    await caretAt(page, 'Speed := 1.5', 1)
+    await f12(page)
+    await caretAt(page, 'Drive.Ticks', 'Drive.Ti'.length)
+    await f12(page)
+    check('(two jumps made)', (await caretLine(page)) === 'Ticks : INT;', await caretLine(page))
+    await press('Alt+ArrowLeft')
+    check('Alt+Left returns to where the last jump left from', (await caretLine(page)) === 'Count := Drive.Ticks;', await caretLine(page))
+    await press('Alt+ArrowLeft')
+    check('...and again to where the one before it left from', (await caretLine(page)) === 'Speed := 1.5;', await caretLine(page))
+    await press('Alt+ArrowRight')
+    check('Alt+Right goes forward again', (await caretLine(page)) === 'Count := Drive.Ticks;', await caretLine(page))
+    await press('Alt+ArrowRight')
+    check('...as far as the place Back was first pressed', (await caretLine(page)) === 'Ticks : INT;', await caretLine(page))
+    // the menu's Go back does the same; Go forward is off with nothing ahead, and off again after a new jump
+    const back = page.locator('[data-testid="st-go-back"]')
+    const forward = page.locator('[data-testid="st-go-forward"]')
+    const openMenu = async () => {
+      await page.locator('.cm-activeLine').first().click({ button: 'right', position: { x: 8, y: 5 } })
+      await back.waitFor({ state: 'visible', timeout: 5000 })
+    }
+    await openMenu()
+    check('the text menu offers Go back, and Go forward only when there is somewhere ahead', (await back.isEnabled()) && (await forward.isDisabled()))
+    await back.click()
+    await page.waitForTimeout(500)
+    check('...and Go back steps back', (await caretLine(page)) === 'Count := Drive.Ticks;', await caretLine(page))
+    await openMenu()
+    check('Go forward is on after going back', await forward.isEnabled())
+    await page.keyboard.press('Escape')
+    await caretAt(page, 'Speed := 1.5', 1)
+    await f12(page)
+    await openMenu()
+    check('a new jump drops what lay ahead', await forward.isDisabled())
+    await page.keyboard.press('Escape')
+
     // a keyword has no declaration: the panel says so and the caret stays
     await caretAt(page, 'END_PROGRAM', 3)
     await f12(page)

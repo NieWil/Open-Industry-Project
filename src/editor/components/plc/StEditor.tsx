@@ -40,7 +40,8 @@ import { providePlcReading } from '../../program/plcReading'
 import { CheckIcon, CopyIcon, DockIcon, ExternalLinkIcon, FoldIcon, MaximizeIcon } from '../toolbarIcons'
 import { defineMessages, t } from '../../../core/i18n'
 import { ContextMenu, type MenuItem } from '../inspector/menu'
-import { primaryKey } from '../../keyHint'
+import { IS_MAC, primaryKey } from '../../keyHint'
+import { JumpHistory } from '../../program/jumpHistory'
 import { activeClipboard } from '../../dialogHost'
 import { addToWatchList, resolveWatch, tabWatchListKey } from '../../program/plcWatchList'
 import { canEditDisplay, displayedValues, displayListFull, setDisplayed } from '../../program/displayValues'
@@ -60,6 +61,8 @@ const M = defineMessages('stEditor', {
   noDefinitionDetail: 'Put the caret on a name the program declares (a variable, a member, a block, a function or a type) and press {keys} again.',
   goToDefinition: 'Go to definition',
   goToDefinitionOf: 'Go to definition of {name}',
+  goBack: 'Go back',
+  goForward: 'Go forward',
   foldDeclarations: 'Fold all declarations',
   foldDeclarationsHint: 'Collapse every VAR section, TYPE and STRUCT, leaving the statements',
   unfoldAll: 'Unfold all',
@@ -704,12 +707,24 @@ export function StEditor({ store, state, controller, docked = false, viewOnly = 
     }).catch((e) => console.warn('[oip] rename failed:', e))
   }
 
+  // where each Go to definition left from (program/jumpHistory.ts)
+  const jumps = useRef(new JumpHistory())
+  /** Step back to where the last jump left from, or forward again. */
+  const stepJump = (dir: 'back' | 'forward'): void => {
+    const from = editorRef.current?.caret()?.offset
+    if (from === undefined) return
+    const to = dir === 'back' ? jumps.current.goBack(from) : jumps.current.goForward(from)
+    if (to !== null) editorRef.current?.revealOffset(to)
+  }
+
   /** Move the caret to where the name under it is declared (plc/tags.ts `definitionAt`). */
   const goToDefinitionAt = (offset: number): void => {
     void import('../../../plc/tags').then(({ definitionAt }) => {
       const at = definitionAt(currentSource(), offset)
-      if (at !== null) editorRef.current?.revealOffset(at)
-      else showReport({ headline: t(M.noDefinition), detail: t(M.noDefinitionDetail, { keys: primaryKey('edit.goToDefinition') ?? '' }), items: [], tone: 'warn', keepOnEdit: false })
+      if (at !== null) {
+        jumps.current.jumped(offset)
+        editorRef.current?.revealOffset(at)
+      } else showReport({ headline: t(M.noDefinition), detail: t(M.noDefinitionDetail, { keys: primaryKey('edit.goToDefinition') ?? '' }), items: [], tone: 'warn', keepOnEdit: false })
     }).catch((e) => console.warn('[oip] go to definition failed:', e))
   }
 
@@ -883,6 +898,8 @@ export function StEditor({ store, state, controller, docked = false, viewOnly = 
           disabled: !caret?.word,
           onClick: later(() => caret && goToDefinitionAt(caret.offset)),
         },
+        { label: t(M.goBack), testid: 'st-go-back', keys: primaryKey('edit.jumpBack'), disabled: !jumps.current.canGoBack(), onClick: later(() => stepJump('back')) },
+        { label: t(M.goForward), testid: 'st-go-forward', keys: primaryKey('edit.jumpForward'), disabled: !jumps.current.canGoForward(), onClick: later(() => stepJump('forward')) },
         { label: '-', onClick: () => {} },
         { label: t(M.cut), testid: 'st-cut', keys: primaryKey('edit.cut'), disabled: readOnly || !has, title: readOnly ? readOnlyNote : undefined, onClick: later(() => void copyText().then((ok) => ok && editor.replaceSelection('', 'delete.cut')).catch((e) => console.warn('[oip] cut failed:', e))) },
         { label: t(M.copy), testid: 'st-copy', keys: primaryKey('edit.copy'), disabled: !has, onClick: later(() => void copyText()) },
@@ -1194,6 +1211,16 @@ export function StEditor({ store, state, controller, docked = false, viewOnly = 
                 <div
                   style={view === 'ladder' ? { ...editorHostWrap, display: 'none' } : editorHostWrap}
                   onContextMenu={openTextMenu}
+                  // In the capture phase: CodeMirror binds Alt+arrow itself and would take the press first.
+                  onKeyDownCapture={(e) => {
+                    const action = resolveKeyAction(e, 'editor')
+                    if (action !== 'edit.jumpBack' && action !== 'edit.jumpForward') return
+                    // on a Mac a chord of Option alone is text entry (Option+arrow moves by a word)
+                    if (IS_MAC && e.altKey && !e.ctrlKey && !e.metaKey) return
+                    e.preventDefault()
+                    e.stopPropagation()
+                    stepJump(action === 'edit.jumpBack' ? 'back' : 'forward')
+                  }}
                   onKeyDown={(e) => {
                     // (resolved, never compared: core/keymap.ts owns which chord means Rename and Go to definition)
                     const action = resolveKeyAction(e, 'editor')

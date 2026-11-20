@@ -78,6 +78,12 @@ describe('resolveKeyAction - QWERTY', () => {
     expect(resolveKeyAction(press('F12', 'F12'), 'editor')).toBe('edit.goToDefinition')
   })
 
+  it('binds back and forward through the jumps to Alt+Left and Alt+Right', () => {
+    expect(resolveKeyAction(press('ArrowLeft', 'ArrowLeft', { altKey: true }), 'editor')).toBe('edit.jumpBack')
+    expect(resolveKeyAction(press('ArrowRight', 'ArrowRight', { altKey: true }), 'editor')).toBe('edit.jumpForward')
+    expect(resolveKeyAction(press('ArrowLeft', 'ArrowLeft'), 'editor')).toBeNull()
+  })
+
   it('keeps Numpad5 working with NumLock off, where key reports "Clear"', () => {
     expect(resolveKeyAction(press('Numpad5', 'Clear'), 'editor')).toBe('view.projection')
     expect(resolveKeyAction(press('KeyO', 'o'), 'editor')).toBe('view.projection')

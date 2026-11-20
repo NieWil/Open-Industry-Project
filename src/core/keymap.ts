@@ -105,6 +105,10 @@ export const KEY_BINDINGS = [
   { id: 'edit.sideGuards', mode: 'editor', group: 'Edit', label: 'Edit guard openings', keys: ['KeyG'], hint: 'with a conveyor selected: drag along a guard to cut an opening, Delete removes the clicked one, Esc exits' },
   { id: 'edit.rename', mode: 'editor', group: 'Edit', label: 'Rename', keys: ['F2'], hint: 'the selected part in the scene tree, or the declaration under the caret in the PLC text' },
   { id: 'edit.goToDefinition', mode: 'editor', group: 'Edit', label: 'Go to definition', keys: ['F12'], hint: 'where the name under the caret in the PLC text is declared' },
+  // In the PLC text only. On a Mac Option+arrow moves the caret by a word, so the text keeps these two chords
+  // there (StEditor.tsx) and the editor's right-click menu is the way in until they are rebound.
+  { id: 'edit.jumpBack', mode: 'editor', group: 'Edit', label: 'Go back', keys: ['alt+ArrowLeft'], hint: 'to where the caret was before Go to definition' },
+  { id: 'edit.jumpForward', mode: 'editor', group: 'Edit', label: 'Go forward', keys: ['alt+ArrowRight'], hint: 'after Go back' },
   { id: 'edit.moveUp', mode: 'editor', group: 'Edit', label: 'Move up one slot', keys: ['ctrl+ArrowUp'], match: 'logical' },
   { id: 'edit.moveDown', mode: 'editor', group: 'Edit', label: 'Move down one slot', keys: ['ctrl+ArrowDown'], match: 'logical' },
   { id: 'edit.lock', mode: 'editor', group: 'Edit', label: 'Lock', keys: ['ctrl+KeyL'], match: 'logical' },
