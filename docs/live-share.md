@@ -253,6 +253,20 @@ passes through ours. A link that names another server shows a notice saying wher
 can write such a link. Desktop links (`openindustry://open?room=...&server=...`) carry the server too
 ([apps/desktop/deepLink.cjs](../apps/desktop/deepLink.cjs)), and the shell accepts only a ws:// or wss:// address.
 
+## A plant's run
+
+A plant service (`npm run plant -- --demo --share <ws-url>`, [scripts/plant.mjs](../scripts/plant.mjs)) can be
+watched like anyone's run. It joins a room as its editor, fills the room with its scene when the room is empty, and
+runs in it the way a browser does ([scripts/lib/plant-share.mjs](../scripts/lib/plant-share.mjs)): its presence says
+it is running and names its stream, and it sends that stream's frames only while someone follows. A view link to the
+room follows the only run going, so a visitor sees the cell the outside PLC drives, with nothing of their own to start.
+The frames carry the plant's tags as the run's watch values: what the PLC reads and what it drives.
+
+The room's edit secret is kept in a file, so the plant keeps one room and one view link across its restarts; each
+restart is a new stream, which a view link waits for and follows. `node scripts/plant-view.mjs` serves the built
+editor and the collab server on one port for such a plant, the collab server hosting the plant's room only
+(`ONLY_ROOMS`), so the address it is published at does not become a host for anyone's rooms.
+
 ## Gates
 
 - `e2e/verify-collab-auth.mjs`: against the real server, a run nobody follows reaches nobody; following asks the runner
