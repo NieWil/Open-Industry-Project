@@ -114,6 +114,7 @@ const M = defineMessages('ladder', {
   replaceAllHint: 'Replace every match in the scope, as one undo step',
   replaceAll: 'Replace All',
   showReplace: 'Replace…',
+  hideReplace: 'Hide the replace field',
   wholeWordHint: 'Match the whole name: Belt1 is not found in Belt10 or Belt1_Run, and is in Belt1.Run',
   wholeWord: 'Match whole word',
   wrapHint: 'Past the last match, go on from the first (and the other way about)',
@@ -1622,7 +1623,12 @@ export function LadderView({ revealProblem = null, faults = NO_FAULTS, source, o
           <button className="ld-btn" data-testid="ladder-find-next" disabled={findQuery === ''} title={withKey(t(M.nextMatch), 'ladder.findNext')} onClick={() => findStep(1)}>
             ↓
           </button>
-          {finding.replace ? (
+          {!readOnly && (
+            <button className="ld-btn" data-testid="ladder-find-show-replace" aria-pressed={finding.replace} title={finding.replace ? t(M.hideReplace) : withKey(t(M.replace), 'ladder.replace')} onClick={() => setFinding({ replace: !finding.replace })}>
+              {t(M.showReplace)}
+            </button>
+          )}
+          {finding.replace && (
             <>
               <button className="ld-btn" data-testid="ladder-replace" disabled={findQuery === '' || readOnly} title={t(readOnly ? M.readOnly : M.replaceHint)} onClick={replaceOne}>
                 {t(M.replace)}
@@ -1631,12 +1637,6 @@ export function LadderView({ revealProblem = null, faults = NO_FAULTS, source, o
                 {t(M.replaceAll)}
               </button>
             </>
-          ) : (
-            !readOnly && (
-              <button className="ld-btn" data-testid="ladder-find-show-replace" title={withKey(t(M.replace), 'ladder.replace')} onClick={() => setFinding({ replace: true })}>
-                {t(M.showReplace)}
-              </button>
-            )
           )}
           <label className="ld-find-opt" title={t(M.wholeWordHint)}>
             <input type="checkbox" data-testid="ladder-find-whole" checked={findWhole} onChange={(e) => setFindWhole(e.target.checked)} /> {t(M.wholeWord)}

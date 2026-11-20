@@ -133,6 +133,12 @@ try {
   await page.locator('[data-testid="ladder-find-show-replace"]').click()
   const withField = page.locator('[data-testid="ladder-find-with"]')
   await withField.waitFor({ state: 'visible', timeout: 5000 })
+  // the same button closes the Replace row again, and keeps what was being searched for
+  await page.locator('[data-testid="ladder-find-show-replace"]').click()
+  expect((await withField.count()) === 0 && (await page.locator('[data-testid="ladder-replace-all"]').count()) === 0, 'the Replace button hides the replace row again')
+  expect((await what.inputValue()) === 'Belt1' && /of 4$/.test(await count(page)), `and the search stands (${await count(page)})`)
+  await page.locator('[data-testid="ladder-find-show-replace"]').click()
+  await withField.waitFor({ state: 'visible', timeout: 5000 })
   await withField.fill('Conv1')
   await page.locator('[data-testid="ladder-replace-all"]').click()
   await page.waitForFunction(() => (window.__oip.store.getState().stProgram ?? '').includes('Conv1'), null, { timeout: 10000 }).catch(() => {})

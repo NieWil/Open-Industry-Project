@@ -90,6 +90,12 @@
 .ld-btn:hover:not(:disabled) {
   border-color: var(--accent);
 }
+/* a toggle that is on (the find bar's Replace row) */
+.ld-btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .ld-btn:disabled {
   opacity: 0.45;
   cursor: default;
