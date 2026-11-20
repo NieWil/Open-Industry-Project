@@ -140,31 +140,20 @@ export function uniqueName(base: string, taken: readonly string[]): string {
 }
 
 /**
- * Removing row `index` of table `key`, and everything that points at it kept valid, as one patch: the table's row
- * names lose that line, a `rowsOf` set drops it and renumbers the rows after it, and a program step's `row` argument
- * on this table renumbers too, or becomes -1 (missing) if it named the row that went. Never re-pointed at a
- * neighbour: a step that moved to "Pick" must not quietly start moving to "Place".
+ * Every param that points at the rows of table `key`, re-pointed after its rows were renumbered by `shift` (old
+ * index to new, -1 = the row is gone): a `rowsOf` set drops a gone row and stays ascending, and a program step's
+ * `row` argument on this table follows its row, or becomes -1 (missing). Never re-pointed at a neighbour: a step
+ * that moved to "Pick" must not quietly start moving to "Place".
  */
-export function removeTableRow(specs: readonly ParamSpec[], params: Readonly<Record<string, unknown>>, key: string, index: number): Record<string, ParamValue> {
-  const current = (k: string): number[][] => {
-    const v = params[k]
-    if (Array.isArray(v)) return v as number[][]
-    const s = specs.find((x) => x.key === k)
-    return s?.kind === 'numberList' ? s.default : []
-  }
-  const shift = (i: number): number => (i === index ? -1 : i > index ? i - 1 : i)
-  const patch: Record<string, ParamValue> = { [key]: current(key).filter((_, i) => i !== index).map((r) => [...r]) }
-  const table = specs.find((s) => s.key === key)
-  if (table?.kind === 'numberList' && table.rowNames) {
-    const names = splitNames(params[table.rowNames] ?? specs.find((s) => s.key === table.rowNames)?.default)
-    patch[table.rowNames] = joinNames(names.filter((_, i) => i !== index))
-  }
+function repointed(specs: readonly ParamSpec[], current: (k: string) => number[][], key: string, shift: (i: number) => number): Record<string, ParamValue> {
+  const patch: Record<string, ParamValue> = {}
   for (const s of specs) {
     if (s.kind !== 'numberList' || s.key === key) continue
     if (s.rowsOf === key) {
       patch[s.key] = current(s.key)
         .map((r) => shift(r[0]!))
         .filter((i) => i >= 0)
+        .sort((a, b) => a - b)
         .map((i) => [i])
     }
     const program = s.program
@@ -178,4 +167,47 @@ export function removeTableRow(specs: readonly ParamSpec[], params: Readonly<Rec
     }
   }
   return patch
+}
+
+/** a numberList param's rows as stored, else its default */
+const rowsReader = (specs: readonly ParamSpec[], params: Readonly<Record<string, unknown>>) => (k: string): number[][] => {
+  const v = params[k]
+  if (Array.isArray(v)) return v as number[][]
+  const s = specs.find((x) => x.key === k)
+  return s?.kind === 'numberList' ? s.default : []
+}
+
+/** the row names of table `key`, when it has them: the param that holds them, and one name per row */
+function tableNames(specs: readonly ParamSpec[], params: Readonly<Record<string, unknown>>, key: string): { param: string; names: string[] } | null {
+  const table = specs.find((s) => s.key === key)
+  if (table?.kind !== 'numberList' || !table.rowNames) return null
+  return { param: table.rowNames, names: splitNames(params[table.rowNames] ?? specs.find((s) => s.key === table.rowNames)?.default) }
+}
+
+/**
+ * Removing row `index` of table `key`, and everything that points at it kept valid, as one patch: the table's row
+ * names lose that line, and the params that point at its rows are renumbered (`repointed`).
+ */
+export function removeTableRow(specs: readonly ParamSpec[], params: Readonly<Record<string, unknown>>, key: string, index: number): Record<string, ParamValue> {
+  const current = rowsReader(specs, params)
+  const patch: Record<string, ParamValue> = { [key]: current(key).filter((_, i) => i !== index).map((r) => [...r]) }
+  const named = tableNames(specs, params, key)
+  if (named) patch[named.param] = joinNames(named.names.filter((_, i) => i !== index))
+  return { ...patch, ...repointed(specs, current, key, (i) => (i === index ? -1 : i > index ? i - 1 : i)) }
+}
+
+/**
+ * Row `index` of table `key` swapped with its neighbour (-1 = up, 1 = down), as one patch: the two rows' names
+ * swap with them, and everything that points at either row follows it. Null at either end of the table.
+ */
+export function moveTableRow(specs: readonly ParamSpec[], params: Readonly<Record<string, unknown>>, key: string, index: number, dir: -1 | 1): Record<string, ParamValue> | null {
+  const current = rowsReader(specs, params)
+  const rows = current(key)
+  const other = index + dir
+  if (index < 0 || other < 0 || index >= rows.length || other >= rows.length) return null
+  const swap = (i: number): number => (i === index ? other : i === other ? index : i)
+  const patch: Record<string, ParamValue> = { [key]: rows.map((_, i) => [...rows[swap(i)]!]) }
+  const named = tableNames(specs, params, key)
+  if (named) patch[named.param] = joinNames(rows.map((_, i) => named.names[swap(i)] ?? ''))
+  return { ...patch, ...repointed(specs, current, key, swap) }
 }

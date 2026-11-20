@@ -7,12 +7,16 @@ import type { BuildingWallRule, WallVariant } from '../../../core/types'
 import { ColorField } from './color'
 import { NumberField } from './fields'
 import { gridDecimals, shiftFoldsAfterRemove } from './shared'
-import { EyeIcon, FoldIcon, TrashIcon } from '../toolbarIcons'
+import { ChevronIcon, EyeIcon, FoldIcon, TrashIcon } from '../toolbarIcons'
 import { defineMessages, t, type MessageId } from '../../../core/i18n'
 
 const M = defineMessages('inspector.arrays', {
   removeElement: 'Remove element',
   removeElementN: 'Remove element {index}',
+  moveUp: 'Move up',
+  moveUpN: 'Move element {index} up',
+  moveDown: 'Move down',
+  moveDownN: 'Move element {index} down',
   captureSetTip: "Set this to the current joint positions. Pose the arm with the viewport gizmo first (revolute in °, prismatic in m)",
   captureAddTip: "Append the current joint positions as a new row. Pose the arm with the viewport gizmo first (revolute in °, prismatic in m)",
   capturePose: 'Capture Pose',
@@ -52,11 +56,27 @@ function ArrayHeader({ title, count, open, onToggle, tooltip }: { title: string;
   )
 }
 
-/** numbered foldable array element with a remove button */
+/** the two buttons that swap element `index` with its neighbour; order is the only thing they change */
+function MoveButtons({ index, count, disabled, onMove }: { index: number; count: number; disabled: boolean; onMove: (dir: -1 | 1) => void }) {
+  return (
+    <>
+      <button type="button" className="segment-remove" disabled={disabled || index === 0} onClick={() => onMove(-1)} title={t(M.moveUp)} aria-label={t(M.moveUpN, { index })}>
+        <ChevronIcon dir="up" size="11px" />
+      </button>
+      <button type="button" className="segment-remove" disabled={disabled || index === count - 1} onClick={() => onMove(1)} title={t(M.moveDown)} aria-label={t(M.moveDownN, { index })}>
+        <ChevronIcon dir="down" size="11px" />
+      </button>
+    </>
+  )
+}
+
+/** numbered foldable array element with move and remove buttons */
 function ArrayElem({
   index,
+  count,
   open,
   onToggle,
+  onMove,
   onRemove,
   removeDisabled,
   head,
@@ -64,8 +84,11 @@ function ArrayElem({
   children,
 }: {
   index: number
+  /** how many elements the array holds: the last one cannot move down */
+  count: number
   open: boolean
   onToggle: () => void
+  onMove: (dir: -1 | 1) => void
   onRemove: () => void
   removeDisabled: boolean
   /** beside the index: a row's name field (ParamSpec.rowNames) */
@@ -82,17 +105,20 @@ function ArrayElem({
           {index}
         </button>
         {head}
-        {actions}
-        <button
-          type="button"
-          className="segment-remove"
-          disabled={removeDisabled}
-          onClick={onRemove}
-          title={t(M.removeElement)}
-          aria-label={t(M.removeElementN, { index })}
-        >
-          <TrashIcon size="1em" />
-        </button>
+        <span className="array-elem-tools">
+          {actions}
+          <MoveButtons index={index} count={count} disabled={removeDisabled} onMove={onMove} />
+          <button
+            type="button"
+            className="segment-remove"
+            disabled={removeDisabled}
+            onClick={onRemove}
+            title={t(M.removeElement)}
+            aria-label={t(M.removeElementN, { index })}
+          >
+            <TrashIcon size="1em" />
+          </button>
+        </span>
       </div>
       {open && <div className="array-elem-body">{children}</div>}
     </div>
@@ -109,14 +135,15 @@ const OPEN_UP_TO = 8
 /**
  * Per-element fold state, open by default unless told otherwise (resets when another part is selected). Keyed by
  * index, so removing a row must shift the rows after it down one (`removed`), or each would take the state of the
- * row that used to follow it.
+ * row that used to follow it. Two rows that swap places swap their state too (`swapped`).
  */
-function useElemFolds(openByDefault = true): [(i: number) => boolean, (i: number) => void, (i: number) => void] {
+function useElemFolds(openByDefault = true): [(i: number) => boolean, (i: number) => void, (i: number) => void, (i: number, j: number) => void] {
   const [openEl, setOpenEl] = useState<Record<number, boolean>>({})
   const isOpen = (i: number): boolean => openEl[i] ?? openByDefault
   const toggle = (i: number): void => setOpenEl((o) => ({ ...o, [i]: !(o[i] ?? openByDefault) }))
   const removed = (i: number): void => setOpenEl((o) => shiftFoldsAfterRemove(o, i))
-  return [isOpen, toggle, removed]
+  const swapped = (i: number, j: number): void => setOpenEl((o) => ({ ...o, [i]: o[j] ?? openByDefault, [j]: o[i] ?? openByDefault }))
+  return [isOpen, toggle, removed, swapped]
 }
 
 
@@ -141,6 +168,7 @@ export function NumberGrid({
   rowNames,
   onRename,
   onRemoveRow,
+  onMoveRow,
   onPreviewRow,
 }: {
   rows: readonly number[][]
@@ -163,6 +191,8 @@ export function NumberGrid({
   onRename?: (i: number, name: string) => void
   /** removes row i (and keeps what points at it valid); defaults to dropping the row alone */
   onRemoveRow?: (i: number) => void
+  /** swaps row i with its neighbour (and keeps what points at either valid); defaults to swapping the rows alone */
+  onMoveRow?: (i: number, dir: -1 | 1) => void
   /** pose the part at row i, when the part can show one (a jointed rig whose joint count fits the row) */
   onPreviewRow?: (i: number) => void
 }) {
@@ -170,7 +200,7 @@ export function NumberGrid({
   const [open, setOpen] = useState(!long)
   // a named table starts folded: the names say which pose is which, and six numbers a row is a wall. So does a
   // long one, whose folded rows show their values instead of a name (summary below)
-  const [elOpen, toggleEl, elRemoved] = useElemFolds(rowNames === undefined && !long)
+  const [elOpen, toggleEl, elRemoved, elSwapped] = useElemFolds(rowNames === undefined && !long)
   // precise enough to show every value as stored (host-written rows carry more than the step), one width for
   // the whole table so its columns line up
   const decimals = gridDecimals(rows, step)
@@ -233,8 +263,14 @@ export function NumberGrid({
             <ArrayElem
               key={i}
               index={i}
+              count={rows.length}
               open={elOpen(i)}
               onToggle={() => toggleEl(i)}
+              onMove={(dir) => {
+                elSwapped(i, i + dir)
+                if (onMoveRow) onMoveRow(i, dir)
+                else onChange(rows.map((_, idx) => [...rows[idx === i ? i + dir : idx === i + dir ? i : idx]!]))
+              }}
               onRemove={() => {
                 elRemoved(i)
                 if (onRemoveRow) onRemoveRow(i)
@@ -405,6 +441,7 @@ export function ColorListField({
           {entries.map((c, i) => (
             <div key={i} className="colorlist-row">
               <ColorField label={`${i}`} value={c} disabled={disabled} onCommit={(v) => write(entries.map((e, j) => (j === i ? v.toLowerCase() : e)))} />
+              <MoveButtons index={i} count={entries.length} disabled={disabled} onMove={(dir) => write(entries.map((_, j) => entries[j === i ? i + dir : j === i + dir ? i : j]!))} />
               <button
                 type="button"
                 className="segment-remove"
@@ -456,7 +493,7 @@ export function WallRuleArray({
   onChange: (next: BuildingWallRule[]) => void
 }) {
   const [open, setOpen] = useState(rules.length <= OPEN_UP_TO)
-  const [elOpen, toggleEl, elRemoved] = useElemFolds()
+  const [elOpen, toggleEl, elRemoved, elSwapped] = useElemFolds()
   const set = (i: number, patch: Partial<BuildingWallRule>): void =>
     onChange(rules.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
   const intField = (label: string, key: 'run' | 'gap' | 'count' | 'start', i: number, min: number): ReactNode => (
@@ -480,8 +517,13 @@ export function WallRuleArray({
             <ArrayElem
               key={i}
               index={i}
+              count={rules.length}
               open={elOpen(i)}
               onToggle={() => toggleEl(i)}
+              onMove={(dir) => {
+                elSwapped(i, i + dir)
+                onChange(rules.map((_, idx) => rules[idx === i ? i + dir : idx === i + dir ? i : idx]!))
+              }}
               onRemove={() => {
                 elRemoved(i)
                 onChange(rules.filter((_, idx) => idx !== i))

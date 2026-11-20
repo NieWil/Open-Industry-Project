@@ -9,6 +9,7 @@ import {
   duplicateStep,
   joinNames,
   moveStep,
+  moveTableRow,
   programViews,
   removeProgram,
   removeTableRow,
@@ -113,5 +114,36 @@ describe('removing a row other params point at', () => {
     const patch = removeTableRow(SPECS, params, 'waypoints', 1)
     expect(patch['jobs']).toEqual([[0, 1, -1, 0], [0, 1, 1, 1], [0, 3, 1, 0]])
     expect(patch['via']).toEqual([[0], [1]])
+  })
+})
+
+describe('moving a row other params point at', () => {
+  const params = {
+    waypoints: [[0, 0], [1, 1], [2, 2]],
+    waypointNames: 'Home\nPick',
+    via: [[0], [2]],
+    jobs: [
+      [0, 1, 1, 0], // move to Pick
+      [0, 1, 2, 1], // move to the unnamed third row
+      [0, 3, 1, 0], // wait 1 s: its 1 is seconds, not a waypoint, and must not move
+    ],
+  }
+
+  it('swaps the row with its neighbour, names with it, and every pointer follows its row', () => {
+    const patch = moveTableRow(SPECS, params, 'waypoints', 1, 1)!
+    expect(patch['waypoints']).toEqual([[0, 0], [2, 2], [1, 1]])
+    expect(patch['waypointNames']).toBe('Home\n\nPick')
+    expect(patch['via']).toEqual([[0], [1]])
+    expect(patch['jobs']).toEqual([[0, 1, 2, 0], [0, 1, 1, 1], [0, 3, 1, 0]])
+  })
+
+  it('keeps a row set ascending when the swap crosses one of its rows', () => {
+    expect(moveTableRow(SPECS, { ...params, via: [[0], [1]] }, 'waypoints', 0, 1)!['via']).toEqual([[0], [1]])
+    expect(moveTableRow(SPECS, { ...params, via: [[1]] }, 'waypoints', 1, -1)!['via']).toEqual([[0]])
+  })
+
+  it('does nothing at either end of the table', () => {
+    expect(moveTableRow(SPECS, params, 'waypoints', 0, -1)).toBeNull()
+    expect(moveTableRow(SPECS, params, 'waypoints', 2, 1)).toBeNull()
   })
 })

@@ -16,7 +16,7 @@ import type { LiveSetpoints } from '../../controller/setpoints'
 import { paramDesc } from '../paramDescriptions'
 import { ColorListField, NumberGrid, RowSetField, WallRuleArray } from './arrays'
 import { ProgramField } from './program'
-import { joinNames, removeTableRow, splitNames } from './programLogic'
+import { joinNames, moveTableRow, removeTableRow, splitNames } from './programLogic'
 import { ColorField } from './color'
 import { BitsField, BoolRow, DisplayUnitsContext, Fold, GuardOpeningsModeContext, NumberField, RevertButton, RevertSlot, TextField } from './fields'
 import type { OpenCtx } from './menu'
@@ -641,6 +641,10 @@ export function ParamField({
               : undefined
           }
           onRemoveRow={spec.rows === undefined ? (i) => setMany(removeTableRow(specs, params, spec.key, i)) : undefined}
+          onMoveRow={(i, dir) => {
+            const patch = moveTableRow(specs, params, spec.key, i, dir)
+            if (patch) setMany(patch)
+          }}
           onPreviewRow={canCapture && previewPose ? (i) => previewPose(rows[i]!) : undefined}
         />
       )

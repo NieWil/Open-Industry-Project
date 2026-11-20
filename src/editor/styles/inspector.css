@@ -858,6 +858,15 @@
   cursor: pointer;
 }
 
+/* a row's buttons stay together at its right edge, whatever sits between them and the index */
+.array-elem-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
 .array-elem-body {
   padding-left: 12px;
   display: flex;
