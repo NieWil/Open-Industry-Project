@@ -624,7 +624,15 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
   live.current = { visibleIds, selectedIds: state.selectedIds, parts, partsById, focusId, renamingId, running: state.running, text, renamingRig, rigText }
 
   // drag & drop (reorder + reparent): the in-flight drag ids, drop indicator, and row/container handlers
-  const { dropAt, onDragStart, onRowDragOver, onRowDrop, onDragEnd, onTreeDragOver, onTreeDrop } = useTreeDrag(store, live)
+  const expandRow = useCallback((id: string) => {
+    setCollapsed((cur) => {
+      if (!cur.has(id)) return cur
+      const next = new Set(cur)
+      next.delete(id)
+      return next
+    })
+  }, [])
+  const { dropAt, onDragStart, onRowDragOver, onRowDrop, onDragEnd, onTreeDragOver, onTreeDrop } = useTreeDrag(store, live, expandRow)
 
   const closeMenu = useCallback(() => setMenu(null), [])
 
