@@ -203,6 +203,14 @@ Never hand-edit scene.json; these go through the same checks the editor does.
     serves the palletizing cell with its tags given addresses as "Assign I/O" gives them; a folder must already be
     wired to addresses (`npm run assign-io -- <folder>`). `--io-list <file.csv>` writes the I/O list, `--status
     <file.json>` rewrites a status each second (sim time, lag, connections, requests by function code).
+    `--share <ws-url>` also runs the plant in a shared project on that collab server, so its view link shows the run
+    the outside PLC drives, read-only ([live-share.md](live-share.md) "A plant's run"); the room's edit secret is kept
+    in `--room-file` (default `.plant-room`, made on first use) so a restart keeps the link, and `--app <url>` is the
+    editor the printed link opens.
+  - `node scripts/plant-view.mjs` - the view of a shared plant: the built editor (`dist/`, served as the real host
+    serves it) and the collab server behind one port (default `127.0.0.1:8090`, the collab server at `/collab`). With
+    `--room-file` the collab server hosts that room only; `--client-ip-header` names the header a fronting proxy puts
+    the visitor's address in.
   - No script here drives commercial vendor software (a vendor IDE, runtime or SCADA): the PLC links to those are the
     app's own protocol clients, proven against open-source peers.
 
