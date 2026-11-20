@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { PartBuildNotice } from '../store/store'
 import { CloseIcon } from './toolbarIcons'
+import { ToastCopyButton } from './ToastCopy'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('partBuild', {
@@ -60,6 +61,7 @@ export function PartBuildToast({ notices, onDismiss }: { notices: PartBuildNotic
             <span className="part-build-toast-title">{t(M.failed, { name: n.name })}</span>
             <span className="part-build-toast-error">{n.error}</span>
           </div>
+          <ToastCopyButton text={`${t(M.failed, { name: n.name })}\n${n.error}`} />
           <button className="part-build-toast-close" title={t(M.dismiss)} onClick={() => onDismiss(n.key)}>
             <CloseIcon />
           </button>
