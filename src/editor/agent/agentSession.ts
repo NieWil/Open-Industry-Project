@@ -10,11 +10,11 @@
 // Loaded with the tools (desktopAgent.ts), never on the first frame. The diff the review shows is agentReview.ts.
 
 import type { Controller } from '../../core/controller'
-import type { PartPackage } from '../../core/partPackage'
-import type { TestSpec } from '../../core/projectTest'
+import type { PartPackage } from '../../core/parts/partPackage'
+import type { TestSpec } from '../../core/project/projectTest'
 import type { SceneJSON } from '../../core/types'
-import type { EditEvent } from '../storeHistory'
-import type { EditorStore } from '../store'
+import type { EditEvent } from '../store/storeHistory'
+import type { EditorStore } from '../store/store'
 import { AGENT_LABEL } from './toolKit'
 
 const AGENT_PREFIX = `${AGENT_LABEL}:`
@@ -108,7 +108,7 @@ export class AgentSession {
 
   /** Why Revert is not offered now, or null when it is. */
   revertBlocker(): string | null {
-    if (this.store.getState().collab) return 'In a live room each person undoes their own edits.'
+    if (this.store.getState().collab) return 'In a shared project each person undoes their own edits.'
     if (this.store.getState().readOnly) return 'This editor is view-only.'
     const mine = this.userStepsInRun().length
     if (mine > 0) return `You made ${mine === 1 ? 'an edit' : `${mine} edits`} after the agent started. Use the History panel to choose what to undo.`

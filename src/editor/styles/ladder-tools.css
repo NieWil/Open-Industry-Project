@@ -71,7 +71,7 @@
 .ld-live-input {
   font-size: 10px;
 }
-/* the match Find is standing on (plc/ladderFind.ts): the field, function name or comment that holds the text */
+/* the match Find is standing on (plc/ladder/ladderFind.ts): the field, function name or comment that holds the text */
 .ld-box-inst.found,
 .ld-box-row.found,
 .ld-box-title.found,

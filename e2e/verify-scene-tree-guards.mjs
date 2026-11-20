@@ -1,5 +1,6 @@
 // Verify the scene-tree dock's guards, in a real browser. Each phase guards a bug that shipped:
-//   1. F2 on a part under a collapsed parent (picked in the viewport) opens the path and renames it.
+//   1. Picking a part in the viewport opens its collapsed parents, and collapsing one again sticks.
+//      F2 on a part under a collapsed parent opens the path and renames it.
 //      Otherwise a rename opens with no input to type into, and since every row handler is disabled
 //      while a rename is open, the tree ignores clicks until a reload.
 //   2. F2 on a part the dock can't show (filtered out) leaves the tree clickable.
@@ -103,6 +104,12 @@ async function main() {
       await page.waitForTimeout(150)
       check('collapsing the Cell hides its child row', (await page.locator('.tree-row[data-row-id="b_inner"]').count()) === 0)
       await page.evaluate(() => window.__oip.store.select('b_inner')) // a viewport pick
+      await page.waitForTimeout(150)
+      check('a viewport pick opens its collapsed parent', (await page.locator('.tree-row[data-row-id="b_inner"]').count()) === 1)
+      // collapsing the parent of the current selection must stick (the expansion runs once per pick)
+      await page.click('.tree-row[data-row-id="g_cell"] .tree-caret')
+      await page.waitForTimeout(150)
+      check('...and a later collapse with it still selected stays collapsed', (await page.locator('.tree-row[data-row-id="b_inner"]').count()) === 0)
       await page.evaluate(() => document.activeElement?.blur())
       await page.keyboard.press('F2')
       await page.waitForTimeout(250)

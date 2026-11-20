@@ -5,10 +5,10 @@
 // wires it to a folder picker and IPC.
 //
 // It returns raw manifest/behavior strings. Baking the param schema and structural validation belong to the
-// renderer (src/sim/buildPackage.ts + src/core/partPackage.ts), which must run them on untrusted imports
+// renderer (src/sim/buildPackage.ts + src/core/parts/partValidate.ts), which must run them on untrusted imports
 // anyway. Duplicating them here would risk drift.
 //
-// The one thing joined here is a part's asset files (`assets/<sha256>.glb`, src/core/partAssets.ts): the manifest that
+// The one thing joined here is a part's asset files (`assets/<sha256>.glb`, src/core/parts/partAssets.ts): the manifest that
 // names them is handed on with each one back in base64 `data`, the form every baker reads. A port of joinAssetFiles,
 // whose tests pin the same rules (partsWorkspace.test.cjs here).
 

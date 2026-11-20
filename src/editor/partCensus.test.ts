@@ -8,32 +8,30 @@
 // To accept an intended behaviour change: `npx vitest run -u <this file>`, then read the diff.
 
 import { beforeAll, describe, expect, it } from 'vitest'
-import { evalPartGeometry, geometryAnimates, geometryLampNames } from '../core/geometryEval'
-import type { ParamValue } from '../core/partApi'
-import type { PartPackage, RigLink } from '../core/partPackage'
-import { rigLampNames, upgradeStoredPackage } from '../core/partPackage'
+import { evalPartGeometry, geometryAnimates, geometryLampNames } from '../core/geometry/geometryEval'
+import type { ParamValue } from '../core/parts/partApi'
+import type { PartPackage, RigLink } from '../core/parts/partPackage'
+import { rigLampNames } from '../core/parts/partPackage'
+import { upgradeStoredPackage } from '../core/parts/partUpgrade'
 import {
-  beltLikeView,
-  curvedConveyorView,
+  bedView,
   isBeltLike,
   isConveyorLike,
   isGuardPusher,
   isTailOriginConveyor,
   isWorldPhaseRollerBed,
   partFootprint,
-  rotatingDeckView,
-  spurConveyorView,
-  straightConveyorView,
-} from '../core/partGeometry'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import { rigFrameSide, rigGuardSide } from '../core/guardOpenings'
-import { rigGuardWallLink, rigLinkEmitsBody } from '../core/rigGuards'
-import { createSdkPart } from '../core/scene'
-import { plugsOf } from '../core/snapConnectors'
+  rectangleBedOf,
+} from '../core/parts/partGeometry'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import { rigFrameSide, rigGuardSide } from '../core/guards/guardOpenings'
+import { rigGuardWallLink, rigLinkEmitsBody } from '../core/rig/rigGuards'
+import { createSdkPart } from '../core/scene/scene'
+import { plugsOf } from '../core/snap/snapConnectors'
 import { platformDeck } from '../core/structureConnections'
 import type { PartInstance } from '../core/types'
 import { buildPackage } from '../sim/buildPackage'
-import { bundledBehaviors, bundledManifests } from './bundledExamples'
+import { bundledBehaviors, bundledManifests } from './parts/bundledExamples'
 
 const pkgs: PartPackage[] = []
 beforeAll(() => {
@@ -116,8 +114,8 @@ function census(pkg: PartPackage): string[] {
   const resolved = { ...defaults(pkg), ...(part.params as Record<string, unknown>) }
   // the census's word for the drawn kind predates format 4 ('function')
   const lines: string[] = [`## ${pkg.id} (${pkg.geometry.kind === 'drawn' ? 'function' : pkg.geometry.kind})`]
-  const straight = straightConveyorView(part)
-  const belt = beltLikeView(part)
+  const straight = rectangleBedOf(part)
+  const belt = bedView(part, 'path')
   lines.push(
     'class ' +
       fmt({
@@ -125,9 +123,9 @@ function census(pkg: PartPackage): string[] {
         beltLike: isBeltLike(part) || undefined,
         beltWidth: belt?.width,
         straight: straight ? { length: straight.length, width: straight.width } : undefined,
-        spur: spurConveyorView(part) ? true : undefined,
-        curved: curvedConveyorView(part) ? true : undefined,
-        rotatingDeck: rotatingDeckView(part) ? true : undefined,
+        spur: bedView(part, 'spur') ? true : undefined,
+        curved: bedView(part, 'arc') ? true : undefined,
+        rotatingDeck: bedView(part, 'turntable') ? true : undefined,
         worldPhaseRollers: isWorldPhaseRollerBed(part) || undefined,
         tailOrigin: isConveyorLike(part) ? isTailOriginConveyor(part) : undefined,
         guardPusher: isGuardPusher(part) || undefined,
@@ -156,7 +154,9 @@ describe('declared conveyors (package format 4)', () => {
       // the part as a format 3 package: no declarations, so the upgrade infers them by format 3's rules
       const { conveyor, commsParam, ...rest } = pkg
       const inferred = upgradeStoredPackage({ ...rest, format: 3 }).pkg as PartPackage
-      expect(inferred.conveyor, pkg.id).toEqual(conveyor)
+      // (format 3 had no friction param to infer: a part without one grips as its surface kind)
+      const { frictionParam: _friction, ...declared } = conveyor ?? {}
+      expect(inferred.conveyor, pkg.id).toEqual(conveyor ? declared : undefined)
       expect(inferred.commsParam, pkg.id).toEqual(commsParam)
     }
     expect(pkgs.filter((p) => p.conveyor?.bed).map((p) => `${p.id}:${p.conveyor!.bed}:${p.conveyor!.surface}`)).toHaveLength(7)

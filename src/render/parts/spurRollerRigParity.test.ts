@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
 import { examplePart, type FuncGeo } from './examplePart'
 const { behavior: SPUR_ROLLER_BEHAVIOR, geometry: SPUR_ROLLER_GEO } = examplePart<FuncGeo>('oip.spur-roller-conveyor')
 const { behavior: BELT_BEHAVIOR } = examplePart('oip.belt-conveyor')

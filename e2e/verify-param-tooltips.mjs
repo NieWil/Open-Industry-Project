@@ -32,7 +32,10 @@ const readRows = (page) =>
   page.evaluate(() => {
     const out = []
     for (const el of document.querySelectorAll('.inspector .field-label, .inspector .rig-joint')) {
-      const label = (el.querySelector('.rig-joint-name') ?? el).textContent?.trim() ?? ''
+      // the label's own text, without its chips (a bound speed tag's `tag` badge on Speed)
+      const own = (el.querySelector('.rig-joint-name') ?? el).cloneNode(true)
+      for (const b of own.querySelectorAll('.field-badge')) b.remove()
+      const label = own.textContent?.trim() ?? ''
       const title = el.getAttribute('title') ?? ''
       if (label) out.push({ label, title })
     }
@@ -87,7 +90,7 @@ try {
   const visible = find(rows, 'Visible')
   check(!!visible && visible.title.includes('still collides'), 'the built-in Visible row carries its description')
   const pos = find(rows, 'Position')
-  check(!!pos && pos.title.includes('meters'), 'the built-in Position row carries its description')
+  check(!!pos && pos.title.includes('World position'), 'the built-in Position row carries its description')
 
   // --- F: a conveyor, the highest-traffic part in the app ------------------------------------------------
   // Its two most misread fields: speed (reversing is a negative speed, not a 180° rotation) and the setpoint

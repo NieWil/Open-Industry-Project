@@ -4,8 +4,8 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { clamp } from '../../../core/math'
 import { isRealBound, isRealRange } from '../../../core/packageParams'
-import { displayUnitFor, niceStep, toStored, unitView, type DisplayUnits } from '../../../core/units'
-import { evalNumeric, snapToStep } from './shared'
+import { displayUnitFor, METRIC_DISPLAY, niceStep, toStored, unitView, type DisplayUnits } from '../../../core/units'
+import { evalNumeric, parseOffset, snapToStep } from './shared'
 import { FoldIcon } from '../toolbarIcons'
 import { defineMessages, t } from '../../../core/i18n'
 
@@ -43,9 +43,9 @@ export interface LiveEditGate {
 }
 export const LiveEditContext = createContext<LiveEditGate | null>(null)
 
-/** The scene's Units (core/sceneUnits.ts), as fields show them. The Inspector provides it; a field outside
- *  one shows metric, which is what everything is stored in. */
-export const DisplayUnitsContext = createContext<DisplayUnits>('metric')
+/** The scene's Speed and Length (core/scene/sceneUnits.ts), as fields show them. The Inspector provides it; a field
+ *  outside one shows metric, which is what everything is stored in. */
+export const DisplayUnitsContext = createContext<DisplayUnits>(METRIC_DISPLAY)
 
 /** Whether guard-openings mode (G) is on, so the Guard openings table's button can say "Done editing" while it is. */
 export const GuardOpeningsModeContext = createContext(false)
@@ -74,6 +74,9 @@ interface SpinSliderProps {
   /** narrow variant for Transform x/y/z (tighter sizing, same chrome) */
   compact?: boolean
   onCommit: (v: number) => void
+  /** a relative entry ("+= 1.2"), in the stored unit. Without it the field commits its value plus the offset,
+   *  which a mixed field can't do; a field over several parts passes this to offset each part from its own value. */
+  onOffset?: (d: number) => void
 }
 
 /**
@@ -81,6 +84,7 @@ interface SpinSliderProps {
  *  - Every field is typed: a click places the caret, and the value commits on Enter, Tab or leaving the field
  *    (Escape puts back what it held). Nothing is written while typing, so "12" never builds a 1 first. The text
  *    may be an expression ("2*0.75") or carry a unit the field converts ("5ft", "394 fpm"; see evalNumeric).
+ *    "+=" or "-=" in front makes it an offset from the current value ("+= 600mm"; see parseOffset).
  *  - Every field steps on the grid with ArrowUp/Down and the hover spin arrows (press and hold repeats).
  *  - A field with a real range (isRealRange: both bounds chosen, not the ±1e6 stand-in) is also a slider: its
  *    fill shows where the value sits, and dragging across it moves the value in proportion to the range, the
@@ -94,7 +98,7 @@ interface SpinSliderProps {
  */
 export function SpinSlider(props: SpinSliderProps) {
   const system = useContext(DisplayUnitsContext)
-  const { unit, entryUnit, value, min, max, step, decimals, onCommit } = props
+  const { unit, entryUnit, value, min, max, step, decimals, onCommit, onOffset } = props
   const view = unitView(unit || entryUnit || '', system)
   if (view.k === 1) return <SpinSliderCore {...props} />
   const k = view.k
@@ -111,11 +115,12 @@ export function SpinSlider(props: SpinSliderProps) {
       unit={unit ? view.unit : unit}
       entryUnit={entryUnit ? view.unit : entryUnit}
       onCommit={(v) => onCommit(toStored(v, k))}
+      onOffset={onOffset && ((d) => onOffset(toStored(d, k)))}
     />
   )
 }
 
-function SpinSliderCore({ value, decimals, unit = '', entryUnit, min, max, step, disabled, mixed, compact, onCommit }: SpinSliderProps) {
+function SpinSliderCore({ value, decimals, unit = '', entryUnit, min, max, step, disabled, mixed, compact, onCommit, onOffset }: SpinSliderProps) {
   // the unit is drawn as a separate dim suffix, never part of the editable text
   const fmt = (v: number): string => v.toFixed(decimals)
   const [text, setText] = useState(mixed ? '' : fmt(value))
@@ -319,6 +324,14 @@ function SpinSliderCore({ value, decimals, unit = '', entryUnit, min, max, step,
             show(mixed ? '' : fmt(value))
             return
           }
+          const offset = parseOffset(textRef.current, unit || entryUnit || '')
+          if (offset !== undefined) {
+            if (offset !== null && onOffset) onOffset(offset)
+            else if (offset !== null && !mixed) commitRaw(valueRef.current + offset)
+            else if (session.current.wrote && !session.current.mixed) onCommit(session.current.value)
+            show(mixed ? '' : fmt(offset !== null && !onOffset && !mixed ? clampVal(valueRef.current + offset) : session.current.value))
+            return
+          }
           const parsed = evalNumeric(textRef.current, unit || entryUnit || '')
           if (parsed !== null) commitRaw(parsed)
           // text that doesn't parse ("2 3") is a cancelled edit: undo whatever arrow steps the session wrote
@@ -461,7 +474,9 @@ export function AxisInput({
   step,
   entryUnit,
   disabled,
+  mixed,
   onCommit,
+  onOffset,
 }: {
   prefix: string
   value: number
@@ -470,12 +485,14 @@ export function AxisInput({
   /** see SpinSlider: the unit typed input converts into (the row label names it; the narrow axis shows none) */
   entryUnit?: string
   disabled: boolean
+  mixed?: boolean
   onCommit: (v: number) => void
+  onOffset?: (d: number) => void
 }) {
   return (
     <span className={`axis axis-${prefix.toLowerCase()}`}>
       <span className="axis-label">{prefix}</span>
-      <SpinSlider value={value} decimals={decimals} step={step} entryUnit={entryUnit} disabled={disabled} compact onCommit={onCommit} />
+      <SpinSlider value={value} decimals={decimals} step={step} entryUnit={entryUnit} disabled={disabled} mixed={mixed} compact onCommit={onCommit} onOffset={onOffset} />
     </span>
   )
 }
@@ -515,10 +532,12 @@ export interface TextFieldProps {
   list?: string
   /** an identifier, not prose: no spellcheck, no browser autofill */
   code?: boolean
+  /** the input's data-testid */
+  testid?: string
   onCommit: (v: string) => void
 }
 
-export function TextField({ label, value, placeholder, disabled, mixed, tooltip, extra, labelExtra, list, code, onCommit }: TextFieldProps) {
+export function TextField({ label, value, placeholder, disabled, mixed, tooltip, extra, labelExtra, list, code, testid, onCommit }: TextFieldProps) {
   const [text, setText] = useState(value)
   // read by the handlers instead of `text`, for the same reason as SpinSlider's: Enter / Escape blur from
   // inside keydown, where the render's `text` is one keystroke behind
@@ -551,9 +570,12 @@ export function TextField({ label, value, placeholder, disabled, mixed, tooltip,
         <input
           type="text"
           value={text}
+          // the whole value on hover: the box shows only the start of a long one
+          title={text || undefined}
           placeholder={mixed ? '--' : placeholder}
           disabled={disabled}
           list={list}
+          data-testid={testid}
           spellCheck={code ? false : undefined}
           autoComplete={code ? 'off' : undefined}
           onFocus={() => {

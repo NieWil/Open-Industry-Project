@@ -1,7 +1,7 @@
 // Fork-lift AGV — a mobile pick-and-place vehicle. Demonstrates root motion: it moves its own base with
 // ctx.drive(forward, turn) and reads its live pose back via ctx.position / ctx.forward to steer toward
-// waypoints, each [worldX, worldZ, headingDeg, forkHeight]. It is driven over comms (enableComms) by a PLC
-// handshake; with comms off the AGV stays parked (forks down, beacon dark) — it drives only when commanded.
+// waypoints, each [worldX, worldZ, headingDeg, forkHeight]. A PLC drives it through a
+// command/execute/done handshake. With no tags named it stays parked (forks down, beacon dark).
 // It also animates the cosmetic dressing joints each tick: the four wheels roll from the commanded travel and
 // the mast piston tracks the lift at half rate.
 //
@@ -81,7 +81,6 @@ definePart({
     maxLiftHeight: { type: 'number', default: 3, min: 0.1, max: 8, step: 0.1, label: 'Max fork height (m)', group: 'Motion', desc: 'Ceiling on the tines, whatever a waypoint asks for. Set it to the top beam of the racking the truck actually serves.' },
     forkSpread: { type: 'number', unit: 'm', default: SPREAD_DEFAULT, min: SPREAD_MIN, max: SPREAD_MAX, step: 0.01, label: 'Fork spread', group: 'Forks', desc: SPREAD_DESC },
     reverseRange: { type: 'number', unit: 'm', default: 3, min: 0, max: 20, step: 0.5, label: 'Back-out range', group: 'Motion', desc: 'How close a target behind the truck, at about the heading it already holds, has to be for it to back out instead of turning round, the way tines withdraw from a rack bay. 0 means it always turns.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this truck to a PLC program. Its tags appear once this is on. Without a program the truck parks at home.' },
     commandTag: { type: 'tag', dir: 'in', stType: 'INT', default: '', label: 'Command tag (0 = home, 1+ = waypoint)', group: 'Comms', desc: 'Which row of the waypoint table to drive to, as an index: 0 is home, 1 the second row and so on. Set it BEFORE pulsing execute. An index past the end of the table is ignored, and the truck stays put rather than guessing.' },
     executeTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Execute tag (rising edge runs the move)', group: 'Comms', desc: 'Pulse this false-to-true to start the move. It is edge-triggered, so holding it true does NOT repeat - drop it and raise it again for each move. An edge arriving mid-move is ignored.' },
     doneTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Done tag (true while idle)', group: 'Comms', desc: 'True while the truck is parked and ready. It drops for every move it accepts, even one that finishes at once, and comes back once the move is over and Execute is released (or half a second has passed), so wait for it before pulsing Execute again.' },
@@ -107,7 +106,7 @@ definePart({
     // truck hunt around the spot rather than park on it.
     const ANG_TOL = 0.25 * D2R, POS_TOL = 0.06
     const liftOf = (row) => clamp(row[3] || 0, 0, ctx.params.maxLiftHeight)
-    const forksUp = ctx.params.enableComms ? ctx.readTag(ctx.params.forkTag) : false
+    const forksUp = ctx.readTag(ctx.params.forkTag)
 
     // Settle the fork tag against the height the tines are AT before a new command can move them. A program that
     // drops the fork and sends the next move in one scan means "let go here, then go": latched only after the
@@ -116,24 +115,22 @@ definePart({
     const wasHeld = held
     if (Math.abs(liftAt - liftOf(WP[wpIdx] || WP[0])) < 1e-3) held = forksUp
 
-    if (ctx.params.enableComms) {
-      // ctx.rising diffs the begin-of-tick snapshot, so an edge held over the async tag bus can't be missed
-      if (ctx.rising(ctx.params.executeTag) && !moving && ackLeft <= 0) {
-        const cmd = Math.round(ctx.readNumber(ctx.params.commandTag))
-        // an out-of-range command ignores the edge: stay put, done stays true
-        if (cmd >= 0 && cmd < WP.length) {
-          wpIdx = cmd; phase = 'turn1'; moving = true; ackLeft = MIN_BUSY_S
-          // BACK OUT rather than turn round, when the target is behind, close, and asks for the heading already
-          // held. That is the shape of exactly one move — withdrawing the tines from a rack bay — and turning to
-          // face it would swing two metres of fork through the uprights and through the load just set down.
-          // Anything beyond reverseRange is a haul rather than a withdrawal, so it drives forward as before.
-          const t = WP[wpIdx]
-          const bx = t[0] - px, bz = t[1] - pz
-          reversing = ctx.params.reverseRange > 0 &&
-            Math.hypot(bx, bz) <= ctx.params.reverseRange &&
-            bx * fx + bz * fz < 0 &&
-            Math.abs(angDiff(yaw, (t[2] || 0) * D2R)) <= 20 * D2R
-        }
+    // ctx.rising diffs the begin-of-tick snapshot, so an edge held over the async tag bus can't be missed
+    if (ctx.rising(ctx.params.executeTag) && !moving && ackLeft <= 0) {
+      const cmd = Math.round(ctx.readNumber(ctx.params.commandTag))
+      // an out-of-range command ignores the edge: stay put, done stays true
+      if (cmd >= 0 && cmd < WP.length) {
+        wpIdx = cmd; phase = 'turn1'; moving = true; ackLeft = MIN_BUSY_S
+        // BACK OUT rather than turn round, when the target is behind, close, and asks for the heading already
+        // held. That is the shape of exactly one move — withdrawing the tines from a rack bay — and turning to
+        // face it would swing two metres of fork through the uprights and through the load just set down.
+        // Anything beyond reverseRange is a haul rather than a withdrawal, so it drives forward as before.
+        const t = WP[wpIdx]
+        const bx = t[0] - px, bz = t[1] - pz
+        reversing = ctx.params.reverseRange > 0 &&
+          Math.hypot(bx, bz) <= ctx.params.reverseRange &&
+          bx * fx + bz * fz < 0 &&
+          Math.abs(angDiff(yaw, (t[2] || 0) * D2R)) <= 20 * D2R
       }
     }
 
@@ -206,8 +203,8 @@ definePart({
     ctx.lamps.beacon = moving
 
     if (phase === 'act' && forksSettled) moving = false
-    if (ctx.params.enableComms && ctx.params.doneTag) ctx.writeTag(ctx.params.doneTag, !moving && ackLeft <= 0)
+    if (ctx.params.doneTag) ctx.writeTag(ctx.params.doneTag, !moving && ackLeft <= 0)
     // the acknowledgement ends once the program lets go of execute (read NEXT tick, after it has seen done low)
-    if (ackLeft > 0) ackLeft = ctx.params.enableComms && ctx.readTag(ctx.params.executeTag) ? ackLeft - ctx.dt : 0
+    if (ackLeft > 0) ackLeft = ctx.readTag(ctx.params.executeTag) ? ackLeft - ctx.dt : 0
   },
 })

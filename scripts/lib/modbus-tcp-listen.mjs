@@ -1,4 +1,4 @@
-// The socket half of the simulator's Modbus TCP server. All protocol logic is in src/plc/modbusServer.ts
+// The socket half of the simulator's Modbus TCP server. All protocol logic is in src/plc/link/modbusServer.ts
 // (ModbusServerIo / ModbusStream); this only carries bytes between a TCP connection and a stream.
 
 import { createServer } from 'node:net'

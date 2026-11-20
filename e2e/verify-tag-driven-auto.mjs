@@ -1,6 +1,6 @@
-// Checks output ownership (ctx.tagDriven) end-to-end on a comms-enabled blade stop, through the full
+// Checks output ownership (ctx.tagDriven) end-to-end on a blade stop wired to a tag, through the full
 // hand/auto lifecycle a real panel would show:
-//   1. STOPPED (program mode): pilot E hand-cycles the blade via the idle preview. Comms on does not
+//   1. STOPPED (program mode): pilot E hand-cycles the blade via the idle preview. A wired tag does not
 //      pin it to a dead tag; the prompt reads "Use".
 //   2. RUNNING, tag undriven (no program owns 'Raise'): E still hand-cycles. This is the middle case.
 //   3. A program declaring `Raise` as VAR_OUTPUT attaches: it takes over the blade (drops to the commanded
@@ -73,7 +73,7 @@ async function main() {
     await waitForApp()
     await page.waitForTimeout(800)
 
-    // one blade stop, comms enabled on tag 'Raise' (the configuration a comms-on pin leaves dead to hand
+    // one blade stop wired to tag 'Raise' (the configuration a pin on the wired tag leaves dead to hand
     // presses), plus a push button off to the side for step 6's indicator-tag discrimination
     const havePkg = await page.evaluate(() => {
       const st = window.__oip.store
@@ -82,8 +82,8 @@ async function main() {
       const btnPkg = st.getState().bundledPackages.find((p) => p.id === 'oip.push-button')
       if (!pkg || !btnPkg) return false
       const parts = [
-        { id: 'blade_shot', type: 'part', packageId: 'oip.blade-stop', position: [0, 0.9, 0], rotationY: 0, params: { width: 0.5, active: false, raiseHeight: 0.06, enableComms: true, tag: 'Raise' } },
-        { id: 'btn_shot', type: 'part', packageId: 'oip.push-button', position: [1.5, 0.9, 0], rotationY: 0, params: { text: 'START', enableComms: true, tag: 'Start', lampSource: 'tag', lampTag: 'RunLamp' } },
+        { id: 'blade_shot', type: 'part', packageId: 'oip.blade-stop', position: [0, 0.9, 0], rotationY: 0, params: { width: 0.5, active: false, raiseHeight: 0.06, tag: 'Raise' } },
+        { id: 'btn_shot', type: 'part', packageId: 'oip.push-button', position: [1.5, 0.9, 0], rotationY: 0, params: { text: 'START', tag: 'Start', lampSource: 'tag', lampTag: 'RunLamp' } },
       ]
       st.loadScene({ ...scene, parts, packages: [...(scene.packages ?? []).filter((p) => p.id !== pkg.id && p.id !== btnPkg.id), pkg, btnPkg] })
       return true
@@ -110,14 +110,14 @@ async function main() {
     const aimed = await aimAt('blade_shot', 0)
     check('pilot crosshair lands on the blade stop', aimed !== null, aimed !== null ? `pitch=${aimed.toFixed(2)}` : 'never seen')
 
-    // ── 1. STOPPED (program mode): comms on, but nothing is driven → hand works, prompt says Use ──
+    // ── 1. STOPPED (program mode): tag wired, but nothing is driven → hand works, prompt says Use ──
     await settle(300)
-    check('STOPPED prompt is "Use" despite comms on', (await prompt()) === 'Use', `prompt=${JSON.stringify(await prompt())}`)
+    check('STOPPED prompt is "Use" despite a wired tag', (await prompt()) === 'Use', `prompt=${JSON.stringify(await prompt())}`)
     const idleDown = await measure()
     await interact()
     await settle()
     const idleUp = await measure()
-    check('STOPPED: E hand-raises a comms-ON blade (idle preview, was dead before tagDriven)', idleUp - idleDown > RAISE, `Δ=${(idleUp - idleDown).toFixed(3)}m`)
+    check('STOPPED: E hand-raises a wired blade (idle preview, was dead before tagDriven)', idleUp - idleDown > RAISE, `Δ=${(idleUp - idleDown).toFixed(3)}m`)
     await interact()
     await settle()
     check('STOPPED: second E lowers it back', idleUp - (await measure()) > RAISE)
@@ -132,7 +132,7 @@ async function main() {
     await interact()
     await settle()
     const runUp = await measure()
-    check('RUNNING undriven: E hand-raises (the middle case - comms on, nobody owns the tag)', runUp - runDown > RAISE, `Δ=${(runUp - runDown).toFixed(3)}m`)
+    check('RUNNING undriven: E hand-raises (the middle case - tag wired, nobody owns it)', runUp - runDown > RAISE, `Δ=${(runUp - runDown).toFixed(3)}m`)
 
     // ── 3. a program declaring Raise as an output attaches: auto takes over the blade ──
     await page.evaluate(() => window.__oip.controller.runProgram('VAR_OUTPUT Raise : BOOL; END_VAR\nRaise := FALSE;'))
@@ -174,8 +174,8 @@ async function main() {
     check('…while the same program owns the blade stop via its command tag', aimedBlade !== null && (await settle(300), await prompt()) === 'In auto - PLC controlled', `prompt=${JSON.stringify(await prompt())}`)
     await page.evaluate(() => window.__oip.controller.stopProgram())
 
-    // ── 7. the same handoff on the chain transfer pop-up (comms on, tag 'Popup') ──
-    // A gate of `enableComms && popupTag` (the truthiness of the tag name) pins the transfer to a typed tag
+    // ── 7. the same handoff on the chain transfer pop-up (tag 'Popup') ──
+    // A gate of `popupTag` alone (the truthiness of the tag name) pins the transfer to a typed tag
     // for good, and E goes dead with no program attached. Without the autoWhenDriven flag an owned transfer
     // shows a dead "Use". Shorter than the blade stop's full lifecycle above, because the
     // behaviour-level gate is pinned deterministically in src/sim/chainTransferBehavior.test.ts.
@@ -186,7 +186,7 @@ async function main() {
       const st = window.__oip.store
       const scene = st.getState().scene
       const pkg = st.getState().bundledPackages.find((p) => p.id === 'oip.chain-transfer')
-      const parts = [{ id: 'chain_shot', type: 'part', packageId: 'oip.chain-transfer', position: [0, 0.9, 0], rotationY: 0, params: { chains: 5, distance: 0.33, laneLength: 2, speed: 2, raised: false, enableComms: true, speedTag: '', popupTag: 'Popup' } }]
+      const parts = [{ id: 'chain_shot', type: 'part', packageId: 'oip.chain-transfer', position: [0, 0.9, 0], rotationY: 0, params: { chains: 5, distance: 0.33, laneLength: 2, speed: 2, raised: false, speedTag: '', popupTag: 'Popup' } }]
       st.loadScene({ ...scene, parts, packages: [...(scene.packages ?? []).filter((p) => p.id !== pkg.id), pkg] })
     })
     await page.waitForFunction(() => {
@@ -211,12 +211,12 @@ async function main() {
     const aimedChain = await aimAt('chain_shot', 0)
     check('pilot crosshair lands on the chain transfer', aimedChain !== null, aimedChain !== null ? `pitch=${aimedChain.toFixed(2)}` : 'never seen')
     await settle(300)
-    check('CHAIN STOPPED prompt is "Use" despite comms on + a tag set', (await prompt()) === 'Use', `prompt=${JSON.stringify(await prompt())}`)
+    check('CHAIN STOPPED prompt is "Use" despite a tag set', (await prompt()) === 'Use', `prompt=${JSON.stringify(await prompt())}`)
     const chainDown = await chainY()
     await interact()
     await settle()
     const chainUp = await chainY()
-    check('CHAIN STOPPED: E hand-pops a comms-ON transfer (was dead - pinned to an undriven tag)', chainUp - chainDown > POP, `Δ=${(chainUp - chainDown).toFixed(3)}m`)
+    check('CHAIN STOPPED: E hand-pops a wired transfer (was dead - pinned to an undriven tag)', chainUp - chainDown > POP, `Δ=${(chainUp - chainDown).toFixed(3)}m`)
 
     // a program declaring Popup as an output attaches: auto takes over the pop-up and the prompt changes
     await page.evaluate(() => window.__oip.controller.run())

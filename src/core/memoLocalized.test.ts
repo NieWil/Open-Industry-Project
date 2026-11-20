@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SdkPart, PartInstance } from './types'
-import type { PartPackage } from './partPackage'
-import { clearPackages, getPackage, registerPackage } from './partRegistry'
-import { computeSceneOpenings } from './guardOpenings'
-import { computeSceneExtents } from './guardExtents'
+import type { PartPackage } from './parts/partPackage'
+import { clearPackages, getPackage, registerPackage } from './parts/partRegistry'
+import { computeSceneOpenings } from './guards/guardOpenings'
+import { computeSceneExtents } from './guards/guardExtents'
 import { memoizeLocalized } from './memoParts'
-import { PACKAGE_FORMAT } from './partPackage'
+import { PACKAGE_FORMAT } from './parts/partPackage'
 
 /**
  * Soundness of the per-target incremental memo (memoParts.ts `memoizeLocalized`).

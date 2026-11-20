@@ -4,7 +4,7 @@
 // The reverse of opcUaIo.cjs, which is a client of a real PLC's server. Here the app's own program
 // keeps running in the sim worker, and whatever connects sees its variables and writes the ones an operator
 // may write (a Start button, a setpoint). As in opcUaIo.cjs, node-opcua handles the protocol and the app decides
-// everything else (src/editor/opcUaServer.ts): which variables are published, as which type, which of them a
+// everything else (src/editor/links/opcUaServer.ts): which variables are published, as which type, which of them a
 // client may write, and what a write does. This file only turns that into nodes.
 //
 // Unsecured on purpose, for now, like the client: security policy None and anonymous sessions. It listens on
@@ -15,6 +15,8 @@
 const { join } = require('node:path')
 
 let lib = null
+const { BAD_LINK, heldByAnotherWindow, linkKey, linkNo, onPageGone, windowKeys } = require('./linkKeys.cjs')
+
 function opcua() {
   // the client package re-exports the shared types (Variant, StatusCodes, SecurityPolicy); the server's own
   // exports override them where both define a name
@@ -197,13 +199,13 @@ class SimOpcUaServer {
   }
 }
 
-/** @type {Map<number, SimOpcUaServer>} */
+/** @type {Map<string, SimOpcUaServer>} by window and controller (linkKeys.cjs) */
 const servers = new Map()
 const watched = new Set()
 const generation = new Map()
-const bump = (id) => {
-  const g = (generation.get(id) ?? 0) + 1
-  generation.set(id, g)
+const bump = (key) => {
+  const g = (generation.get(key) ?? 0) + 1
+  generation.set(key, g)
   return g
 }
 
@@ -211,61 +213,62 @@ function send(sender, channel, payload) {
   if (!sender.isDestroyed()) sender.send(channel, payload)
 }
 
-async function stopFor(id) {
-  const s = servers.get(id)
-  servers.delete(id)
+async function stopFor(key) {
+  const s = servers.get(key)
+  servers.delete(key)
   await s?.stop()
 }
 
 /**
- * Register the `opcuaserver:*` channels.
- *   opcuaserver:start  {port, network} -> {error, endpoint}          listen (a server already running is replaced)
- *   opcuaserver:define {nodes: [{name, builtin, writable, value}]}   publish exactly these variables
- *   opcuaserver:update {values: {name: value}, running}              the latest values (fire and forget)
- *   opcuaserver:stop                                                 stop listening
- * and pushes
- *   opcuaserver:write {name, value}                                  a client wrote a writable variable
- *   opcuaserver:clients {clients: string[]}                          the clients with a session open
+ * Register the `opcuaserver:*` channels. A window runs one server per controller, each on a port of its own: `link` is
+ * the controller's number, as its PLC link's (linkKeys.cjs), 0 for the default controller and when absent.
+ *   opcuaserver:start  {port, network, link} -> {error, endpoint}    listen (a server already running is replaced)
+ *   opcuaserver:define {nodes: [{name, builtin, writable, value}], link}  publish exactly these variables
+ *   opcuaserver:update {values: {name: value}, running, link}        the latest values (fire and forget)
+ *   opcuaserver:stop   {link}                                        stop listening
+ * and pushes, each with the `link` it is from
+ *   opcuaserver:write {name, value, link}                            a client wrote a writable variable
+ *   opcuaserver:clients {clients: string[], link}                    the clients with a session open
  * `consent` (endpointConsent.cjs `allows`) is asked before the server listens on the network rather than on this
  * machine only; without it that is allowed (a caller that is not the app's window, such as a test).
  */
 function registerOpcUaServer(ipcMain, { pkiRoot, consent }) {
   ipcMain.handle('opcuaserver:start', async (event, opts) => {
     const sender = event.sender
-    const mine = bump(sender.id)
-    await stopFor(sender.id)
+    const link = linkNo(opts)
+    if (link === null) return { error: BAD_LINK, endpoint: '' }
+    const key = linkKey(sender.id, link)
+    const mine = bump(key)
+    await stopFor(key)
     const port = Number(opts?.port)
     if (!Number.isInteger(port) || port < 1 || port > 65535) return { error: `port ${opts?.port} is not a TCP port (1-65535)`, endpoint: '' }
     if (opts?.network === true && consent) {
       const what = `let a SCADA or HMI on the network read and write the simulator's tags over OPC UA on port ${port}`
       if (!(await consent({ host: '0.0.0.0', key: `opcuaserver network ${port}`, what }, sender)))
         return { error: `serving OPC UA to the network on port ${port} was not allowed`, endpoint: '' }
-      if (generation.get(sender.id) !== mine) return { error: 'superseded by a newer start', endpoint: '' }
+      if (generation.get(key) !== mine) return { error: 'superseded by a newer start', endpoint: '' }
     }
     const server = new SimOpcUaServer(pkiRoot, {
-      onWrite: (name, value) => send(sender, 'opcuaserver:write', { name, value }),
-      onClients: (clients) => send(sender, 'opcuaserver:clients', { clients }),
+      onWrite: (name, value) => send(sender, 'opcuaserver:write', { name, value, link }),
+      onClients: (clients) => send(sender, 'opcuaserver:clients', { clients, link }),
     })
     const started = await server.start({ port, network: opts?.network === true })
-    if (started.error) return { ...started, endpoint: '' }
-    if (generation.get(sender.id) !== mine) {
+    if (started.error) return { error: (/already in use/.test(started.error) && heldByAnotherWindow(servers, sender.id, port)) || started.error, endpoint: '' }
+    if (generation.get(key) !== mine) {
       await server.stop()
       return { error: 'superseded by a newer start', endpoint: '' }
     }
-    servers.set(sender.id, server)
-    if (!watched.has(sender.id)) {
-      watched.add(sender.id)
-      const id = sender.id
-      sender.once('destroyed', () => {
-        watched.delete(id)
-        void stopFor(id)
-      })
-    }
+    server.port = port
+    servers.set(key, server)
+    onPageGone(sender, watched, (id) => {
+      for (const k of windowKeys(servers, id)) void stopFor(k)
+    })
     return started
   })
   ipcMain.handle('opcuaserver:define', (event, opts) => {
-    const server = servers.get(event.sender.id)
-    if (!server) return { error: 'not started' }
+    const link = linkNo(opts)
+    const server = link === null ? undefined : servers.get(linkKey(event.sender.id, link))
+    if (!server) return { error: link === null ? BAD_LINK : 'not started' }
     try {
       server.define(Array.isArray(opts?.nodes) ? opts.nodes : [])
       return { error: '' }
@@ -274,11 +277,16 @@ function registerOpcUaServer(ipcMain, { pkiRoot, consent }) {
     }
   })
   ipcMain.on('opcuaserver:update', (event, msg) => {
-    servers.get(event.sender.id)?.update(msg?.values ?? {}, msg?.running === true)
+    const link = linkNo(msg)
+    if (link === null) return
+    servers.get(linkKey(event.sender.id, link))?.update(msg?.values ?? {}, msg?.running === true)
   })
-  ipcMain.handle('opcuaserver:stop', (event) => {
-    bump(event.sender.id)
-    return stopFor(event.sender.id)
+  ipcMain.handle('opcuaserver:stop', (event, opts) => {
+    const link = linkNo(opts)
+    if (link === null) return undefined
+    const key = linkKey(event.sender.id, link)
+    bump(key)
+    return stopFor(key)
   })
 }
 

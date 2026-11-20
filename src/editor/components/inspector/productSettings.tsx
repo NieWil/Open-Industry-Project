@@ -2,7 +2,7 @@
 // product's own params, stored on the part as one JSON object in the hidden settings param.
 import type { ReactNode } from 'react'
 import type { PartInstance } from '../../../core/types'
-import type { PartPackage } from '../../../core/partPackage'
+import type { PartPackage } from '../../../core/parts/partPackage'
 import { labelHead, packageParamSpecs, switchValue, visibleWhenHolds } from '../../../core/packageParams'
 import { titleCase } from './shared'
 import type { Update } from './shared'

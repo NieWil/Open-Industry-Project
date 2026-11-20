@@ -20,11 +20,15 @@
 //     counts by its /64, the block one subscriber is handed
 //   - per-message and per-document size caps (ws maxPayload + beforeHandleMessage), and a
 //     separate, much smaller cap on awareness (presence) messages
-//   - stateless messages refused: the app never sends one, and BroadcastStateless would let any
-//     viewer relay arbitrary text to every connection in a room
+//   - stateless messages carry only live share (liveRelay.mjs): a writer's run, sent by the server to the
+//     connections following it, and anyone's follow and catch-up requests. BroadcastStateless is refused,
+//     because it would let any viewer relay arbitrary text to every connection in a room
 //   - idle-room GC: rooms untouched for ROOM_TTL_DAYS are deleted (daily sweep)
 //   - periodic snapshots of each active room into a `snapshots` table (restore = one
 //     UPDATE, see server/DEPLOY.md); a room whose bytes equal its newest snapshot is skipped
+//   - a room's owner token (roomOwners.mjs): the browser that shared a project may close its room, which is then
+//     deleted and refused, so Stop sharing makes its links stop working, and may ask everyone to watch its run
+//     (the spotlight); an editor of the room can do neither
 //   - GET /healthz for uptime monitoring
 //   - /assets/<sha256>: the bytes of parts' embedded models, so a room's document carries only their hashes
 //     (assets.mjs: public GET by hash, PUT only with a room edit secret, capped per file and per IP per hour, and
@@ -50,6 +54,8 @@ import {
   readMessageHead,
 } from './guards.mjs'
 import { createAssetStore } from './assets.mjs'
+import { LiveRelay, MAX_SNAPSHOT_CHARS } from './liveRelay.mjs'
+import { handleRoomMessage, ROOM_PREFIX } from './roomOwners.mjs'
 
 const port = Number(process.env.PORT ?? 1234)
 // Loopback by default. Caddy on the same VM terminates TLS and proxies to 127.0.0.1:PORT, so
@@ -96,6 +102,7 @@ const DOC_NAME_RE = /^r-[0-9a-f]{64}$/
 // thrown from a hook, it reaches the client as a permission-denied message with this reason
 // (its provider's `authenticationFailed` event), and the document is never set up
 const notARoom = () => Object.assign(new Error('not a room'), { reason: 'not-a-room' })
+const roomClosed = () => Object.assign(new Error('room closed'), { reason: 'room-closed' })
 
 // --- our own handle on the same SQLite file, for room metadata + snapshots + GC.
 // The Hocuspocus SQLite extension owns the `documents` table; we only read it (sizes,
@@ -121,6 +128,15 @@ await dbRun(`CREATE TABLE IF NOT EXISTS snapshots (
   data BLOB NOT NULL
 )`)
 await dbRun('CREATE INDEX IF NOT EXISTS snapshots_name_ts ON snapshots(name, ts)')
+// who may close a room (roomOwners.mjs), and the rooms closed by their owners, which stay refused
+await dbRun(`CREATE TABLE IF NOT EXISTS room_owners (
+  name TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL
+)`)
+await dbRun(`CREATE TABLE IF NOT EXISTS closed_rooms (
+  name TEXT PRIMARY KEY,
+  at INTEGER NOT NULL
+)`)
 
 // --- per-IP accounting (in memory; resets on restart, which is fine for abuse control)
 
@@ -234,6 +250,7 @@ async function sweepIdleRooms() {
       await dbRun('DELETE FROM documents WHERE name = $name', { $name: name })
       await dbRun('DELETE FROM snapshots WHERE name = $name', { $name: name })
       await dbRun('DELETE FROM room_meta WHERE name = $name', { $name: name })
+      await dbRun('DELETE FROM room_owners WHERE name = $name', { $name: name })
       docBytes.delete(name)
       pendingBytes.delete(name)
       ledgerEpoch.delete(name)
@@ -276,9 +293,13 @@ const startedAt = Date.now()
 // server's own handle) would end the process. A failed write is retried a few times, then logged
 // and given up: the ledger is left untouched, and the room's next edit stores its full state again.
 const STORE_ATTEMPTS = 3
+/** rooms closed while this process runs: their last state is not stored back as their connections end */
+const closedHere = new Set()
+
 const sqliteStore = new SQLite({
   database,
   store: async ({ documentName, state }) => {
+    if (closedHere.has(documentName)) return
     const covered = pendingBytes.get(documentName) ?? 0
     const epoch = ledgerEpoch.get(documentName) ?? 0
     for (let attempt = 1; ; attempt++) {
@@ -300,6 +321,28 @@ const sqliteStore = new SQLite({
     pendingBytes.set(documentName, Math.max(0, (pendingBytes.get(documentName) ?? 0) - covered))
   },
 })
+
+const live = new LiveRelay()
+/** the relay's messages for particular connections of a document, by socket id */
+const sendTo = (document, sends) => {
+  for (const c of document.getConnections()) for (const p of sends.get(c.socketId) ?? []) c.sendStateless(p)
+}
+const owners = {
+  ownerOf: async (name) => (await dbGet('SELECT token_hash FROM room_owners WHERE name = $name', { $name: name }))?.token_hash ?? null,
+  setOwner: (name, hash) => dbRun('INSERT OR IGNORE INTO room_owners (name, token_hash) VALUES ($name, $hash)', { $name: name, $hash: hash }),
+  close: async (name) => {
+    closedHere.add(name)
+    await dbRun('INSERT OR REPLACE INTO closed_rooms (name, at) VALUES ($name, $at)', { $name: name, $at: Date.now() })
+    await dbRun('DELETE FROM documents WHERE name = $name', { $name: name })
+    await dbRun('DELETE FROM snapshots WHERE name = $name', { $name: name })
+    await dbRun('DELETE FROM room_meta WHERE name = $name', { $name: name })
+    await dbRun('DELETE FROM room_owners WHERE name = $name', { $name: name })
+    live.unload(name)
+  },
+}
+const isClosed = async (name) => closedHere.has(name) || (await dbGet('SELECT 1 AS one FROM closed_rooms WHERE name = $name', { $name: name })) != null
+/** a view-only connection may send only a resync request, which is a few dozen bytes */
+const MAX_VIEWER_STATELESS_BYTES = 256
 
 const server = new Server({
   port,
@@ -331,6 +374,8 @@ const server = new Server({
     // Only `r-<sha256>` names are rooms. Refused first, so a bare or legacy name never
     // creates a document, counts against an IP, or reaches a row persisted under it.
     if (!DOC_NAME_RE.test(documentName)) throw notARoom()
+    // closed by its owner (roomOwners.mjs): every link to it stops working
+    if (await isClosed(documentName)) throw roomClosed()
     const ip = clientIp(request)
     if ((connsByIp.get(ip) ?? 0) >= MAX_CONNS_PER_IP) {
       throw new Error(`too many connections from ${ip}`)
@@ -352,7 +397,53 @@ const server = new Server({
     connIp.set(`${socketId}/${documentName}`, ip)
   },
 
-  async onDisconnect({ socketId, documentName }) {
+  // a connection joining is told who owns the room and whether they asked everyone to watch; runs are followed by asking
+  async connected({ documentName, connection }) {
+    for (const payload of live.joinMessages(documentName)) connection.sendStateless(payload)
+  },
+
+  async onStateless({ connection, documentName, document, payload }) {
+    if (typeof payload === 'string' && payload.startsWith(ROOM_PREFIX)) {
+      let result
+      try {
+        result = await handleRoomMessage(owners, documentName, payload, { readOnly: connection.readOnly })
+      } catch (err) {
+        console.warn(`[room] refused from ${connection.socketId}: ${err.message}`)
+        connection.close({ code: 4403, reason: 'room message refused' })
+        return
+      }
+      connection.sendStateless(result.reply)
+      // who owns the room, and the spotlight, are the relay's to keep and everyone's to know (liveRelay.mjs `o`)
+      const state =
+        result.owner !== undefined
+          ? live.setOwner(documentName, connection.socketId, result.owner)
+          : result.spotlight !== undefined
+            ? live.setSpotlight(documentName, connection.socketId, result.spotlight)
+            : null
+      if (state) document.broadcastStateless(state)
+      if (result.close) {
+        // everyone in it is told, then let go; their reconnects meet onConnect's refusal
+        document.broadcastStateless(`${ROOM_PREFIX}closed|`)
+        for (const c of document.getConnections()) c.close({ code: 4404, reason: 'room-closed' })
+      }
+      return
+    }
+    let out
+    try {
+      out = live.handle(documentName, payload, { readOnly: connection.readOnly, key: connection.socketId })
+    } catch (err) {
+      console.warn(`[live] refused from ${connection.socketId}: ${err.message}`)
+      connection.close({ code: 4403, reason: 'live-share message refused' })
+      return
+    }
+    if (out.reply) for (const p of out.reply) connection.sendStateless(p)
+    if (out.send) sendTo(document, out.send)
+  },
+
+  async onDisconnect({ socketId, documentName, document }) {
+    const gone = live.disconnected(documentName, socketId)
+    if (document && gone.send) sendTo(document, gone.send)
+    if (document && gone.broadcast) document.broadcastStateless(gone.broadcast)
     const key = `${socketId}/${documentName}`
     const ip = connIp.get(key)
     if (ip === undefined) return
@@ -369,7 +460,8 @@ const server = new Server({
   //     A read-only connection's content is dropped by Hocuspocus unapplied, so it is not counted,
   //     and step 1 (a request to be sent the doc) is never refused: a full room stays readable.
   //   - awareness (presence) is capped at MAX_AWARENESS_BYTES, from viewers and writers alike.
-  //   - stateless messages are refused outright; nothing in the app sends them.
+  //   - stateless messages: BroadcastStateless is refused; a plain stateless message is capped at a live
+  //     snapshot's size from a writer and a resync request's from a viewer (onStateless checks the rest).
   async beforeHandleMessage({ documentName, document, update, connection }) {
     if (update.byteLength > MAX_MESSAGE_BYTES) {
       throw new Error(`message exceeds ${MAX_DOC_MB} MB`)
@@ -382,8 +474,11 @@ const server = new Server({
       }
       return
     }
-    if (head.type === MSG_STATELESS || head.type === MSG_BROADCAST_STATELESS) {
-      throw new Error('stateless messages are not accepted')
+    if (head.type === MSG_BROADCAST_STATELESS) throw new Error('broadcast stateless messages are not accepted')
+    if (head.type === MSG_STATELESS) {
+      const cap = connection?.readOnly ? MAX_VIEWER_STATELESS_BYTES : MAX_SNAPSHOT_CHARS + 1024
+      if (update.byteLength > cap) throw new Error(`stateless message exceeds ${cap} bytes`)
+      return
     }
     const content =
       (head.type === MSG_SYNC || head.type === MSG_SYNC_REPLY) &&
@@ -430,6 +525,7 @@ const server = new Server({
   },
 
   async afterUnloadDocument({ documentName }) {
+    live.unload(documentName)
     pendingBytes.delete(documentName)
     lastRederive.delete(documentName)
   },

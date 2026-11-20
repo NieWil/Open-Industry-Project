@@ -1,8 +1,8 @@
 import { commandDisabledReason, commandEnabled, commandEnabledOn, getCommand, runCommand, runCommandOn, type Command } from '../commands'
-import { DESKTOP_SHELL } from '../desktopMenuBridge'
+import { DESKTOP_SHELL } from '../desktop/desktopMenuBridge'
 import type { SdkPart } from '../../core/types'
 import { primaryKey } from '../keyHint'
-import type { EditorState, EditorStore } from '../store'
+import type { EditorState, EditorStore } from '../store/store'
 import type { EditorController } from '../controller'
 import { buildTreeNode } from '../treeNode'
 import type { TreeNodeSource } from '../treeNode'
@@ -26,8 +26,8 @@ const M = defineMessages('sceneTreeMenu', {
   delete: 'Delete',
 })
 
-// the clipboard block, by command id (editor/commands.ts)
-const CLIPBOARD_COMMANDS = ['edit.cut', 'edit.copy', 'edit.paste', 'edit.duplicate'] as const
+// the clipboard block, by command id (editor/commands.ts), with what a selection's properties and tags can be given
+const CLIPBOARD_COMMANDS = ['edit.cut', 'edit.copy', 'edit.paste', 'edit.duplicate', 'edit.copyProperties', 'edit.pasteProperties', 'edit.assignController'] as const
 
 const MENU_W = 184
 
@@ -84,7 +84,7 @@ export function SceneTreeMenu({ menu, state, store, controller, onClose, beginRe
     return { up: idxs[0]! > 0, down: idxs[idxs.length - 1]! < sibs.length - 1 }
   })()
   // a part's menu is tall (full scene ops); a rig link's is short (the capability subset) - clamp by kind
-  const menuH = menu.src.kind === 'rigLink' ? 232 : 496
+  const menuH = menu.src.kind === 'rigLink' ? 232 : 552
   const menuStyle = { left: Math.min(menu.x, window.innerWidth - MENU_W - 8), top: Math.min(menu.y, window.innerHeight - menuH - 8) }
 
   // Every shortcut in this menu comes from the active keymap, in this platform's notation (⌘ on a Mac).
@@ -102,7 +102,7 @@ export function SceneTreeMenu({ menu, state, store, controller, onClose, beginRe
       <div className="context-backdrop" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }} />
       <div className="context-menu" style={menuStyle}>
         {/* clipboard + duplicate - multi-select scene ops, part rows only (no rig-link equivalent).
-            Rendered from the command registry: these four are the same actions the Edit menu, the
+            Rendered from the command registry: these are the same actions the Edit menu, the
             palette and Ctrl+X/C/V/D run, so their enablement is one rule, not a per-surface guess. */}
         {menuIsPart && (
           <>
@@ -167,6 +167,8 @@ export function SceneTreeMenu({ menu, state, store, controller, onClose, beginRe
             onClick={run(() => (menuIsPart ? store.setVisible(state.selectedIds, !allVisible) : menuNode.setHidden(!menuNode.flags.hidden)))}
           >
             {(menuIsPart ? allVisible : !menuNode.flags.hidden) ? t(M.hide) : t(M.show)}
+            {/* the chord acts on selected parts only, so a rig-link row shows none */}
+            {menuIsPart && <span className="context-shortcut">{bindingLabel('edit.toggleVisible')}</span>}
           </button>
         )}
         {menuNode.caps.lock && (

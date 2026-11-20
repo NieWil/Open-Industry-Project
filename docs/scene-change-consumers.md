@@ -14,7 +14,7 @@ which read the robot.
 
 ## The model
 
-**A delta per sync.** [`core/sceneDelta.ts`](../src/core/sceneDelta.ts): `syncScene` records every part it added,
+**A delta per sync.** [`core/scene/sceneDelta.ts`](../src/core/scene/sceneDelta.ts): `syncScene` records every part it added,
 removed or updated (a new object, or a changed neighbour-derived context), plus a part shown or hidden without an edit
 of its own (a hidden parent), with the version before and after. The delta is `full` (fail open: everything changed)
 on a load, on the first sync, and when the package registry moved since the last sync, because a package edit changes

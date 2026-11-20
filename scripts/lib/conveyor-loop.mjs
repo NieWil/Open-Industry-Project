@@ -99,46 +99,52 @@ END_IF;
 `
   // a 5 m belt with its deck 0.8 m up, a box dropped near its tail, and an eye 3 m along aimed across it
   const parts = [
-    { id: 'belt', type: 'part', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0, params: { segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: FAST, enableComms: true, runTag: run, speedTag: speed } },
+    { id: 'belt', type: 'part', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0, params: { segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: FAST, runTag: run, speedTag: speed } },
     { id: 'box', type: 'part', packageId: 'oip.box', position: [0.6, 1.0, 0], rotationY: 0, params: { length: 0.4, width: 0.3, height: 0.3 } },
-    { id: 'eye', type: 'part', packageId: 'oip.diffuse-sensor', position: [3, 0.75, -0.6], rotationY: 0, params: { maxRange: 1.2, enableComms: true, tag: eye } },
+    { id: 'eye', type: 'part', packageId: 'oip.diffuse-sensor', position: [3, 0.75, -0.6], rotationY: 0, params: { maxRange: 1.2, tag: eye } },
     // a laser across the belt 0.8 m before the eye: its distance is the ANALOG the PLC decides on
-    { id: 'laser', type: 'part', packageId: 'oip.laser-sensor', position: [2.2, 0.75, -0.6], rotationY: 0, params: { maxRange: 1.2, enableComms: true, distanceTag: range } },
+    { id: 'laser', type: 'part', packageId: 'oip.laser-sensor', position: [2.2, 0.75, -0.6], rotationY: 0, params: { maxRange: 1.2, distanceTag: range } },
   ]
   return { points, program, parts }
 }
 
 // ---- loading our side ----
 
-/** This repo's modules, loaded through vite (they are TypeScript), with the bundled parts registered and Jolt up. */
-export async function loadOurs() {
+/**
+ * This repo's modules, loaded through vite (they are TypeScript), with the bundled parts registered and Jolt up.
+ * `more` names further modules by key; each comes back as its own namespace under `ours.more`, loaded in the same
+ * module graph, so it sees the same registered parts.
+ */
+export async function loadOurs(more = {}) {
   const vite = await createServer({ configFile: false, root: ROOT, logLevel: 'error', server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true } })
   try {
     const m = (p) => vite.ssrLoadModule(p)
     const ours = {
-      ...(await m('/src/core/externalIo.ts')),
+      ...(await m('/src/core/io/externalIo.ts')),
       ...(await m('/src/plc/wiring.ts')),
-      ...(await m('/src/plc/modbusServer.ts')),
-      ...(await m('/src/plc/modbusClient.ts')),
-      ...(await m('/src/core/opcUa.ts')),
-      ...(await m('/src/core/s7Io.ts')),
-      ...(await m('/src/core/ads.ts')),
-      ...(await m('/src/editor/externalPlc.ts')),
-      ...(await m('/src/editor/s7Link.ts')),
-      ...(await m('/src/editor/adsLink.ts')),
-      ...(await m('/src/plc/exportText.ts')),
-      ...(await m('/src/plc/export.ts')),
+      ...(await m('/src/plc/link/modbusServer.ts')),
+      ...(await m('/src/plc/link/modbusClient.ts')),
+      ...(await m('/src/core/io/opcUa.ts')),
+      ...(await m('/src/core/io/s7Io.ts')),
+      ...(await m('/src/core/io/ads.ts')),
+      ...(await m('/src/editor/links/externalPlc.ts')),
+      ...(await m('/src/editor/links/s7Link.ts')),
+      ...(await m('/src/editor/links/adsLink.ts')),
+      ...(await m('/src/plc/exchange/exportText.ts')),
+      ...(await m('/src/plc/exchange/export.ts')),
       ...(await m('/src/plc/checker.ts')),
       ...(await m('/src/plc/controller.ts')),
-      ...(await m('/src/plc/plcLink.ts')),
+      ...(await m('/src/plc/link/plcLink.ts')),
       ...(await m('/src/plc/simController.ts')),
       ...(await m('/src/plc/scanEngine.ts')),
       ...(await m('/src/sim/plcHost.ts')),
       ...(await m('/src/sim/world.ts')),
-      ...(await m('/src/core/partRegistry.ts')),
-      ...(await m('/src/editor/bundledPackageData.ts')),
+      ...(await m('/src/core/parts/partRegistry.ts')),
+      ...(await m('/src/editor/parts/bundledPackageData.ts')),
       ...(await m('/src/core/types/index.ts')),
     }
+    ours.more = {}
+    for (const [key, path] of Object.entries(more)) ours.more[key] = await m(path)
     const initJolt = (await m('jolt-physics')).default
     for (const pkg of ours.bundledPackagesFromData()) ours.registerPackage(pkg, true)
     ours.Jolt = await initJolt()
@@ -178,11 +184,13 @@ export function flattenTags(tags) {
 /** Records what the checks need: when the belt started and stopped, when the eye saw the box, where the box went. */
 export class Trace {
   rows = []
-  constructor(points) {
+  /** `box` is the part id of the box to follow */
+  constructor(points, box = 'box') {
     this.points = points
+    this.box = box
   }
   add(t, tags, frame) {
-    const i = frame.partIds.indexOf('box')
+    const i = frame.partIds.indexOf(this.box)
     const { eye, run, range, speed } = this.points
     this.rows.push({
       t,

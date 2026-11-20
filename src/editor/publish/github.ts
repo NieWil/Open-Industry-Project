@@ -10,9 +10,9 @@
 // request from that branch. The commit is made through the Git data API (blobs, a tree on the repository's current
 // main, a commit, a branch), so nothing is cloned.
 
-import { PARTS_REPOSITORY } from '../../core/partSubmission'
-import type { NamespaceFile } from '../../core/partSubmission'
-import { bytesToBase64 } from '../../core/partAssets'
+import { PARTS_REPOSITORY } from '../../core/parts/partSubmission'
+import type { NamespaceFile } from '../../core/parts/partSubmission'
+import { bytesToBase64 } from '../../core/parts/partAssets'
 
 /** The sign-in Worker (workers/github-signin). */
 export const SIGNIN_URL = 'https://signin.openindustryproject.org'

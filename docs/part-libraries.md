@@ -8,35 +8,41 @@ part and signs the index.
 
 ### In the app
 
-- **Index format and statuses:** [src/core/partLibrary.ts](../src/core/partLibrary.ts). `validateLibraryIndex`
+- **Index format and statuses:** [src/core/parts/partLibrary.ts](../src/core/parts/partLibrary.ts). `validateLibraryIndex`
   treats an index as untrusted: every file it names must be a `.oippart` path inside the library. `offeredVersion`
   is the newest version this build's SDK level runs ([part-sources.md](part-sources.md), "The Part SDK level").
   `libraryStatus` gives the four statuses from the listed fingerprint, so a listing needs no download.
   `checkLibraryDownload` requires a file to hash to its listed SHA-256 and build into its listed fingerprint.
-- **Fetching and installing:** [src/editor/partLibraries.ts](../src/editor/partLibraries.ts).
-- **Which libraries are read:** [src/editor/partLibraryUrls.ts](../src/editor/partLibraryUrls.ts). `?library=<index
+- **Fetching and installing:** [src/editor/parts/partLibraries.ts](../src/editor/parts/partLibraries.ts).
+- **Which libraries are read:** [src/editor/parts/partLibraryUrls.ts](../src/editor/parts/partLibraryUrls.ts). `?library=<index
   url>` alone for a session. Otherwise the official libraries left on, then the viewer's own. The official ones are
   `OFFICIAL_PART_LIBRARIES`, compiled into the build, so the app fetches no list and starts with no request to the
   bucket. Page loads, test runs and offline starts do not depend on reaching it. The list holds Containers and
   Community. Structure is left out because it repeats parts the app ships. Settings > Preferences > Part libraries
   switches an official library off and adds or removes the viewer's own. A library is read before it is added, so a
   wrong address or a host without CORS is reported there.
+- **Updates in the Parts dock:** [libraryUpdates.ts](../src/editor/parts/libraryUpdates.ts). A project that holds a part
+  from a library (recorded `origin.library`, or a copy of a built-in the app no longer ships) reads its libraries
+  once, after the scene's first paint, and downloads and checks each newer version. That part's card then carries the
+  same "Update" badge an app or shelf update does, and the updates notice counts it ([part-sources.md](part-sources.md)).
+  A project with no library part makes no request, and a library that cannot be reached says nothing. Get parts hands
+  the listings it reads to the same place, so the cards follow what that window shows.
 - **Get parts:** [GetPartsWindow.tsx](../src/editor/components/GetPartsWindow.tsx), opened from the Parts dock's Get
   parts button or File > Get Parts…. Libraries are listed down the side and their parts as cards. A card shows the
   part's description and what it is to the machines around it (rolls, forks can pick it up, carries a stack), read
   from the part itself rather than the publisher's text. Each listed part is downloaded and checked when the window
   opens. Add to project copies it into the project's parts (`origin.library`) without placing it. Update opens the
-  shelf's change dialog, and Update all takes every newer version after one confirmation. A listed part names its
+  part change dialog, and Update all takes every newer version after one confirmation. A listed part names its
   publisher, linked to their GitHub account. More from <publisher> filters the library to their parts. Add a library
   adds one by the address of its index.json, with the same check as Settings (`addLibrary`). Under "Your parts",
   Publish a part opens Publish to Part Library for the selected part, the project's only part of its own, or a list
   to choose from.
-- **Credit:** a copy added from a library keeps who made it (`PartPackage.credit`, core/partPackage.ts
+- **Credit:** a copy added from a library keeps who made it (`PartPackage.credit`, core/parts/partPackage.ts
   `PartCredit`): the listed publisher and their GitHub page, the Open Industry Project for its own libraries, or only
   the library's name. The app writes it from the listing. It is kept through edits and Save as New Part and travels
   in exported projects, rooms and part files, since CC BY 4.0 requires attribution. It is not part of what the part
   is (`NOT_THE_PART`), so it never makes a copy read as edited. The Inspector shows it under the part's name, and the
-  Parts dock card in its tooltip ([partCredit.ts](../src/editor/partCredit.ts)). A link is followed only to a GitHub
+  Parts dock card in its tooltip ([partCredit.ts](../src/editor/parts/partCredit.ts)). A link is followed only to a GitHub
   page or the project's site. Credit is Part SDK level 4.
 - **Agent tools:** [libraryTools.ts](../src/editor/agent/libraryTools.ts), `list_library_parts` and
   `install_library_part` ([agent-tools.md](agent-tools.md)). A listing's names and descriptions reach the agent under
@@ -122,7 +128,7 @@ Everything in [part-sources.md](part-sources.md) holds. A library is one more so
 - **A static index.** One JSON file per library listing its parts, each with its versions. A version names its part file
   by a URL that never changes, its content hash, its Part SDK level and its thumbnail. The index names one licence, a
   code licence and an assets licence, that every listed part is published under (`licence` in `PartLibraryIndex`,
-  src/core/partLibrary.ts), and an append may not change it. The index is signed with the project's key. There is no
+  src/core/parts/partLibrary.ts), and an append may not change it. The index is signed with the project's key. There is no
   server and no database.
 - **Released on its own schedule.** Publishing a library version adds files and index entries and never rewrites an
   existing one, like `public/part-assets/`. An app deploy and a library release do not wait for each other.
@@ -177,7 +183,7 @@ of the project's own parts that is not `oip.*`; the Scene dock's part menu, the 
 a part), which opens
 [PublishPartDialog.tsx](../src/editor/components/PublishPartDialog.tsx).
 
-1. **Checks on the author's machine.** The rules are [core/partSubmission.ts](../src/core/partSubmission.ts), the
+1. **Checks on the author's machine.** The rules are [core/parts/partSubmission.ts](../src/core/parts/partSubmission.ts), the
    same CI applies: every model and texture inside the part, at most 300,000 triangles, textures at most 4096 pixels a
    side, a part file at most 20 MB, a behavior at most 512 KB. After sign-in, the namespace (below). A problem shows
    in the dialog, where it can be fixed, before anything is sent. Running the part is left to CI, in a capped
@@ -284,7 +290,7 @@ examples: an agent can be given them as context, and they can serve as an evalua
 A built-in is a part the app happens to ship. When app code names a part by id, that part can never move to a
 library, and a part from a library can never do what it does. So the engine offers capabilities that a part declares
 (a cargo body, a snap connector, a hidden-from-catalog flag), and app code names a part only where it is content: a
-demo scene, the tutorial, the list of parts the app ships. `src/core/partIdCoupling.test.ts` holds that line. It
+demo scene, the tutorial, the list of parts the app ships. `src/core/parts/partIdCoupling.test.ts` holds that line. It
 lists the content files and the remaining couplings, each with what removes it, and fails on a new one or on a listed
 file that names no part, so the list can only shrink.
 

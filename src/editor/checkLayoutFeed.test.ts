@@ -7,13 +7,13 @@
 
 import { beforeAll, describe, expect, it } from 'vitest'
 import { checkLayout, exerciseProgram, formatLayoutFinding, type LayoutCheckOptions } from '../core/checkLayout'
-import { clearPackages, getPackage } from '../core/partRegistry'
-import { createSdkPart } from '../core/scene'
+import { clearPackages, getPackage } from '../core/parts/partRegistry'
+import { createSdkPart } from '../core/scene/scene'
 import type { PartInstance, SdkPartParams } from '../core/types'
 import { LocalPlcLink, runnableSource } from '../plc'
 import { checkWiring, wiredBindings } from '../plc/wiring'
-import { registerBundledPackages } from './bundledExamples'
-import { createPlcDemoScene, DEMO_CONTROLLER, DEMO_PROGRAM } from './demoScenes'
+import { registerBundledPackages } from './parts/bundledExamples'
+import { createPlcDemoScene, DEMO_CONTROLLER, DEMO_PROGRAM } from './demo/demoScenes'
 
 beforeAll(() => {
   clearPackages()
@@ -27,7 +27,7 @@ const place = (packageId: string, id: string, pos: [number, number, number], par
 
 // a 3 m belt whose tail is at the origin, top at y ~0.85, and a spawner 0.4 m along it, half a metre above
 const belt = (params: SdkPartParams = {}): PartInstance =>
-  place('oip.belt-conveyor', 'belt', [0, 0.8, 0], { segments: [[3, 0]] as unknown as SdkPartParams[string], enableComms: true, runTag: 'BeltRun', ...params })
+  place('oip.belt-conveyor', 'belt', [0, 0.8, 0], { segments: [[3, 0]] as unknown as SdkPartParams[string], runTag: 'BeltRun', ...params })
 const spawner = (params: SdkPartParams = {}, pos: [number, number, number] = [0.4, 1.3, 0]): PartInstance =>
   place('oip.box-spawner', 'src', pos, params)
 
@@ -46,7 +46,7 @@ describe('box feed onto a driven belt', () => {
   })
 
   it('warns when the feed holds with the belt but keepSpacing is off: the restart drop', () => {
-    for (const held of [{ conveyorId: 'belt' }, { enableComms: true, runTag: 'BeltRun' }] as SdkPartParams[]) {
+    for (const held of [{ conveyorId: 'belt' }, { runTag: 'BeltRun' }] as SdkPartParams[]) {
       const [f] = feeds([belt(), spawner({ ...held, keepSpacing: false })], driven('BeltRun'))
       expect(f?.detail).toMatch(/keepSpacing is off/)
       expect(f?.detail).toMatch(/Fix: keepSpacing = true$/)
@@ -55,7 +55,17 @@ describe('box feed onto a driven belt', () => {
 
   it('is quiet when the feed holds with the belt and keeps spacing', () => {
     expect(feeds([belt(), spawner({ conveyorId: 'belt', keepSpacing: true })], driven('BeltRun'))).toEqual([])
-    expect(feeds([belt(), spawner({ enableComms: true, runTag: 'BeltRun', keepSpacing: true })], driven('BeltRun'))).toEqual([])
+    expect(feeds([belt(), spawner({ runTag: 'BeltRun', keepSpacing: true })], driven('BeltRun'))).toEqual([])
+  })
+
+  it('does not ask for keepSpacing on an On each enable spawner, which drops at every enable and ignores it', () => {
+    for (const held of [{ conveyorId: 'belt' }, { runTag: 'BeltRun' }] as SdkPartParams[]) {
+      expect(feeds([belt(), spawner({ ...held, release: 'enable' })], driven('BeltRun'))).toEqual([])
+    }
+    const [f] = feeds([belt(), spawner({ release: 'enable' })], driven('BeltRun'))
+    expect(f?.detail).toMatch(/nothing holds it/)
+    expect(f?.detail).toContain('Fix: conveyorId = "belt" (')
+    expect(f?.detail).not.toContain('keepSpacing')
   })
 
   it('still warns with keepSpacing on when nothing holds the feed: spacing only matters while held', () => {
@@ -64,9 +74,8 @@ describe('box feed onto a driven belt', () => {
     expect(f?.detail).toContain('conveyorId = "belt" (') // keepSpacing already on, so not asked for
   })
 
-  it('is quiet for a belt nobody drives (it runs on its own), or one whose comms are off', () => {
+  it('is quiet for a belt nobody drives (it runs on its own), or one with no run tag', () => {
     expect(feeds([belt(), spawner()], driven())).toEqual([])
-    expect(feeds([belt({ enableComms: false }), spawner()], driven('BeltRun'))).toEqual([])
     expect(feeds([belt({ runTag: '' }), spawner()], driven('BeltRun'))).toEqual([])
   })
 
@@ -85,7 +94,7 @@ describe('box feed onto a driven belt', () => {
   })
 
   it('reports a feed on its own driven tag only on evidence that the program runs it with the belt off', () => {
-    const parts = [belt(), spawner({ enableComms: true, runTag: 'Feed' })]
+    const parts = [belt(), spawner({ runTag: 'Feed' })]
     const opts = (seen: boolean): LayoutCheckOptions => ({ ...driven('BeltRun', 'Feed'), feedRunsWithoutBelt: (a, b) => seen && a === 'Feed' && b === 'BeltRun' })
     const [f] = feeds(parts, opts(true))
     expect(f?.detail).toMatch(/runs on its own runTag "Feed", which the program drives on while the belt's "BeltRun" is off/)

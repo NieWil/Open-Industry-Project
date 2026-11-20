@@ -4,11 +4,11 @@
 
 import { describe, expect, it, beforeEach } from 'vitest'
 import { checkLayout, formatLayoutFinding } from './checkLayout'
-import { clearPackages, registerPackage } from './partRegistry'
-import { createPart } from './scene'
-import type { PartPackage } from './partPackage'
+import { clearPackages, registerPackage } from './parts/partRegistry'
+import { createPart } from './scene/scene'
+import type { PartPackage } from './parts/partPackage'
 import type { PartInstance } from './types'
-import { PACKAGE_FORMAT } from './partPackage'
+import { PACKAGE_FORMAT } from './parts/partPackage'
 
 /** A deck-shaped package, optionally declaring a snap block. Deck geometry gives a real footprint. */
 function pkg(id: string, snap?: PartPackage['snap']): PartPackage {

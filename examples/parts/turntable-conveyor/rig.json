@@ -7,7 +7,6 @@
     "surface": "roller",
     "speedParam": "speed"
   },
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "links": [

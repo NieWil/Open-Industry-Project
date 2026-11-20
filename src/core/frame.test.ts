@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { ParamValue, PartInstance } from './types'
 import { MAX_BOXES, PALLET_SIZE } from './types'
-import type { PartPackage } from './partPackage'
-import { registerPackage } from './partRegistry'
-import { createPart } from './scene'
+import type { PartPackage } from './parts/partPackage'
+import { registerPackage } from './parts/partRegistry'
+import { createPart } from './scene/scene'
 import { CARGO_KIND_BOX, CARGO_KIND_PALLET, buildAuthoredCargoFrame, memoizeAuthoredCargoFrame } from './frame'
 import { hexToRgb } from './math'
-import { PACKAGE_FORMAT } from './partPackage'
+import { PACKAGE_FORMAT } from './parts/partPackage'
 
 // Cargo (box/pallet) is the C-cargo SDK part (a `custom` part whose package declares geometry.kind:'cargo';
 // docs/architecture.md). cargoView / the SDK footprint are pinned in render/parts/cargoPartsParity.test.ts;

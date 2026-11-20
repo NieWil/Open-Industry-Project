@@ -5,9 +5,9 @@
   "conveyor": {
     "bed": "straight",
     "surface": "roller",
-    "speedParam": "speed"
+    "speedParam": "speed",
+    "frictionParam": "friction"
   },
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "inclineParam": "tiltDeg",

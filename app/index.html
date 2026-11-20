@@ -76,6 +76,7 @@
     <link rel="preload" as="fetch" crossorigin href="/models/building/lightmaps/walls-nx.webp" />
     <link rel="preload" as="fetch" crossorigin href="/models/building/lightmaps/walls-px.webp" />
     <link rel="preload" as="fetch" crossorigin href="/models/building/textures/BuildingPart_Floor_A_BaseColor.webp" />
+    <link rel="preload" as="fetch" crossorigin href="/models/building/textures/BuildingPart_FloorMacro_BaseColor.webp" />
     <link rel="preload" as="fetch" crossorigin href="/models/building/textures/BuildingPart_Fan_A_BaseColor.webp" />
     <link rel="preload" as="fetch" crossorigin href="/models/building/textures/BuildingPart_Framing_01_BaseColor.webp" />
     <link rel="preload" as="fetch" crossorigin href="/models/building/textures/BuildingPart_Framing_02_BaseColor.webp" />
@@ -206,6 +207,22 @@
         background: light-dark(#e6e7e9, #2c2f33);
         border: 1px solid light-dark(#c9ccd1, #3a3e44);
         opacity: 0.4;
+      }
+      /* = .run-transport.segmented: Play, Pause and Stop joined, neighbours overlapping by 1px */
+      #boot-skeleton .bs-transport {
+        display: flex;
+      }
+      #boot-skeleton .bs-transport > .bs-ghost {
+        border-radius: 0;
+      }
+      #boot-skeleton .bs-transport > .bs-ghost + .bs-ghost {
+        margin-left: -1px;
+      }
+      #boot-skeleton .bs-transport > .bs-ghost:first-child {
+        border-radius: 4px 0 0 4px;
+      }
+      #boot-skeleton .bs-transport > .bs-ghost:last-child {
+        border-radius: 0 4px 4px 0;
       }
       /* the one toolbar element that is neither state nor surface-specific: the mark sits at the
          left end on the web (img.toolbar-logo) and inside the menu button in the desktop shell */
@@ -380,9 +397,11 @@
           <span class="bs-ghost bs-project"></span>
         </div>
         <div class="bs-tb-run">
-          <span class="bs-ghost" style="width: 40px"></span>
-          <span class="bs-ghost" style="width: 40px"></span>
-          <span class="bs-ghost" style="width: 40px"></span>
+          <span class="bs-transport">
+            <span class="bs-ghost" style="width: 40px"></span>
+            <span class="bs-ghost" style="width: 40px"></span>
+            <span class="bs-ghost" style="width: 40px"></span>
+          </span>
           <span class="bs-ghost bs-speed" style="width: 40px; margin-left: 4px"></span>
         </div>
         <div class="bs-tb-right">
@@ -410,7 +429,7 @@
       <div class="bs-tabbar"></div>
       <div class="bs-gutd"></div>
       <div class="bs-dock">
-        <div class="bs-tabs"><span class="bs-tab bs-on">Parts</span><span class="bs-tab">PLC</span><span class="bs-tab">Problems</span></div>
+        <div class="bs-tabs"><span class="bs-tab bs-on">Parts</span><span class="bs-tab">PLC</span><span class="bs-tab">Problems</span><span class="bs-tab">Watch</span></div>
       </div>
     </div>
     <!-- The tabs above in the editor's language, from the translations a past visit cached

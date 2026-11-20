@@ -3,7 +3,7 @@
 // folder-picker dialog (unattended runs can't click one), then drives the actual File-menu command
 // channel:
 //   1. 'file.saveProject'  → renderer serializes the live project → main writes it to a temp folder,
-//      and from then on the project is stored there (src/editor/projectFolderSync.ts)
+//      and from then on the project is stored there (src/editor/project/projectFolderSync.ts)
 //   2. edit the folder on disk like a user in VS Code would (rename project, add an ST program,
 //      author a new part as a parts/<id>/ workspace folder)
 //   3. 'file.openProject' on that same folder → it is already the open project, so nothing reloads;

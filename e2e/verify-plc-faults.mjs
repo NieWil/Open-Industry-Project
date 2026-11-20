@@ -1,6 +1,6 @@
 // Controller faults, in the browser, on the IEC ladder sheet: a fault stops the scan, its message is left in the panel,
 // it is drawn on the element it happened in, and "Show" selects that element. The panel owns the faults
-// (src/editor/components/plcFaults.ts). A corrected program loaded afterwards runs with no fault left over.
+// (src/editor/components/plc/plcFaults.ts). A corrected program loaded afterwards runs with no fault left over.
 //
 // faults.ts and its tests cover the engine. Only a browser can check the path from the sim worker, where the scan
 // runs, to the rung on screen: that a fault stops the program and leaves its message, that it is marked on the right

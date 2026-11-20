@@ -5,14 +5,14 @@
 // identical materials each run their own `nodeBuilder.build()` (the TSL graph work: build / analyze /
 // generate / getDataFromNode) and emit byte-identical WGSL.
 //
-// pipelineDedup.ts already collapses the GPU side by normalising the WGSL key in `_pipelines.programs`.
-// It does not touch `_nodes.nodeBuilderCache`, so the redundant JS build still happens on every load -
+// The GPU side already collapses: identical WGSL maps to one program in `_pipelines.programs`. That
+// does not touch `_nodes.nodeBuilderCache`, so the redundant JS build still happens on every load -
 // warm ones included, since Dawn's disk cache only covers the compiled pipeline.
 //
 // This counts, on the real demo scene: how many NodeBuilderStates were built vs how many distinct
 // shaders they represent. The gap is what overriding customCacheKey() would eliminate.
 //
-// Usage: npm run build && node e2e/probes/nodebuilder-census.mjs [--nodedup]
+// Usage: npm run build && node e2e/probes/nodebuilder-census.mjs
 /* global process, console, window */
 import { chromium } from 'playwright'
 import { distIsBuilt, serveDist } from '../_edge-server.mjs'
@@ -38,13 +38,12 @@ async function main() {
     console.error('dist/ is not a finished build - run `npm run build` first')
     process.exit(1)
   }
-  const noDedup = process.argv.includes('--nodedup')
   const prod = await serveDist()
   const { browser } = await launch()
   try {
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 850 }, serviceWorkers: 'block' })
     const page = await ctx.newPage()
-    const q = `?scene=demo&hook${noDedup ? '&nopipelinededup' : ''}`
+    const q = '?scene=demo&hook'
     await page.goto(`${prod.url}/app/${q}`, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(
       () => document.querySelector('.viewport-cover')?.classList.contains('ready'),
@@ -61,7 +60,8 @@ async function main() {
       const cache = nodes?.nodeBuilderCache
       if (!cache || typeof cache.forEach !== 'function') return { error: 'nodeBuilderCache shape changed' }
 
-      // same normalisation pipelineDedup applies, so "distinct" means structurally distinct
+      // three 0.186 and earlier named each instanced buffer `NodeBuffer_<id>`; normalised so "distinct"
+      // means structurally distinct on either version
       const norm = (s) => (typeof s === 'string' ? s.replace(/NodeBuffer_\d+/g, 'NodeBuffer_N') : '')
       const groups = new Map()
       let total = 0
@@ -118,7 +118,7 @@ async function main() {
       return
     }
 
-    log(`demo scene, WebGPU, pipelineDedup ${noDedup ? 'OFF' : 'ON'}\n`)
+    log(`demo scene, WebGPU\n`)
     log(`── NodeBuilderState cache (_nodes.nodeBuilderCache) - one entry = one nodeBuilder.build()`)
     log(`   built            ${r.total}`)
     log(`   structurally distinct ${r.distinct}`)
@@ -135,8 +135,7 @@ async function main() {
     log(`   distinct (material, layout) ${r.instDistinct}`)
     log(`   → ~${instRedundant} redundant builds are forced by RenderObject's per-object \`object.uuid\``)
     log(`     term (RenderObject.js ~833). That is added OUTSIDE any node, so customCacheKey()`)
-    log(`     CANNOT collapse them - and it is the same population pipelineDedup.ts already handles`)
-    log(`     on the program side, so this would not retire that patch either.`)
+    log(`     CANNOT collapse them. On the program side three already shares their identical WGSL.`)
     const reachable = Math.max(0, r.dupes - instRedundant)
     log(
       `\n   reachable by customCacheKey(): ~${reachable} of ${r.dupes} redundant builds ` +

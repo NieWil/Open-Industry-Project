@@ -125,13 +125,11 @@ try {
     'and Automatic clears the override rather than storing one',
   )
 
-  // ── live editing: the name, and taking back each room-code answer ───────────────────────────────
+  // ── live editing: the name, and taking back the room-code answers ───────────────────────────────
+  expect((await page.locator('[data-testid="setting-forget-trusted"]').count()) === 0, 'with no room-code answers stored, their row is not shown')
   await page.keyboard.press('Escape')
   await dialogUp(page, false)
-  await page.evaluate(() => {
-    localStorage.setItem('oip-web/trusted-rooms', JSON.stringify(['r-a', 'r-b']))
-    localStorage.setItem('oip-web/blocked-rooms', JSON.stringify(['r-c']))
-  })
+  await page.evaluate(() => localStorage.setItem('oip-web/trusted-rooms', JSON.stringify(['r-a', 'r-b'])))
   await open(page)
   const nameInput = page.locator('[data-testid="setting-display-name"]')
   await nameInput.fill('Line tester')
@@ -139,16 +137,10 @@ try {
   expect(await dialogUp(page, true), 'and typing in it leaves the dialog open')
   const trustedRow = page.locator('.setting-row', { hasText: 'allowed to run part code' })
   const trustedHint = await trustedRow.locator('.setting-hint').innerText()
-  expect(/^2 rooms/.test(trustedHint), `the allowed rooms are counted (${JSON.stringify(trustedHint)})`)
+  expect(/^2 shared projects/.test(trustedHint), `the allowed shared projects are counted (${JSON.stringify(trustedHint)})`)
   await page.locator('[data-testid="setting-forget-trusted"]').click({ force: true })
   expect((await page.evaluate(() => localStorage.getItem('oip-web/trusted-rooms'))) === null, 'Forget all clears every Allow')
   expect(await page.locator('[data-testid="setting-forget-trusted"]').isDisabled(), 'and the button greys out with nothing left')
-  expect(
-    (await page.evaluate(() => localStorage.getItem('oip-web/blocked-rooms'))) !== null,
-    'a Block is a separate answer and survives forgetting the Allows',
-  )
-  await page.locator('[data-testid="setting-forget-blocked"]').click({ force: true })
-  expect((await page.evaluate(() => localStorage.getItem('oip-web/blocked-rooms'))) === null, 'Unblock all clears every Block')
   await page.keyboard.press('Escape')
   await dialogUp(page, false)
 

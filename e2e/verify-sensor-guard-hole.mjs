@@ -1,4 +1,4 @@
-// Verifies sensors cut holes in conveyor side guards (core/guardHoles.ts derives them from the scene;
+// Verifies sensors cut holes in conveyor side guards (core/guards/guardHoles.ts derives them from the scene;
 // the guard draws a holed panel there). Places the SDK roller conveyor
 // + SDK color sensor, mounts the sensor on the +Z guard so its beam crosses the
 // bed, then asserts the guard opens there by pixels (no WebGL/console errors)

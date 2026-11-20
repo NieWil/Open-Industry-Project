@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
-import { createPart } from '../core/scene'
-import { clearPackages, getPackage, listPackages } from '../core/partRegistry'
-import { instantiatePartScript } from '../core/partScript'
-import type { PartPackage } from '../core/partPackage'
+import { createPart } from '../core/scene/scene'
+import { clearPackages, getPackage, listPackages } from '../core/parts/partRegistry'
+import { instantiatePartScript } from '../core/parts/partScript'
+import type { PartPackage } from '../core/parts/partPackage'
 import { SCENE_VERSION } from '../core/types'
 import type { SceneJSON, SdkPart } from '../core/types'
 import { CollabBridge } from '../collab/bridge'
@@ -12,14 +12,14 @@ import type { FirstPartyCode } from '../collab/codeTrust'
 import { docToScene, makePartMap, orderArray, packagesMap, partsMap, readPackages, sceneToDoc, writePackage } from '../collab/schema'
 import { setRoomCodeGate } from '../collab/session'
 import { buildPackage } from '../sim/buildPackage'
-import { bundledBehaviors, bundledPartById } from './bundledExamples'
-import { createPlcDemoScene } from './demoScenes'
-import { downloadProject } from './projectFile'
-import { oipBytesToProject } from '../core/projectArchive'
-import { bakePart } from './bakePart'
-import type { ProjectJSON } from '../core/project'
-import { EditorStore } from './store'
-import { PACKAGE_FORMAT } from '../core/partPackage'
+import { bundledBehaviors, bundledPartById } from './parts/bundledExamples'
+import { createPlcDemoScene } from './demo/demoScenes'
+import { downloadProject } from './project/projectFile'
+import { oipBytesToProject } from '../core/project/projectArchive'
+import { bakePart } from './parts/bakePart'
+import type { ProjectJSON } from '../core/project/project'
+import { EditorStore } from './store/store'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 
 // The room's code trust gate (collab/codeTrust.ts) from a joining client's side. The part registry is
 // process-global, so the peer here is raw doc writes, not a second store: the store under test is the only
@@ -27,7 +27,7 @@ import { PACKAGE_FORMAT } from '../core/partPackage'
 //
 // @unlocked-realm: this file runs without lockdown (vite.config.ts `unit-unlocked`). It tests the gate as the last
 // line of defence where the sandbox is absent - a CLI host, or a browser where lockdown() failed - and its payload
-// proves code ran by escaping, which the sandbox (core/partSandbox.test.ts) is there to stop.
+// proves code ran by escaping, which the sandbox (core/parts/partSandbox.test.ts) is there to stop.
 
 /** a real escape from the part guards (SECURITY.md): reaches the host's globalThis from a part's top level */
 const PAYLOAD = "(() => {}).constructor('return this')().__oipRoomPwned = true\ndefinePart({ step() {} })\n"

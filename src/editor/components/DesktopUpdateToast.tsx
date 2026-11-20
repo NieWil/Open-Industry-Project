@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getOipMenuApi } from '../desktopMenuBridge'
+import { getOipMenuApi } from '../desktop/desktopMenuBridge'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('desktopUpdate', {
@@ -22,9 +22,12 @@ export function DesktopUpdateToast() {
     const api = getOipMenuApi()
     if (!api?.onUpdateReady) return
     let live = true
-    void api.updateState?.().then((v) => {
-      if (live && v) setVersion(v)
-    })
+    void api
+      .updateState?.()
+      .then((v) => {
+        if (live && v) setVersion(v)
+      })
+      .catch((e: unknown) => console.warn('[oip] reading the update state failed', e))
     const off = api.onUpdateReady((v) => setVersion(v))
     return () => {
       live = false

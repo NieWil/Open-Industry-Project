@@ -1,14 +1,14 @@
-// core/partCatalog.ts against the real first-party packages (only this layer can load the committed part folders),
+// core/parts/partCatalog.ts against the real first-party packages (only this layer can load the committed part folders),
 // plus the scene conventions docs/technical-overview.md states, so the doc cannot drift from the code.
 
 import { beforeAll, describe, expect, it } from 'vitest'
-import { catalogEntry, formatEntry, formatValue, groupParams, originAlong, type CatalogEntry } from '../core/partCatalog'
-import { toWorldXZ } from '../core/partGeometry'
-import type { PartPackage } from '../core/partPackage'
-import { clearPackages, listPackages } from '../core/partRegistry'
-import { qApply, qFromAxisAngle } from '../core/rigPose'
-import { createSdkPart } from '../core/scene'
-import { registerBundledPackages } from './bundledExamples'
+import { catalogEntry, formatEntry, formatValue, groupParams, originAlong, type CatalogEntry } from '../core/parts/partCatalog'
+import { toWorldXZ } from '../core/parts/partGeometry'
+import type { PartPackage } from '../core/parts/partPackage'
+import { clearPackages, listPackages } from '../core/parts/partRegistry'
+import { qApply, qFromAxisAngle } from '../core/rig/rigPose'
+import { createSdkPart } from '../core/scene/scene'
+import { registerBundledPackages } from './parts/bundledExamples'
 
 let packages: PartPackage[]
 const entries = new Map<string, CatalogEntry>()

@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import type { ProjectJSON } from '../../core/project'
-import { runProjectTests } from '../projectTestsRun'
-import type { ProjectTestRun } from '../projectTestsRun'
-import type { TestFactsView } from '../testFacts'
+import type { ProjectJSON } from '../../core/project/project'
+import { runProjectTests } from '../project/projectTestsRun'
+import type { ProjectTestRun } from '../project/projectTestsRun'
+import type { TestFactsView } from '../project/testFacts'
 import { CloseIcon } from './toolbarIcons'
 import { defineMessages, t } from '../../core/i18n'
 

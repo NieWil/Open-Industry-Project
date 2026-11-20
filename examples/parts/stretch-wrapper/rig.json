@@ -2,7 +2,6 @@
   "id": "oip.stretch-wrapper",
   "name": "Stretch Wrapper",
   "category": "Equipment",
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "links": [

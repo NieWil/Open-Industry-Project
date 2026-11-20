@@ -175,8 +175,8 @@ async function main() {
   const vite = await createServer({ configFile: false, root: ROOT, logLevel: 'error', server: { middlewareMode: true, hmr: false, ws: false } })
   let importIecText, importPlcopenXml, parseXml, parseAndCheck
   try {
-    ;({ importIecText } = await vite.ssrLoadModule('/src/plc/importText.ts'))
-    ;({ importPlcopenXml, parseXml } = await vite.ssrLoadModule('/src/plc/importXml.ts'))
+    ;({ importIecText } = await vite.ssrLoadModule('/src/plc/exchange/importText.ts'))
+    ;({ importPlcopenXml, parseXml } = await vite.ssrLoadModule('/src/plc/exchange/importXml.ts'))
     ;({ parseAndCheck } = await vite.ssrLoadModule('/src/plc/checker.ts'))
   } finally {
     await vite.close()

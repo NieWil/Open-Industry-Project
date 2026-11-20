@@ -1,17 +1,17 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Color, Matrix4, Vector3 } from 'three'
 import type { InstancedMesh, Material, Mesh, MeshStandardMaterial, Object3D } from 'three'
-import type { PartPackage } from '../core/partPackage'
+import type { PartPackage } from '../core/parts/partPackage'
 import type { SdkPart } from '../core/types'
 import { FRAME_WALL_THICKNESS } from '../core/types'
-import { registerPackage } from '../core/partRegistry'
-import { createSdkPart } from '../core/scene'
-import { findSnap } from '../core/snapFeatures'
-import { resolveScene } from '../core/sceneResolve'
-import { toLocalXZ, toWorldXZ } from '../core/partGeometry'
+import { registerPackage } from '../core/parts/partRegistry'
+import { createSdkPart } from '../core/scene/scene'
+import { findSnap } from '../core/snap/snapFeatures'
+import { resolveScene } from '../core/scene/sceneResolve'
+import { toLocalXZ, toWorldXZ } from '../core/parts/partGeometry'
 import { buildPackage } from '../sim/buildPackage'
 import { createCustomVisual } from '../render/parts/sdkPart'
-import { bundledPartById } from './bundledExamples'
+import { bundledPartById } from './parts/bundledExamples'
 
 /**
  * Guards meet at a junction instead of running through each other.
@@ -19,7 +19,7 @@ import { bundledPartById } from './bundledExamples'
  * This guards against the spur's guard sticking out through the host's guard where it merges. If both guards end
  * square, placed so only their inner faces meet, everything outboard of that (the 5 mm sheet, the 20-25 mm top
  * return) crosses the other guard's band at the junction angle, up to ~25 mm proud at a shallow spur. So both are
- * cut on the plane bisecting the angle between them (core/guardExtents.ts GuardMitre).
+ * cut on the plane bisecting the angle between them (core/guards/guardExtents.ts GuardMitre).
  *
  * Judged on the rendered meshes of the real first-party parts, every host family against every mover family, and
  * from geometry derived here rather than by the resolver under test: the corner is the intersection of the two

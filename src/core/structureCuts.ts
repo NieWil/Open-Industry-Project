@@ -1,7 +1,7 @@
-import type { RigLink } from './partPackage'
-import type { PartPackage } from './partPackage'
-import { keptSegments } from './guardOpenings'
-import { arrayInstanceDeltas, resolvedBoxSize } from './rigPose'
+import type { RigLink } from './parts/partPackage'
+import type { PartPackage } from './parts/partPackage'
+import { keptSegments } from './guards/guardOpenings'
+import { arrayInstanceDeltas, resolvedBoxSize } from './rig/rigPose'
 import type { PlatformOpenings, DeckNotch, Range, StructureConnections } from './structureConnections'
 import { platformConnectionKey } from './structureConnections'
 

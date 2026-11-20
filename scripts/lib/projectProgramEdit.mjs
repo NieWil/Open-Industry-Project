@@ -1,7 +1,7 @@
 // Editing a project folder's PLC program and wiring together, shared by scripts/rename-tag.mjs and
 // scripts/assign-io.mjs. The folder is read the way the app reads it (loadProject: the built-ins declared, the
 // project's own part library registered), the edit is made on the ProjectJSON in memory, and the folder codec
-// (core/projectFolder.ts projectToFolderFiles, split one file per POU as the app splits it) writes it back.
+// (core/project/projectFolder.ts projectToFolderFiles, split one file per POU as the app splits it) writes it back.
 // Only the program files, the scene and project.json's program keys (program, stScanMs, controller) are written, and of
 // those only what changed. project.json is patched, not regenerated, so its part paths and everything else in it stay
 // as they are; part folders, tests and AGENTS.md are never touched (the app rewrites AGENTS.md on its next save).
@@ -21,7 +21,7 @@ export async function openProgramProject(vite, folder) {
   await declareBuiltIns(vite)
   const loaded = await loadProject(vite, folder)
   if (loaded.errors) throw Object.assign(new Error(`${folder} does not load:\n  ${loaded.errors.join('\n  ')}`), { exit: 1 })
-  const { projectToFolderFiles } = await vite.ssrLoadModule('/src/core/projectFolder.ts')
+  const { projectToFolderFiles } = await vite.ssrLoadModule('/src/core/project/projectFolder.ts')
   const { programFiles } = await vite.ssrLoadModule('/src/plc/programFiles.ts')
   const before = new Map(readProjectFolder(folder).map((f) => [f.path, f.contents]))
   const manifest = JSON.parse(before.get('project.json'))

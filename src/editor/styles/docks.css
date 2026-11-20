@@ -257,6 +257,53 @@
   overflow: hidden;
 }
 
+/* A side column folded to a rail (dockLayout.collapsedColumns): each sub-slot's tabs turned on
+   end, stacked from the top. The width gutter is gone, so the rail draws the edge against the
+   viewport. Left-side labels read bottom to top, right-side ones top to bottom, so both face
+   the viewport. */
+.dock-column.collapsed {
+  background: var(--panel);
+}
+
+.dock-column-left.collapsed {
+  border-right: 1px solid var(--panel-edge);
+}
+
+.dock-column-right.collapsed {
+  border-left: 1px solid var(--panel-edge);
+}
+
+.dock-column.collapsed .dock-slot.collapsed {
+  border-top: none;
+}
+
+.dock-column.collapsed .dock-column-pane + .dock-column-pane {
+  margin-top: 4px;
+  border-top: 1px solid var(--panel-edge);
+}
+
+.dock-column.collapsed .dock-slot-tabs {
+  flex-direction: column;
+  padding: 4px 3px;
+}
+
+.dock-column.collapsed .dock-slot-tab {
+  writing-mode: vertical-rl;
+  padding: 12px 4px;
+  border-radius: 5px;
+}
+
+.dock-column-left.collapsed .dock-slot-tab {
+  transform: rotate(180deg);
+}
+
+/* a rail is only a way back to its panels: the ▾ menu stays a right-click on a tab, and ⛶ waits
+   until the column is open */
+.dock-column.collapsed .dock-slot-menu-btn,
+.dock-column.collapsed .dock-slot-max-btn {
+  display: none;
+}
+
 /* the draggable horizontal divider between a side's Top and Bottom panes */
 .gutter-split {
   flex: 0 0 6px;

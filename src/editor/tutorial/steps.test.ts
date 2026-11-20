@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { toLocalXZ } from '../../core/partGeometry'
-import { clearPackages, registerPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { toLocalXZ } from '../../core/parts/partGeometry'
+import { clearPackages, registerPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { PartInstance, SceneJSON } from '../../core/types'
 import { DOCK_PANEL_TITLES } from '../dockLayout'
 import { keyHint, withKeys } from '../keyHint'
 import { INTERLOCK_LOGIC, INTERLOCK_PROGRAM, STOP_LINE, TUTORIAL_STEPS, type TutorialContext } from './steps'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 // Guards the tutorial's viewport placement markers (the "drop it here" rings). The markers are
 // derived from the conveyor's geometry, and conveyor families differ in local origin: a belt is

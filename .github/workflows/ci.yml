@@ -22,7 +22,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # 24, not 22: src/plc/scanSpeed.test.ts gates the generated scan engine's speed, which rests on V8
           # optimising big generated functions. Node 22's older V8 reads 4.2x / 4.9x on the long and wide
@@ -78,6 +78,10 @@ jobs:
         # and control-logic test, headless). The schema check above only reads its manifest, so without
         # this step the example could stop working and nothing would say so.
         run: npm run test-project -- examples/projects/start-stop-motor
+      - name: No high-severity advisories in shipped packages
+        # npm audit over the app, desktop and collab-server lockfiles, dev packages left out. It can turn red on a
+        # PR that changed nothing, the day an advisory is published; fix it on main and rebase.
+        run: node scripts/audit-deps.mjs
 
   # The gates that need a PRODUCTION build and a browser. Separate job so the fast checks above
   # still report in ~2 minutes.
@@ -94,7 +98,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm

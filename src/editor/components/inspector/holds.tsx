@@ -3,9 +3,9 @@
 // authored like any other cargo, so the stopped scene shows it. Authoring only: disabled while the sim runs.
 
 import { emptyHolds, fillHolds, holdCount, holdsOf } from '../../../core/heldStock'
-import { getPackage } from '../../../core/partRegistry'
+import { getPackage } from '../../../core/parts/partRegistry'
 import type { SceneJSON, SdkPart } from '../../../core/types'
-import type { EditorStore } from '../../store'
+import type { EditorStore } from '../../store/store'
 import { defineMessages, t } from '../../../core/i18n'
 
 const M = defineMessages('inspector.holds', {

@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { getPackage, registerPackage, unregisterPackage } from '../core/partRegistry'
+import { getPackage, registerPackage, unregisterPackage } from '../core/parts/partRegistry'
 import { buildPackage } from '../sim/buildPackage'
-import { manifestOfPackage } from '../core/partPackage'
-import { importScannedParts } from './packageSource'
-import { builtInsUpdated, keepProjectVersion } from './storePackages'
-import { EditorStore } from './store'
-import { partFingerprint } from '../core/partOrigin'
+import { manifestOfPackage } from '../core/parts/partPackage'
+import { importScannedParts } from './parts/packageSource'
+import { builtInsUpdated, keepProjectVersion } from './store/storePackages'
+import { EditorStore } from './store/store'
+import { partFingerprint } from '../core/parts/partOrigin'
 
 // The project's part library (store.userPackages) is the only source of a project's part definitions: a folder of
 // parts is imported into it, and moving to another project replaces it - nothing from the last project survives.

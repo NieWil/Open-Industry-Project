@@ -6,9 +6,9 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { diagnostics } from './checker'
-import { exportProgram } from './export'
-import { canonicalSyntax } from './exportText'
-import { importPlcopenXml } from './importXml'
+import { exportProgram } from './exchange/export'
+import { canonicalSyntax } from './exchange/exportText'
+import { importPlcopenXml } from './exchange/importXml'
 import { compile, setScanEngine, type ScanEngine, typedRefusals } from './interpreter'
 import { codegenFallbacks } from './scanCodegen'
 import { compareEngines } from './scanEngineOracle'

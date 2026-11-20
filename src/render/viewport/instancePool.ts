@@ -865,7 +865,7 @@ export class InstancePoolManager {
     markBatchSelection(entry.mesh, selected)
   }
 
-  /** The sources the pool currently keeps hidden (visible=false). compileAsync/_projectObject skips
+  /** The sources the pool currently keeps hidden (visible=false). compileAsync/drawingPipeline.project skips
    *  visible=false, so these never compile their pipelines at load - and a drag un-hides them
    *  (drag-eject) so they render live while moving, compiling cold on the first grab.
    *  compileStaged reveals them during its phase-2 warm so they compile with the parts. Returned live;

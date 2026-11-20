@@ -63,7 +63,9 @@ exactly that kind, planted on purpose, passes silently.
 
 - **Strings live in the arena.** A side table of JS strings would read faster, but an aggregate holding a string would
   span two address spaces, and a copy, a clear and a field address would each need both. In the arena a STRING is its
-  length (the U16 at its address) and its code units (the one at `+2+2i`).
+  length (the U16 at its address) and its code units (the one at `+2+2i`). A STRING place stored into another
+  (`a := b`, a block's VAR_IN_OUT and outputs) is copied there unit for unit (`strCopy`), with no JS string built.
+  Any other read builds the text (`strAt`).
 - **BOOL is a byte**, read `!== 0` and written `? 1 : 0` in generated code. Every surface outside the scan (watch,
   memory, get, ports) answers `true` / `false`, as `TagValue` promises.
 - **The coercions do not disappear.** An integer view stores modulo its width, but IEC narrows a REAL by
@@ -85,12 +87,16 @@ Computed once per definition ([typed/layout.ts](../src/plc/typed/layout.ts)), fr
 - **The globals**: one region, first after the guard. **A CONFIGURATION**: each program instance a region.
 - **A standard block** (TON, TOF, TP, R_TRIG, F_TRIG, CTU, CTD, CTUD, SR, RS): a record of its outputs, in the order the
   walker's objects list them, then its private state, hidden (a TON's `Q`, `ET`, then whether it runs and when it
-  started). The ten blocks are re-implemented over the arena ([typed/blocks.ts](../src/plc/typed/blocks.ts)); runtime.ts's
+  started), then the inputs it keeps for a call that leaves them out, hidden too (a TON's `IN` and `PT`). An input
+  the block already keeps as an edge's previous value (a trigger's `CLK`, a counter's `CU`) has no field of its own.
+  The ten blocks are re-implemented over the arena ([typed/blocks.ts](../src/plc/typed/blocks.ts)); runtime.ts's
   objects remain the walker's, so the oracle compares two implementations of each.
 - **A FUNCTION**: one region per definition, reused by every call (never live twice: recursion is refused when
   compiled). When every initial value is a literal, the region's starting bytes are kept after the first call and
   copied back on each (one `U8.set`, because resetting through the initialisers makes function-heavy code slower than
-  generated code on records). A whole array or struct result is copied into a region of the call site's own, found by a walk of the program
+  generated code on records). A positional call whose inputs and result all hold their values is written out at the
+  call site: the arguments evaluated, `enter()` (the reset), each one stored into its input's slot, `exec()`, the
+  result read. A formal call, or one with a whole array or struct input, goes through the runner's argument list. A whole array or struct result is copied into a region of the call site's own, found by a walk of the program
   before the arena is made ([typed/calls.ts](../src/plc/typed/calls.ts)), so `Total(MakePt(1), MakePt(2))` holds two
   results at once. A call site that walk missed is refused, not run wrong.
 - **VAR_IN_OUT** (a function block's): a scalar is copied in and back out, as the walker does. A whole array or struct
@@ -132,6 +138,34 @@ POU of its own over the instance's variables (`instanceStore`), a re-entrant cal
 is a `RefCell` (the record holding the place and its key, or 0 for NULL). So the oracle compares two
 implementations of each rule, not one read twice.
 
+## The watch table
+
+The editor reads a running program's values from a copy of the arena, not from a table built out of it
+([core/watchTable.ts](../src/core/watchTable.ts)).
+
+- **The plan.** `CompiledProgram.watchPlan()` lists where each value of `watch` is: its key, its byte address and the
+  view it is read through, in the order `watch` lists them. It is made once per compiled program from the same walk
+  `watch` takes (`placesInto`), so the two cannot list different keys. The walker has no plan.
+- **The frame.** The sim worker sends the plan's layout once per attached program and a copy of the arena at
+  `WATCH_HZ` (sim/worker.ts `plcFrame`). The copy is handed over, not cloned. On a program of 577,725 values the
+  arena is 8.8 MB and copies in 0.4 ms. Its table took 215 ms to build and 100-250 ms to receive.
+- **The table.** The sim client wraps layout and bytes in a Proxy (`memoryTable`) that reads a value from its
+  address when asked. A reader sees the `Readonly<Record<string, TagValue>>` it always did, and each table is the
+  moment its bytes were copied.
+- **Arrays too long to list.** An array of more than `WATCH_ARRAY_MAX` elements is not among the keys. The layout
+  carries it as a range: its key, its address and its shape (`WatchLayout.ranges`). The table answers one of its
+  elements by name (`table['Big[700]']`, `'Recs[900].Ok' in table`), in any case, from the shape. A reader that
+  looks names up in its own index of the keys asks `watchElementKey` when the index misses, and `watchElementsUnder`
+  for the first values under such an array (the Watch dock's rows). The elements are never listed, so nothing that
+  walks the keys pays for them. When a program and its globals declare the same name, the program's is the one read. A table that travels as an object does not hold them.
+- **Where a table still travels.** A program on the walker, and several simulated controllers in one run (their
+  tables are merged by name).
+
+Listing a Proxy's keys with `Object.keys` or a spread is slow at that size, since the engine checks the list. Code
+that lists a table's keys, copies it or counts it uses the helpers in core/watchTable.ts (`watchKeysOf`,
+`forEachWatchValue`, `watchKeyCount`, `overlayTable`, and `withWatchValue` in core/watchKeys.ts). What is derived
+from the keys alone is kept per key set (core/watchKeys.ts), not per table.
+
 ## Verification
 
 1. `npm test`: the oracle compares the walker against the typed engine on the conformance corpus,
@@ -143,7 +177,16 @@ implementations of each rule, not one read twice.
    layout the corpus produces lies inside its holder, aligned, overlapping nothing.
 3. The speed gate ([scanSpeed.test.ts](../src/plc/scanSpeed.test.ts)): the typed:walker ratio on four program shapes,
    each floor measured to fail with the optimisation it guards switched off.
-4. `npm run bench-sim` on a real line: the fingerprint must not move across an engine change.
+4. The shape gate ([scanShape.test.ts](../src/plc/scanShape.test.ts)): what the speed gate cannot separate from noise.
+   V8 inlines helper calls only up to a budget per function, so in a long body a helper call can stay a real call. The
+   generated source is checked for a subscript read from storage being checked in place (not through `ix()`), a
+   positional FUNCTION call having no argument array, and a block input that its type already proves going in
+   uncoerced.
+5. `npm run bench-sim` on a real line: the fingerprint must not move across an engine change.
+6. The watch plan ([watchPlan.test.ts](../src/plc/watchPlan.test.ts)): for every program of the corpus, after every
+   scan, the table read from a copy of the arena through the plan is the table `watch` builds, key for key in order.
+7. The size budget ([largeWatchBudget.test.ts](../src/editor/program/largeWatchBudget.test.ts)): on half a million
+   values, the readers index a program's table once and the wiring check reads it once.
 
 These checks fail on each layout bug they exist for: wrong strides, addresses without their base, an in-out read
 without its dereference, an unbound in-out at address 0, aggregate inputs copied the wrong way, results sharing the

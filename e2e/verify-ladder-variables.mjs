@@ -1,4 +1,4 @@
-// The ladder view's declaration pane, through the buttons a person presses (components/LadderVariables.tsx).
+// The ladder view's declaration pane, through the buttons a person presses (components/plc/LadderVariables.tsx).
 //
 // A ladder program has no VAR block on screen, so this pane is where its variables are read and changed without going
 // to the text: the POU's declaration part, shown above its rungs. plc/declarations.test.ts proves the

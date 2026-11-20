@@ -16,10 +16,10 @@ import {
   Vector3,
 } from 'three'
 import type { Material, Object3D, PerspectiveCamera, Texture } from 'three'
-import { wallRuleAt } from '../../core/buildingDocks'
-import { INTERIOR_COLUMN_SIZE, interiorColumnHeight, interiorColumns } from '../../core/buildingColumns'
+import { wallRuleAt } from '../../core/building/buildingDocks'
+import { INTERIOR_COLUMN_SIZE, interiorColumnHeight, interiorColumns } from '../../core/building/buildingColumns'
 import { clamp } from '../../core/math'
-import { DEG } from '../../core/partGeometry'
+import { DEG } from '../../core/parts/partGeometry'
 import type { BuildingPart, PartInstance, WallVariant } from '../../core/types'
 import {
   BUILDING_FULL_WALL_HEIGHT,
@@ -38,6 +38,7 @@ import { applyDockMaterial, createDockDoorBay, loadDockDoorAssets, prefetchDockD
 import { bakedWallMaterial, prefetchWallLightmaps } from './wallLightmaps'
 import type { DockDoorAssets, DockDoorBay } from './dockDoor'
 import { notifyBundleStructureChanged } from '../bundleGroups'
+import { webgpuNodeFactory } from '../renderMode'
 import { bucketCapacity } from './instanceCapacity'
 import { bumpStructureVersion } from './structureRev'
 import { bumpPoseRev } from './poseRev'
@@ -47,8 +48,10 @@ import { WALL_SIDES, WALL_SIDES_NONE_HIDDEN, wallAutoHide, wallSidesDiffer, want
 import type { WallSide, WallSidesHidden } from './wallAutoHide'
 
 const SECTION = BUILDING_SECTION_SIZE
-// floor albedo multiplier emulating an unlit (no-ambient) floor look (see
-// applyDesktopMaterial); faintly warm so the concrete keeps a warm cast
+// The floor should take no ambient light, lit by the key+fill directionals only - no sky ambient - so it reads
+// ~20% darker and warmer than the (ambient-lit) walls. three.js has no per-material ambient toggle, so approximate
+// it by knocking the floor albedo down with a faintly warm grey. This restores the wall-over-floor contrast the flat
+// web look loses, putting the lit floor (~99) below the walls (~120).
 const FLOOR_TINT = 0xe6e2db
 const ROOF_THICKNESS = 0.08
 const BASE_HEIGHT = 0.4
@@ -57,7 +60,7 @@ const COLUMN_PROUD = 0.04
 const BASE_PROUD = 0.02
 const COLUMN_SPACING = 5
 const COLUMN_CAPACITY = 80
-// interior grid columns (core/buildingColumns.ts): an I-section of two flanges and a web, over a yellow
+// interior grid columns (core/building/buildingColumns.ts): an I-section of two flanges and a web, over a yellow
 // base guard of the kind real warehouse columns wear against forklift and cargo strikes
 const INTERIOR_FLANGE = 0.025
 const INTERIOR_WEB = 0.015
@@ -80,7 +83,6 @@ const TEXTURE_SETS: Record<string, string> = {
   Roof_01: 'Roof_01',
   Mat_Fan: 'Fan_A',
   Mat_Light: 'Light_A',
-  Floor_01: 'Floor_A',
 }
 
 const textureCache = new Map<string, Texture>()
@@ -133,15 +135,103 @@ function applyDesktopMaterial(mat: Material): void {
     mat.emissiveMap = buildingTexture('Light_A', 'Emissive')
     mat.emissiveIntensity = 1
   }
-  if (set === 'Floor_A') {
-    // The floor should take no ambient light, lit by the key+fill directionals
-    // only - no sky ambient - so it reads ~20% darker and warmer than the
-    // (ambient-lit) walls. three.js has no per-material ambient toggle, so approximate it by knocking the floor albedo down with a faintly warm
-    // grey. This restores the wall-over-floor contrast the flat web look loses, putting
-    // the lit floor (~99) below the walls (~120).
-    mat.color.set(FLOOR_TINT)
-  }
   mat.needsUpdate = true
+}
+
+/** How the floor lays its macro cloud and saw-cut joints over the slab tile. */
+export interface FloorMacro {
+  /** floor uv runs one unit per cell */
+  metresPerUv: number
+  /** the two samples' periods in metres: they share no common repeat, so their product never visibly tiles */
+  periodA: number
+  periodB: number
+  /** the second sample's rotation, radians, so the two clouds' lattices don't align either */
+  turn: number
+  /** saw-cut joints: spacing and width in metres, and how much a joint darkens the slab */
+  jointSpacing: number
+  jointWidth: number
+  jointDarken: number
+}
+
+// Joints fall on the cell edges (the column lines) and halfway between them. A bare saw cut is ~5 mm, but sealant
+// and worn edges make a real joint read wider. 16 mm shows up close and fades by mid-hall; at 20 mm the empty hall
+// read as a grid of panels.
+const FLOOR_MACRO: FloorMacro = {
+  metresPerUv: SECTION,
+  periodA: 37,
+  periodB: 23,
+  turn: 0.52,
+  jointSpacing: SECTION / 2,
+  jointWidth: 0.016,
+  jointDarken: 0.5,
+}
+
+type FloorNodeFactory = (map: Texture, macro: Texture, tint: number, m: FloorMacro) => MeshStandardMaterial
+
+// the WebGPU TSL twin of floorMaterial (floorNodeMaterial.ts), injected by createRenderer
+let floorNodeFactory: FloorNodeFactory | null = null
+export function setFloorNodeFactory(factory: FloorNodeFactory | null): void {
+  floorNodeFactory = factory
+}
+
+function floorMacroTexture(): Texture {
+  let tex = textureCache.get('FloorMacro')
+  if (!tex) {
+    let settle!: () => void
+    const done = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    // data, not colour: left linear, and the loader's #808080 fallback samples as the neutral 0.5
+    tex = loadTextureBitmap('/models/building/textures/BuildingPart_FloorMacro_BaseColor.webp', () => settle())
+    tex.wrapS = RepeatWrapping
+    tex.wrapT = RepeatWrapping
+    textureCache.set('FloorMacro', tex)
+    void gateBuildingLoad(done)
+  }
+  return tex
+}
+
+/**
+ * The floor's material: a fine-grained slab tile (Floor_A, one per 10 m cell) under a broad cloud that doesn't
+ * repeat (FloorMacro), both from scripts/build-deck-textures.mjs, cut by saw joints every 5 m. In the tile, broad variation repeats as a visible
+ * 10 m grid. Roughness and metalness are the building's other textured surfaces' (applyDesktopMaterial).
+ */
+function floorMaterial(): MeshStandardMaterial {
+  const map = buildingTexture('Floor_A')
+  const macro = floorMacroTexture()
+  const nodeFactory = webgpuNodeFactory(floorNodeFactory, 'floor')
+  const mat = nodeFactory ? nodeFactory(map, macro, FLOOR_TINT, FLOOR_MACRO) : new MeshStandardMaterial({ map, color: FLOOR_TINT })
+  // e2e/verify-texture-fail-fallback.mjs finds the floor by this name, and reads its slab tile from userData, since
+  // the WebGPU material samples the tile in its colorNode and has no `map`
+  mat.name = 'Floor_01'
+  mat.userData.floorMap = map
+  mat.side = DoubleSide
+  mat.roughness = 0.85
+  mat.metalness = 0.15
+  if (nodeFactory) return mat
+  const { metresPerUv, periodA, periodB, turn, jointSpacing, jointWidth, jointDarken } = FLOOR_MACRO
+  const f = (n: number): string => n.toFixed(6)
+  // a joint's coverage of the pixel, box-filtered by the pixel's footprint so it thins out with distance
+  // instead of aliasing (floorNodeMaterial.ts jointCoverage is the same math)
+  const joints = `
+\tvec2 floorD = abs(fract(floorP / ${f(jointSpacing)} + 0.5) - 0.5) * ${f(jointSpacing)};
+\tvec2 floorW = max(fwidth(floorP), vec2(1e-4));
+\tvec2 floorJ = clamp((${f(jointWidth / 2)} - floorD) / floorW + 0.5, 0.0, 1.0) * min(vec2(1.0), ${f(jointWidth)} / floorW);
+\tdiffuseColor.rgb *= 1.0 - ${f(jointDarken)} * max(floorJ.x, floorJ.y);`
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms['uFloorMacro'] = { value: macro }
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFloorMacro;')
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+\tvec2 floorP = vMapUv * ${f(metresPerUv)};
+\tvec2 floorQ = mat2(${f(Math.cos(turn))}, ${f(Math.sin(turn))}, ${f(-Math.sin(turn))}, ${f(Math.cos(turn))}) * floorP;
+\tdiffuseColor.rgb *= 4.0 * texture2D(uFloorMacro, floorP / ${f(periodA)}).r * texture2D(uFloorMacro, floorQ / ${f(periodB)}).r;${joints}`,
+      )
+  }
+  mat.customProgramCacheKey = () => 'buildingFloor'
+  return mat
 }
 
 const tmpMat = new Matrix4()
@@ -222,7 +312,7 @@ const quarterTurns = (rotationY: number): number => (((Math.round(rotationY / (M
 const litSide = (side: WallSide, quarters: number): WallSide => SIDES_BY_YAW[(SIDES_BY_YAW.indexOf(side) + quarters) % 4]!
 const emptySides = <T,>(make: () => T): Record<WallSide, T> => ({ nz: make(), pz: make(), nx: make(), px: make() })
 
-// wall-rule matching (which module paints a perimeter cell) is core/buildingDocks.ts wallRuleAt: the sim cuts its
+// wall-rule matching (which module paints a perimeter cell) is core/building/buildingDocks.ts wallRuleAt: the sim cuts its
 // open dock openings from the same answer
 const ruleAt = wallRuleAt
 
@@ -259,6 +349,9 @@ function analyzeTemplate(root: Group | null, wall = false): ModuleTemplate | nul
 // so the building appears fully textured before boxes/robots compete for bandwidth.
 for (const set of new Set(Object.values(TEXTURE_SETS))) buildingTexture(set)
 buildingTexture('Light_A', 'Emissive')
+// and the floor's two, which floorMaterial dresses rather than applyDesktopMaterial
+buildingTexture('Floor_A')
+floorMacroTexture()
 prefetchWallLightmaps()
 
 const templates: Promise<ModuleSet | null> = Promise.all([
@@ -341,10 +434,7 @@ export function createBuildingVisual(part: PartInstance): PartVisual {
   // The perimeter walls carry their light, self-shadows included, in baked lightmaps (wallLightmaps.ts)
   // and draw in the main pass. They never cast into the sun's shadow map: their columns and braces would
   // stripe the whole interior floor.
-  // named as the floor tile model named it: applyDesktopMaterial dresses it by that name, and
-  // e2e/verify-texture-fail-fallback.mjs looks it up by that name
-  const floorMat = new MeshStandardMaterial({ name: 'Floor_01', side: DoubleSide })
-  applyDesktopMaterial(floorMat)
+  const floorMat = floorMaterial()
   const wallMat = new MeshStandardMaterial({ color: 0xb7bdc4, metalness: 0.15, roughness: 0.7 })
   const columnMat = new MeshStandardMaterial({ color: 0x848b94, metalness: 0.15, roughness: 0.7 })
   const baseMat = new MeshStandardMaterial({ color: 0x3c4148, metalness: 0.1, roughness: 0.8 })
@@ -1082,7 +1172,7 @@ export function createBuildingVisual(part: PartInstance): PartVisual {
     builtKey = ''
     interiorKey = '' // the columns grow from the stand-in roof to the real deck
     apply(current)
-  })
+  }).catch((e: unknown) => console.warn('[oip] building wall modules failed to load', e))
 
   // bays stream in after the shell (gated): once the dock-door GLBs load, force
   // a rebuild so any configured dock doors appear
@@ -1091,7 +1181,7 @@ export function createBuildingVisual(part: PartInstance): PartVisual {
     dockAssets = assets
     builtKey = ''
     apply(current)
-  })
+  }).catch((e: unknown) => console.warn('[oip] dock door models failed to load', e))
 
   return {
     object: group,

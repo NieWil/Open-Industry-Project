@@ -1,5 +1,5 @@
 // Insert Box, through the keys and buttons a person uses: the ladder view's picker over everything a box can be
-// (plc/ladderCatalog.ts), the program's own FUNCTION_BLOCKs first and then the standard library.
+// (plc/ladder/ladderCatalog.ts), the program's own FUNCTION_BLOCKs first and then the standard library.
 //
 // What this gate holds that ladderCatalog.test.ts cannot: the bar's "Block…" and Ctrl+B open the picker; typing finds a
 // program's own block by name and Enter puts it on the rung with its instance declared and every pin to fill, the

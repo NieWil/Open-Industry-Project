@@ -59,6 +59,19 @@ piece is open source and can be self-hosted.
   (an authored part travels with the room), and the **ST program** (co-edited `Y.Text`
   via y-codemirror). Undo inside a room is a `Y.UndoManager` scoped to local edits, so
   your Ctrl+Z never reverts a peer's work.
+- **The Part Editor works in a room.** It shows the part alone by swapping the store's scene for
+  one holding only that part, with the line parked in `packageEdit.document`. The bridge syncs the
+  line, not the store's scene: while the editor is open it writes nothing from the scene side, and
+  a peer's edit lands in the parked line (`store.applyRemote`). Opening and closing the editor
+  each re-assert the room's scene instead of diffing, so a peer's drag on screen at that moment is
+  never written as an edit. The editor's own changes are package edits, which the package sink
+  carries. A run in the editor tests the part and is not streamed to a live audience. Gated by
+  `verify-shared-part-editor.mjs`.
+- **Deleting a part reaches everyone.** The room's entry is removed, or for a built-in's edited
+  copy still placed, written back as a snapshot of the app's version. Either way the id stops being
+  an edit (`edited`), which is how each peer's bridge tells a delete (`removed` in
+  `applyRemotePackages`). A peer whose line places the part, because it was placed as it was
+  deleted, keeps it and sends it back, since the room must hold every placed part's definition.
 - **The program's controller table and scan time go to the room only when you change them.**
   The store hands the bridge the whole program on every program commit, so the bridge compares
   each with the room's value as this client adopted it (`bridge.ts`, the program sink) and leaves
@@ -89,16 +102,15 @@ piece is open source and can be self-hosted.
   `main.tsx`) decides whether a room's code runs at all. A package reaches the store only in an
   admitted form: its data as the room holds it, and its code only if that code is trusted or the
   room's code is allowed to run. Trusted without asking: any shipped version of this app's own
-  parts (matched by SHA-256 against every released version, `src/editor/shippedBehaviors.ts`), and
+  parts (matched by SHA-256 against every released version, `src/editor/parts/shippedBehaviors.ts`), and
   code this browser wrote into a room (remembered by fingerprint). Held code keeps its params and
   rig but runs a stand-in (its earlier version, else the built-in of the same id, else nothing).
   The stand-in is in both the registry and the scene's embedded copies, which the sim falls back
   to. What happens to the rest depends on where the editor runs
   ([part-sandbox.md, Rooms](./part-sandbox.md#rooms)):
-  - **A sandboxed browser** (lockdown succeeded, not the desktop): the room's code runs by default,
-    and the join prompt (`RoomCodePrompt.tsx`) is a notice with **Block**. A block is remembered
-    per room in `localStorage` `oip-web/blocked-rooms` and reloads the room with its code held.
-  - **The desktop, or a browser where lockdown failed:** the code is held until allowed. The
+  - **Where the part sandbox is on** (lockdown succeeded, in a browser or the desktop): the room's
+    code runs by default, with nothing shown.
+  - **Where lockdown failed:** the code is held until allowed. The
     prompt asks once per room. Allowing it is remembered per server doc name and covers the
     room's later code too.
   - **Safe opens** hold the foreign code for one open even where it would run. That happens with
@@ -118,7 +130,9 @@ piece is open source and can be self-hosted.
 - **Presence (ephemeral, not persisted):** cursors, selections, live drag poses, pilot-mode
   avatars, "running a preview" state, and the behavior-editor soft lock.
 - **Local:** the **running simulation**. Each user runs their own sim from the shared scene.
-  Structural edits propagate live; sim runtime (spawned boxes, button pulses) does not.
+  Structural edits propagate live; sim runtime (spawned boxes, button pulses) does not. The exception is a run an
+  editor chooses to share: the others draw it without running it, over stateless messages that never enter the
+  document ([live-share.md](./live-share.md)).
 
   Most sim runtime stays local with no extra code, because it never leaves the transient stream,
   which the bridge ignores. **Cargo is the exception and needs an explicit mask** (`authoredCargoView`
@@ -143,7 +157,10 @@ npm start            # listens on :1234, persists to server/collab.sqlite
 ```
 
 The frontend defaults to `ws://localhost:1234` in dev, so `npm run dev` + the server above
-is all you need. Open `/app/?room=e-test` in two browser windows to try it.
+is all you need. Open `/app/?room=e-test` in two browser windows to try it. A shared project opened while that server
+is down says so: past a 10 s blip, the people button reads Offline, and its list names the server it cannot reach, says
+the changes are kept, and offers Retry ([PresenceStack.tsx](../src/editor/components/PresenceStack.tsx); gated by
+`verify-collab-offline.mjs`). The same message is what a user sees when the production server is unreachable.
 
 ## Configuration
 
@@ -155,6 +172,10 @@ at a different server, e.g.:
 ```
 VITE_COLLAB_URL=wss://collab.example.org
 ```
+
+A tab can also use another server without a build of its own: a room link may name its server (`&server=wss://...`),
+and Settings > Live editing > Collaboration server sets this computer's. `collabUrl()` in
+`src/collab/collabServer.ts` picks between them, and [live-share.md](./live-share.md#self-hosting) says how.
 
 Server env vars: `PORT` (default `1234`), `HOST` (default `127.0.0.1`: loopback, behind Caddy on
 the same box) and `DB_PATH` (default `collab.sqlite`), plus

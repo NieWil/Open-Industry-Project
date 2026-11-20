@@ -1,4 +1,4 @@
-// Verifies that a linked project folder is remembered across a reload (src/editor/folderHandleStore.ts
+// Verifies that a linked project folder is remembered across a reload (src/editor/project/folderHandleStore.ts
 // + projectFolderLink.restoreFolderLink) - in a real browser, against real IndexedDB, over a real
 // page reload. This covers what the unit tests cannot, because what they mock is the storage itself.
 //

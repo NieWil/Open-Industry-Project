@@ -1,18 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { arrayInstanceDeltas, linkHalfExtents, MAX_DISTRIBUTE_INSTANCES } from '../../core/rigPose'
-import type { SeamContext } from '../../core/rigPose'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import type { PartPackage } from '../../core/partPackage'
-import { registerPackage } from '../../core/partRegistry'
-import { rollerStations } from '../../core/rollerGrid'
+import { arrayInstanceDeltas, linkHalfExtents, MAX_DISTRIBUTE_INSTANCES } from '../../core/rig/rigPose'
+import type { SeamContext } from '../../core/rig/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import type { PartPackage } from '../../core/parts/partPackage'
+import { registerPackage } from '../../core/parts/partRegistry'
+import { rollerStations } from '../../core/conveyor/rollerGrid'
 import { ROLLER_CLASSES } from '../../core/types'
 import type { PartInstance } from '../../core/types'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { GeometryContext, MeshPart } from '../../core/partApi'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { GeometryContext, MeshPart } from '../../core/parts/partApi'
 import { examplePart, type RigGeo } from './examplePart'
 const { geometry: ROLLER_CONVEYOR_RIG, behavior: ROLLER_BEHAVIOR } = examplePart<RigGeo>('oip.roller-conveyor')
 
-// The Roller Conveyor is a `custom` part, so the shared snap-grid engine (rollerStations, in core/rollerGrid)
+// The Roller Conveyor is a `custom` part, so the shared snap-grid engine (rollerStations, in core/conveyor/rollerGrid)
 // drives its world-phase rollers off the registered package. Register it so rollerStations can resolve the
 // rig's worldPhase array. That is the second production grid path, which this file cross-checks against the
 // rig-array path (arrayInstanceDeltas).

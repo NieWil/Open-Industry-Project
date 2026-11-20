@@ -1,17 +1,17 @@
 // What a part update breaks in this project (docs/part-sources.md, "What an update changes").
 //
-// core/partChanges.ts compares two versions of a part and calls a removed or retyped signal breaking. Whether it
+// core/parts/partChanges.ts compares two versions of a part and calls a removed or retyped signal breaking. Whether it
 // breaks anything here depends on the project: a signal no placed copy is wired to is harmless, one the program reads
 // is the real break. This answers that, for each breaking signal change: which placed copies wire it, to which tag,
 // and where else that tag is used - the program's rungs and lines (plc/crossRef.ts) and the other devices wired to it
 // (plc/bindings.ts). It reads the scene through the live registry, so the part's spec is the project's own copy, the
 // version the update would replace.
 
-import type { PartChange } from '../core/partChanges'
+import type { PartChange } from '../core/parts/partChanges'
 import { deviceTags, devicesForTag, type TaggedPart } from './bindings'
 import { crossReference, type TagRef } from './crossRef'
-import { IEC_REFS } from './ladderLeaves'
-import { readLadder } from './ladderRungs'
+import { IEC_REFS } from './ladder/ladderLeaves'
+import { readLadder } from './ladder/ladderRungs'
 
 /** One placed copy wired to a signal the update breaks. */
 export interface SignalUse {

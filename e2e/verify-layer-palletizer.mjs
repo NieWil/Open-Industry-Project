@@ -1,5 +1,5 @@
 // End-to-end check of the demo's layer-forming palletizing cell - the physics half, which no unit test can
-// reach. The program logic is covered deterministically by src/editor/demoScenes.test.ts; what this proves is
+// reach. The program logic is covered deterministically by src/editor/demo/demoScenes.test.ts; what this proves is
 // that the mechanisms actually do what the logic asks of them:
 //
 //   1. cases spawn onto the infeed and convey,

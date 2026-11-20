@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Group, InstancedMesh, Matrix4, Mesh, Scene, Vector3 } from 'three'
 import type { Object3D } from 'three'
-import { clearPackages, registerPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { clearPackages, registerPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { SdkPart } from '../../core/types'
 import { createCustomVisual } from './sdkPart'
 import { InstancePoolManager } from '../viewport/instancePool'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 // Pool eligibility is decided per link (rig.ts mobileLink / poolableLink), not per rig. A jointed rig's
 // hardware that nothing moves (a turntable's legs, feet and base frame) pools; the jointed link and every
@@ -181,7 +181,7 @@ describe('link banks: decoration riding a moving link', () => {
   })
 })
 
-// ...and a rig's geometry() dressing (rig.ts procSlots): static submeshes pool, a lamp and one riding a moving link don't
+// ...and a rig's geometry() dressing (rigProcedural.ts procSlots): static submeshes pool, a lamp and one riding a moving link don't
 const dressPkg = (): PartPackage =>
   ({
     format: PACKAGE_FORMAT,

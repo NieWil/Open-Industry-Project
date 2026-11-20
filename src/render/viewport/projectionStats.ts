@@ -1,12 +1,14 @@
 import type { Camera } from 'three'
+import type { StandardDrawingPipeline } from 'three/webgpu'
 import { bundleViewCamera } from '../bundleGroups'
 import { OVERLAY_LAYER } from '../env'
 
 /**
- * Per-pass `_projectObject` visit counters (WebGPU path), on `globalThis.__oipProjStats`:
- * the attribution probe for scene-graph traversal cost. Render bundles keep the main pass's
- * traversal off the bundled subtrees on replay frames (Renderer._projectObject skips a bundle
- * group's children unless it re-records), but every pass that renders with bundles inert (the
+ * Per-pass projection visit counters (WebGPU path), on `globalThis.__oipProjStats`: one per call of
+ * the drawing pipeline's `project`, which visits one object and recurses through `this.project`.
+ * The attribution probe for scene-graph traversal cost. Render bundles keep the main pass's
+ * traversal off the bundled subtrees on replay frames (`project` skips a bundle group's
+ * children unless it re-records), but every pass that renders with bundles inert (the
  * overlay sub-pass, the outline mask pass, shadow cameras on re-record) walks the full graph.
  * These counters say which pass does the traversal, per frame, at any scene scale: sample `visits`,
  * wait N animation frames, sample again, divide the delta.
@@ -17,13 +19,13 @@ import { OVERLAY_LAYER } from '../env'
  * visited node, the same cost class as the __oipBundleCam counters.
  */
 export interface ProjectionStats {
-  /** _projectObject visits since reset, keyed by pass */
+  /** projection visits since reset, keyed by pass */
   visits: Record<string, number>
   reset(): void
 }
 
-interface RendererWithProjection {
-  _projectObject(object: unknown, camera: Camera, ...rest: unknown[]): void
+interface Projector {
+  project(object: unknown, camera: Camera, ...rest: unknown[]): void
 }
 
 const MAIN_MASK = 1
@@ -38,9 +40,9 @@ function passKey(camera: Camera): string {
 }
 
 export function installProjectionStats(renderer: unknown): void {
-  const r = renderer as Partial<RendererWithProjection>
-  if (typeof r._projectObject !== 'function') return // three internals moved - probe only, no fallback needed
-  const orig = r._projectObject
+  const p = (renderer as { drawingPipeline?: StandardDrawingPipeline }).drawingPipeline as Partial<Projector> | undefined
+  if (typeof p?.project !== 'function') return // three moved it - probe only, no fallback needed
+  const orig = p.project
   const stats: ProjectionStats = {
     visits: {},
     reset() {
@@ -48,8 +50,8 @@ export function installProjectionStats(renderer: unknown): void {
     },
   }
   ;(globalThis as Record<string, unknown>).__oipProjStats = stats
-  // forwards every argument, so a parameter three adds to _projectObject reaches it unchanged
-  r._projectObject = function (this: RendererWithProjection, object, camera, ...rest) {
+  // forwards every argument, so a parameter three adds to project reaches it unchanged
+  p.project = function (this: Projector, object, camera, ...rest) {
     const key = passKey(camera)
     stats.visits[key] = (stats.visits[key] ?? 0) + 1
     orig.call(this, object, camera, ...rest)

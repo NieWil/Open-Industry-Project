@@ -7,7 +7,7 @@
   "description": "Self-hosted Hocuspocus (Yjs) backend for oip-web live collaborative editing.",
   "scripts": {
     "start": "node index.mjs",
-    "test": "node --test guards.test.mjs assets.test.mjs"
+    "test": "node --test guards.test.mjs assets.test.mjs liveRelay.test.mjs roomOwners.test.mjs"
   },
   "dependencies": {
     "@hocuspocus/extension-sqlite": "^3.2.5",

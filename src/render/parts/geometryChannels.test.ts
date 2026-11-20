@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Matrix4, Mesh, Quaternion, Vector3 } from 'three'
 import type { InstancedMesh } from 'three'
 import type { MeshStandardMaterial, Texture } from 'three'
-import { clearPackages, registerPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { clearPackages, registerPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import { createCustomVisual } from './sdkPart'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 // The geometry() animation channels (MeshPart.scroll / MeshPart.spin): a part's own texture moves along its U, and a
 // submesh turns about an axis, at a speed the behavior reports while the sim runs (the same live value the
@@ -95,6 +95,20 @@ describe('geometry() animation channels', () => {
     const before = spinner.quaternion.clone()
     hooks.tick(1, false) // stopped: holds its pose
     expect(spinner.quaternion.angleTo(before)).toBeCloseTo(0, 9)
+    v.dispose()
+  })
+
+  it('turns a drawn part\'s spinning submesh the same way, its mesh and not its grain, and keeps it out of the pool', () => {
+    registerPackage({ ...pkg(), id: 'acme.animated-drawn', geometry: { kind: 'drawn' } } as PartPackage)
+    const v = createCustomVisual({ id: 'd', type: 'part', packageId: 'acme.animated-drawn', position: [0, 0, 0], rotationY: 0, params: {} })
+    const meshes = v.object.children.filter((c) => (c as Mesh).isMesh) as Mesh[]
+    const spinner = meshes.find((m) => Math.abs(m.geometry.getAttribute('position').getY(0) - 1) < 0.2)!
+    expect(spinner.userData.poolUnit).toBeUndefined()
+    const hooks = v.object.userData as unknown as Hooks
+    hooks.tick(0.5, true) // the fan param, 0.5 m/s at r 0.25 → 2 rad/s → 1 rad
+    expect(spinner.quaternion.angleTo(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), 1))).toBeCloseTo(0, 6)
+    const c = new Vector3(0, 1, 0)
+    expect(c.clone().applyQuaternion(spinner.quaternion).add(spinner.position).distanceTo(c)).toBeCloseTo(0, 9)
     v.dispose()
   })
 })

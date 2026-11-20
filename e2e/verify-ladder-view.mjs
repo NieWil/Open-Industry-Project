@@ -1,6 +1,6 @@
 // The ladder view, through the buttons a person presses (the PLC panel's ladder face).
 //
-// The view is a projection of the program text (plc/ladderRungs.ts): a gesture reprints the rungs into the one source
+// The view is a projection of the program text (plc/ladder/ladderRungs.ts): a gesture reprints the rungs into the one source
 // string, through the text editor, as one ordinary edit. What this gate holds that the unit tests cannot: a ladder
 // program opens on its rungs with no Text | Ladder switch (it is one language; its chip's "Show as text" is the way to
 // its rung text, and the chip the way back), "+ > Ladder program" adds a PROGRAM that opens on the sheet, the rungs of

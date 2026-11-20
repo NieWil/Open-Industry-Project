@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { BoxGeometry, Group, MeshBasicMaterial } from 'three'
-import type { InstanceTransform } from '../../core/partApi'
+import type { InstanceTransform } from '../../core/parts/partApi'
 import { growBank, InstanceBank, makeBankMesh } from './instanceBank'
 import { bucketCapacity } from './instanceCapacity'
 

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { Group, Raycaster, Vector3 } from 'three'
-import type { PartPackage } from '../../core/partPackage'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { SdkPart } from '../../core/types'
-import { registerPackage } from '../../core/partRegistry'
-import { collisionProxy, shapeCornersLocal } from '../../core/collisionShapes'
-import { conveyingSurfaceAt } from '../../core/conveyorSurface'
+import { registerPackage } from '../../core/parts/partRegistry'
+import { collisionProxy, shapeCornersLocal } from '../../core/geometry/collisionShapes'
+import { conveyingSurfaceAt } from '../../core/conveyor/conveyorSurface'
 import { refreshCollisionProxy } from './collisionProxyMesh'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 // Cargo (box) is the C-cargo SDK part: a `custom` part whose package declares geometry.kind:'cargo' (there is
 // no built-in box type; docs/architecture.md). collisionProxy reads its centre-origin box

@@ -1,5 +1,5 @@
 import { DataTexture, LinearFilter, LinearMipmapLinearFilter, RGBAFormat, RepeatWrapping } from 'three'
-import type { PartPattern } from '../../../core/partPackage'
+import type { PartPattern } from '../../../core/parts/partPackage'
 
 // A package material's pattern (PartMaterial.pattern): a two-colour texture the host paints from the spec, so a
 // part gets hazard stripes or a checker with no image file. One texture is one repeat of the pattern, tiling

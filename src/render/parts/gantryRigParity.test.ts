@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { rigWorldPoses } from '../../core/rigPose'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
+import { rigWorldPoses } from '../../core/rig/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
 import { examplePart, type RigGeo } from './examplePart'
 const { geometry: GANTRY_RIG, materials: GANTRY_MATERIALS, assets: GANTRY_ASSETS, behavior: GANTRY_BEHAVIOR } = examplePart<RigGeo>('oip.gantry')
 

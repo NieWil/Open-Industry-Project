@@ -59,7 +59,8 @@ const waitForPeers = (page, n) =>
   page.waitForFunction(
     (min) => {
       const el = document.querySelector('.collab-status.connected')
-      const m = el && el.textContent.match(/(\d+)/)
+      // the avatars carry the count in their label (PresenceStack: "2 people here")
+      const m = el && (el.querySelector('[data-testid=presence]')?.getAttribute('aria-label') ?? '').match(/(\d+)/)
       return !!m && Number(m[1]) >= min
     },
     n,

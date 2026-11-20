@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { InstanceTransform, MeshPart } from '../../core/partApi'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { InstanceTransform, MeshPart } from '../../core/parts/partApi'
 import { examplePart } from './examplePart'
-import { beltSegmentFrames } from '../../core/beltPath'
-import { createGeometryBuilder } from '../../core/geometryBuilder'
+import { beltSegmentFrames } from '../../core/conveyor/beltPath'
+import { createGeometryBuilder } from '../../core/geometry/geometryBuilder'
 const { behavior: BELT_CONVEYOR_BEHAVIOR, geometry: BELT_CONVEYOR_RIG } = examplePart('oip.belt-conveyor')
 
 // The Belt Conveyor, authored on the geometry-function tier (docs/procedural-geometry.md) to match the
@@ -249,7 +250,7 @@ describe('Belt Conveyor (geometry-function tier - full multi-material belt with 
   })
 })
 
-// The host simulates, guards and snaps to core/beltPath.ts; the part draws its own corners and fillets them. The drawn
+// The host simulates, guards and snaps to core/conveyor/beltPath.ts; the part draws its own corners and fillets them. The drawn
 // top surface must be g.fillet over the host's corners, including rows that turn past vertical (both clamp the
 // running tilt to ±89°) and a segment too short for full-height bends (both tighten the bend the same way).
 describe('Belt Conveyor draws the path the host simulates', () => {

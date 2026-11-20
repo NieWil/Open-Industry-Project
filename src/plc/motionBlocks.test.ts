@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { compile, setScanEngine } from './interpreter'
 import { compareEngines } from './scanEngineOracle'
-import { exportProgram } from './export'
+import { exportProgram } from './exchange/export'
 import { MOTION_ERROR } from './motionPrelude'
 import { AXIS_STATE_CODE, HOME_SCANS } from './motionChannel'
 import { axisHalt, axisMoveAbsolute, axisMoveVelocity, axisPower, createAxis, stepAxis, type Axis, type AxisConfig } from '../core/motionAxis'

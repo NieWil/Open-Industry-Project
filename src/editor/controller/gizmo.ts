@@ -3,12 +3,12 @@
 // and shares the drag module's helpers, so every function takes the owning controller (`ec`).
 
 import { isCargoPart } from '../../core/frame'
-import { curvedGizmoOf, flexPathOf, effectiveResize, isConveyorLike, partFootprint, toWorldXZ } from '../../core/partGeometry'
+import { curvedGizmoOf, flexPathOf, effectiveResize, isConveyorLike, partFootprint, toWorldXZ } from '../../core/parts/partGeometry'
 import type { PartInstance } from '../../core/types'
 import { junctionOpeningRows } from '../../core/junctionOpeningRows'
 import type { ResizeHandle } from '../../render/api'
-import { guardOpeningsTarget } from '../store'
-import type { EditorState } from '../store'
+import { guardOpeningsTarget } from '../store/store'
+import type { EditorState } from '../store/store'
 import * as dragOps from './drag'
 import type { EditorController } from '../controller'
 

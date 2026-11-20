@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { Vector3 } from 'three'
-import { instantiatePartScript, resolvePartParams } from '../core/partScript'
-import type { ParamValue } from '../core/partApi'
+import { instantiatePartScript, resolvePartParams } from '../core/parts/partScript'
+import { createRobot, type RobotJoint } from '../core/robot/robotController'
+import type { ParamValue } from '../core/parts/partApi'
 import { ROBOT_JOINT_MAX, ROBOT_JOINT_MIN } from '../core/types'
 import { robotForwardKinematics, segmentBoxDistance } from '../render/parts/robotKinematics'
-import { CELL, createPlcDemoScene, LAYER_PATTERN, PALLETIZER, PALLET_STACK_PATTERN } from './demoScenes'
+import { CELL, createPlcDemoScene, LAYER_PATTERN, PALLETIZER, PALLET_STACK_PATTERN } from './demo/demoScenes'
 
 // Guards the demo's layer-forming palletizer against the failure modes a tip-position check cannot see: an
 // impossible bend (a joint jammed on its limit), a link driven through the conveyor line or the stack it is
@@ -36,6 +37,7 @@ const cmdOf = (name: string) => PALLETIZER.waypoints.findIndex((w) => w.name ===
 
 /** the robot's real behavior, and the params the demo places it with (speed, waypoints, blend points, tags) */
 const ROBOT_SOURCE = readFileSync(new URL('../../examples/parts/six-axis-robot/behavior.ts', import.meta.url), 'utf8')
+const ROBOT_JOINTS = (JSON.parse(readFileSync(new URL('../../examples/parts/six-axis-robot/rig.json', import.meta.url), 'utf8')) as { geometry: { joints: RobotJoint[] } }).geometry.joints
 const ARM_PARAMS = createPlcDemoScene().parts.find(
   (p) => (p as { packageId?: string }).packageId === 'oip.six-axis-robot',
 )!.params as Record<string, ParamValue>
@@ -124,7 +126,7 @@ describe('palletizer cell waypoints', () => {
   // the courses already laid when the arm arrives - the course being carried is the load, not an obstacle.
   const carryLegs = (course: number) => {
     const { def } = instantiatePartScript(ROBOT_SOURCE)
-    if (!def?.init || !def.step) throw new Error('six-axis robot behavior did not load')
+    if (!def?.step || !def.robot) throw new Error('six-axis robot behavior did not load')
     const params = resolvePartParams(def.params, ARM_PARAMS)
     const tags: Record<string, number | boolean> = { [params.enableTag as string]: true }
     const joints: Record<string, number> = {}
@@ -137,11 +139,16 @@ describe('palletizer cell waypoints', () => {
       rising: () => exec && !prevExec,
       readNumber: (t: string) => Number(tags[t] ?? 0),
       readTag: (t: string) => tags[t] === true,
+      // a tag the test sets stands for a program driving it (an enable tag counts only while driven)
+      tagDriven: (t: string) => t in tags,
       writeTag: (t: string, v: number | boolean) => { tags[t] = v },
       report: (p: string, v: number | boolean) => { if (p === 'jobs') row = Number(v) },
       approach: (c: number, t: number, max: number) => (t - c > max ? c + max : t - c < -max ? c - max : t),
+      robot: undefined as { step(): void } | undefined,
     }
-    def.init(ctx as never)
+    // the host's controller, over the rig's joints, as sim/embeddedBehavior.ts gives it to the part
+    const controller = createRobot(def.robot === true ? {} : def.robot, ROBOT_JOINTS)
+    ctx.robot = { step: () => controller.step(ctx) }
     const tick = () => {
       def.step!(ctx as never)
       prevExec = exec

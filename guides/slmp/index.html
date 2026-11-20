@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#17191b" />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <title>Connect a MELSEC PLC over SLMP | Open Industry Project</title>
+    <meta name="description" content="Step by step: connect the simulator to a Mitsubishi MELSEC CPU (Q, L, iQ-R, iQ-F) over SLMP, from the device addresses a part's tag uses to the SLMP connection the CPU's Ethernet settings need." />
+    <meta name="keywords" content="SLMP, MC protocol, MELSEC, iQ-R, GX Works3, PLC, simulator, virtual commissioning" />
+    <link rel="canonical" href="https://www.openindustryproject.org/guides/slmp/" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Open Industry Project" />
+    <meta property="og:title" content="Connect a MELSEC PLC over SLMP | Open Industry Project" />
+    <meta property="og:description" content="Step by step: connect the simulator to a Mitsubishi MELSEC CPU (Q, L, iQ-R, iQ-F) over SLMP, from the device addresses a part's tag uses to the SLMP connection the CPU's Ethernet settings need." />
+    <meta property="og:url" content="https://www.openindustryproject.org/guides/slmp/" />
+    <meta property="og:image" content="https://www.openindustryproject.org/og-image.jpg?v=20261013" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- A hand-written page, unlike /plc/. Every label, default and status line below is read from the app (editor/components/plc/ExternalPlcSection.tsx, editor/links/externalPlc.ts, editor/links/slmpLink.ts, plc/link/slmpClient.ts, core/io/slmpIo.ts). Change those and this goes stale. -->
+
+    <link rel="preload" href="/fonts/plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
+
+    <link rel="stylesheet" href="/src/site/site.css" />
+    <script type="module" src="/src/site/copyCode.js"></script>
+  </head>
+
+  <body class="doc">
+
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
+        <nav class="nav-links" aria-label="Site">
+          <a href="/plc/">PLC reference</a>
+          <a href="/guides/">Guides</a>
+          <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </nav>
+        <a class="btn btn-sm" href="/app/">Open the editor</a>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="hero">
+        <h1>Connecting a MELSEC PLC over SLMP</h1>
+        <p class="lede">
+          A MELSEC CPU (Q, L, iQ-R or iQ-F) answers SLMP on its Ethernet module. The simulator uses this to write
+          the scene's sensors into the CPU's devices and read its outputs back, while your program runs on the CPU.
+          A part's PLC tag is the CPU's own device address: <code>M10</code>, <code>Y10</code>, <code>D100</code>.
+        </p>
+        <p class="lede">
+          SLMP has no authentication and no encryption. Use it on this machine or a test bench, not a plant network.
+        </p>
+
+        <h2>You need</h2>
+        <ul class="dash">
+          <li>The desktop app, for <a href="/#desktop">Windows or Linux</a>. A browser tab cannot open a network connection.</li>
+          <li>A MELSEC CPU with an Ethernet module or built-in Ethernet port, and its engineering software (GX Works3 for an iQ-R or iQ-F).</li>
+          <li>
+            A network path from this computer to the CPU, on the port its SLMP connection answers on. The usual port
+            is <b>5000</b>. A simulated CPU works only if its simulator opens an SLMP connection this computer can reach.
+          </li>
+        </ul>
+
+        <ul class="toc">
+          <li><a href="#scene">1. Build the scene</a></li>
+          <li><a href="#wire">2. Wire the parts to device addresses</a></li>
+          <li><a href="#plc">3. Set up the CPU</a></li>
+          <li><a href="#connect">4. Point the simulator at the CPU</a></li>
+          <li><a href="#run">5. Run it</a></li>
+          <li><a href="#registers">6. Values in data registers</a></li>
+          <li><a href="#trouble">Troubleshooting</a></li>
+        </ul>
+      </section>
+    </main>
+
+    <section class="section" id="scene">
+      <div class="wrap">
+        <h2>1. Build the scene</h2>
+        <p>In the desktop app, start a new scene and place three parts from the library:</p>
+        <ol class="steps">
+          <li>A <b>Belt Conveyor</b>.</li>
+          <li>A <b>Box</b>, sitting on the belt near the end it starts from.</li>
+          <li>A <b>Photo Eye</b> beside the belt, about two thirds of the way along, facing across it.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section" id="wire">
+      <div class="wrap">
+        <h2>2. Wire the parts to device addresses</h2>
+        <p>
+          Select each part, and in the Inspector's <span class="ui">Comms</span> group type its
+          device address:
+        </p>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Part</th><th>Field</th><th>Type in</th><th>On the CPU</th></tr></thead>
+            <tbody>
+              <tr><td>Photo Eye</td><td>Presence Tag</td><td class="m">M10</td><td>Internal relay M10. The simulator writes it.</td></tr>
+              <tr><td>Belt Conveyor</td><td>Run Tag</td><td class="m">Y10</td><td>Output Y10. The simulator reads it.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Nothing is mapped or offset: the tag is the device address, spelled the way the CPU's own tools spell it.</p>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>In the scene</th><th>On the CPU</th><th>The simulator</th></tr></thead>
+            <tbody>
+              <tr><td class="m">Xn</td><td><code>Xn</code>, an input</td><td>writes it if a part publishes it, reads it if a part is driven by it; on a real CPU use X addresses no input module occupies</td></tr>
+              <tr><td class="m">Yn</td><td><code>Yn</code>, an output</td><td>reads it, or writes it if a part publishes it</td></tr>
+              <tr><td class="m">Mn</td><td><code>Mn</code>, an internal relay</td><td>writes it if a part publishes it, reads it if a part is driven by it</td></tr>
+              <tr><td class="m">Dn</td><td><code>Dn</code>, a data register: INT, DINT or REAL</td><td>the same; see <a href="#registers">step 6</a></td></tr>
+              <tr><td class="m">Bn</td><td><code>Bn</code>, a link relay, and <code>SBn</code> its special relay (hex)</td><td>the same as M</td></tr>
+              <tr><td class="m">Wn</td><td><code>Wn</code>, a link register, and <code>SWn</code> its special register (hex)</td><td>the same as D</td></tr>
+              <tr><td class="m">SMn / SDn</td><td><code>SMn</code> special relay, <code>SDn</code> special register</td><td>the same; mind that some of these run the CPU's own functions</td></tr>
+              <tr><td class="m">TSn / TCn / TNn</td><td>A timer's contact, coil and current value</td><td>bits for TS/TC, a register for TN</td></tr>
+              <tr><td class="m">CSn / CCn / CNn</td><td>A counter's contact, coil and current value</td><td>bits for CS/CC, a register for CN</td></tr>
+              <tr><td class="m">STS / STC / STN</td><td>An accumulated timer's contact, coil and current value (also spelled <code>SS</code>/<code>SC</code>/<code>SN</code>)</td><td>as the timer's</td></tr>
+              <tr><td class="m">Sn / Ln / Fn / Vn</td><td>Step, latch, annunciator and edge relays</td><td>the same as M</td></tr>
+              <tr><td class="m">DXn / DYn</td><td>Direct access I/O (hex)</td><td>the same as X and Y</td></tr>
+              <tr><td class="m">Rn / ZRn / Zn</td><td>File registers and the index register</td><td>the same as D</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul class="dash">
+          <li><b>Hexadecimal: X, Y, B, W, SB, SW, DX and DY. Decimal: everything else.</b> <code>X1A</code> is the input 0x1A, not input 26; <code>M1A</code> is not an address at all. A tag reads as an address when a digit follows its letters, so <code>Safe1</code> stays a program name while <code>X0FF</code> spells input 0xFF.</li>
+          <li>A bit device carries a BOOL. A register (<code>D</code>, <code>W</code>, <code>SD</code>, <code>SW</code>, <code>TN</code>, <code>STN</code>, <code>CN</code>, <code>R</code>, <code>ZR</code>, <code>Z</code>) carries words: one for INT, two for DINT or REAL.</li>
+          <li>The <b>long devices</b> (LTS/LTC/LTN, LSTS/LSTC/LSTN, LCS/LCC/LCN, LZ) are not carried: only the extended frame names them.</li>
+          <li>Values cross little-endian, as the CPU holds them. A REAL travels as its bit pattern, with no scaling.</li>
+          <li>The dialog lists anything it cannot carry, and why.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section" id="plc">
+      <div class="wrap">
+        <h2>3. Set up the CPU</h2>
+        <p>
+          Configure and download the CPU in its own engineering software; its documentation shows where each setting
+          lives. This guide needs the CPU to answer SLMP, to be reachable, and to run the program below.
+        </p>
+
+        <h3>3a. Allow SLMP</h3>
+        <ol class="steps">
+          <li>The CPU's Ethernet settings have an SLMP connection: the protocol this speaks is the <b>3E frame, binary</b>, over TCP. Give it the port you will type in step 4; the standard is <b>5000</b>.</li>
+          <li>The CPU has an IP address this computer can reach. Note it for step 4.</li>
+          <li>The CPU is in RUN, so it answers at all.</li>
+        </ol>
+
+        <h3>3b. The program</h3>
+        <p>In a new program, two labels on the devices the scene uses, and one line in the main task:</p>
+        <pre class="code" translate="no" data-copy><code>Y10 := NOT M10;</code></pre>
+        <p>
+          (In ladder: a normally closed contact on <code>M10</code> driving a coil on <code>Y10</code>.) Download it and
+          put the CPU in RUN.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="connect">
+      <div class="wrap">
+        <h2>4. Point the simulator at the CPU</h2>
+        <p>Open <span class="ui">Simulation &gt; PLC Controllers…</span> and set:</p>
+        <ol class="steps">
+          <li><span class="ui">Runs on</span>: <b>An external PLC</b>.</li>
+          <li><span class="ui">How the PLC connects</span>: <b>SLMP</b>.</li>
+          <li><span class="ui">PLC</span>: the CPU's IP address from step 3a.</li>
+          <li><span class="ui">Port</span>: <b>5000</b>, or the port its SLMP connection answers on.</li>
+        </ol>
+        <p>
+          The list underneath should read <code>M10&nbsp;&nbsp;written to the PLC</code> and
+          <code>Y10&nbsp;&nbsp;read from the PLC</code>.
+        </p>
+        <p>
+          The first time you press Play with a CPU on the network, the app asks whether to allow the connection:
+          <code>Allow Open Industry Project to connect to a PLC at 192.168.0.1:5000?</code> Choose <b>Allow</b>. The app
+          remembers it for that address.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="run">
+      <div class="wrap">
+        <h2>5. Run it</h2>
+        <p>
+          With the CPU in RUN, press Play. The status line says <code>Reading and writing the CPU's devices at
+          192.168.0.1</code> with a count of requests, the box rides to the sensor, and the CPU stops the belt.
+        </p>
+
+        <h3>If the CPU refuses the requests</h3>
+        <p>
+          The connection comes up but the requests are refused, and the status line says
+          <code>Waiting for the PLC at 192.168.0.1: the CPU refused a read of D200 (end code 0xC056): the device number
+          is past what this CPU reaches</code>. The end code is the CPU's own reason: 0xC056 is an address past this
+          CPU's devices, 0xC05B a device it will not let a client write (an input, <code>X</code>). The simulator asks
+          again every second, so the belt starts once the CPU answers.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="registers">
+      <div class="wrap">
+        <h2>6. Values in data registers</h2>
+        <p>
+          A program often keeps its simulated signals in data registers rather than on bits. A <code>D</code> tag
+          carries its type from the program variable behind it:
+        </p>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Tag</th><th>Carries</th><th>Registers</th></tr></thead>
+            <tbody>
+              <tr><td class="m">D100</td><td>INT</td><td>one, D100</td></tr>
+              <tr><td class="m">D100</td><td>DINT</td><td>two, D100-D101, low word first</td></tr>
+              <tr><td class="m">D100</td><td>REAL</td><td>two, D100-D101, its IEEE 754 bits, low word first</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Two tags cannot share a register: a DINT at <code>D100</code> takes D101 too, and the dialog reports and
+          leaves out whichever tag arrives second. A tag that asks a <code>D</code> register to carry a BOOL is
+          reported and left out as well: a BOOL travels on <code>M</code>, <code>X</code> or <code>Y</code>.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="trouble">
+      <div class="wrap">
+        <h2>Troubleshooting</h2>
+        <dl class="trouble">
+          <dt>The connection options are greyed out.</dt>
+          <dd>You are in a browser tab. Connecting to a PLC needs the desktop app.</dd>
+
+          <dt>"Waiting for the PLC at ...: nothing is listening"</dt>
+          <dd>Nothing answered on that port at that address. Check the IP address and the port, that the CPU is powered and in RUN, and that its Ethernet settings carry the SLMP connection. The simulator tries again every second.</dd>
+
+          <dt>"... end code 0xC056: the device number is past what this CPU reaches"</dt>
+          <dd>A tag addresses a device this CPU does not have. Ranges depend on the CPU model: an iQ-R reaches X/Y &le; X1FFF, M &le; 65535, D &le; 32767.</dd>
+
+          <dt>"... end code 0xC05B"</dt>
+          <dd>The CPU cannot execute the request: the device cannot be written there, or the CPU is in a state that refuses it (stopped, or protected). If it names an input (<code>X</code>) on a real CPU, wire the part to an address no input module occupies, or to <code>M</code>, <code>Y</code> or <code>D</code>.</dd>
+
+          <dt>"... end code 0x4031"</dt>
+          <dd>The CPU does not carry that device in its configuration. The step relay (<code>S</code>), the accumulated timer (<code>STS</code>/<code>STC</code>/<code>STN</code>) and the file registers (<code>R</code>, <code>ZR</code>) answer this on a CPU without those settings (file registers need their parameter), to reads as well as writes. Use <code>M</code>, <code>D</code>, <code>TN</code> or <code>CN</code> instead, or configure the device in the CPU.</dd>
+
+          <dt>It connects, but the belt never stops.</dt>
+          <dd>
+            The eye's address is not the one the program reads. Watching <code>M10</code> online in the engineering
+            software shows whether it ever turns true. Remember X and Y count in hexadecimal and M and D in decimal.
+          </dd>
+
+          <dt>A part's address is not listed.</dt>
+          <dd>The dialog lists what it cannot carry, and why: a <code>D</code> register asked to carry a BOOL, or two tags on one register, for example.</dd>
+        </dl>
+      </div>
+    </section>
+
+    <footer class="site">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div>
+            <img class="mark" src="/oip-logo.svg" alt="Open Industry Project" />
+            <p class="blurb">A free industrial simulator, in your browser or as a desktop app.</p>
+          </div>
+          <div>
+            <h4>Get it</h4>
+            <ul>
+              <li><a href="https://downloads.openindustryproject.org/desktop/Open-Industry-Project-Setup.exe">Download for Windows</a></li>
+              <li><a href="https://downloads.openindustryproject.org/desktop/open-industry-project_amd64.deb">Download for Linux (.deb)</a></li>
+              <li><a href="/app/">Launch the simulator in the browser</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Explore</h4>
+            <ul>
+              <li><a href="/guides/">All guides</a></li>
+              <li><a href="/guides/s7/">Guide: connect an S7-1200 or S7-1500 over PUT/GET</a></li>
+              <li><a href="/guides/ads/">Guide: connect a TwinCAT PLC over ADS</a></li>
+              <li><a href="/guides/reference/">Reference: defaults, address rules, timings</a></li>
+              <li><a href="/plc/">PLC language reference</a></li>
+              <li><a href="/">Back to the front page</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <span>&copy; Automation Standard LLC and contributors</span>
+        </div>
+        <p class="tm-notice">Mitsubishi Electric, MELSEC, GX Works3, iQ-R, iQ-F, S7-1200, S7-1500 and TwinCAT are trademarks of their owners, named here only to identify them. This project is not affiliated with or endorsed by them.</p>
+      </div>
+    </footer>
+  </body>
+</html>

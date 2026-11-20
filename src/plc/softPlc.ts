@@ -2,13 +2,13 @@
 // simulation reaches over a Channel (WsPlcLink). It owns the program and runs one scan per `in`
 // message, replying with the program's outputs. No scene/device knowledge - purely tag-in/tag-out.
 //
-// This is the server half of the WsPlcLink seam (plc/plcLink.ts). The client half - the thing a
-// simulation talks to as a `PlcLink` - is plc/wsPlcLink.ts.
+// This is the server half of the WsPlcLink seam (plc/link/plcLink.ts). The client half - the thing a
+// simulation talks to as a `PlcLink` - is plc/link/wsPlcLink.ts.
 
-import { LocalPlcLink } from './plcLink'
+import { LocalPlcLink } from './link/plcLink'
 import type { TagValue } from './types'
-import type { Channel, MetaMsg, OutMsg, WsPlcMsg } from './wsPlcProtocol'
-import { decode, encode } from './wsPlcProtocol'
+import type { Channel, MetaMsg, OutMsg, WsPlcMsg } from './link/wsPlcProtocol'
+import { decode, encode } from './link/wsPlcProtocol'
 
 export class SoftPlc {
   private link: LocalPlcLink

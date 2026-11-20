@@ -2,7 +2,7 @@ import initJolt from 'jolt-physics'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SCENE_VERSION } from '../core/types'
 import type { SdkPart, SceneJSON } from '../core/types'
-import { registerPackage, unregisterPackage } from '../core/partRegistry'
+import { registerPackage, unregisterPackage } from '../core/parts/partRegistry'
 import { buildPackage } from './buildPackage'
 import { SimWorld } from './world'
 

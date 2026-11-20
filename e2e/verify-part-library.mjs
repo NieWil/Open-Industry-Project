@@ -8,9 +8,9 @@
 //      and what it is to the machines around it; Add to project copies it in (origin.library) and it then shows in its
 //      category tab in the dock
 //   3. a newer version is offered and taken only when asked: Update asks first in the change dialog, Update all takes
-//      every part with one
+//      every part with one. The part's card in the Parts dock offers it too, and the updates notice counts it
 //   4. the demo's copies of the Structure built-ins read as the first-party library's own, and a newer one as their
-//      update; the same index from another host claims none of them (core/partLibrary.ts isFirstPartyLibrary)
+//      update; the same index from another host claims none of them (core/parts/partLibrary.ts isFirstPartyLibrary)
 //   4b. signed with the project's key (core/librarySignature.ts; a dev build trusts the gates' key), the same index
 //      is the project's from any host: the demo's built-ins read its newer stairs as their update. Changed after it
 //      was signed, it is refused, not read as unsigned. A listed part names its publisher.
@@ -100,9 +100,9 @@ const vite = await createVite({
   appType: 'custom',
   optimizeDeps: { noDiscovery: true },
 })
-const { oippartBytesToFolder, partToOippartBytes } = await vite.ssrLoadModule('/src/core/partArchive.ts')
+const { oippartBytesToFolder, partToOippartBytes } = await vite.ssrLoadModule('/src/core/parts/partArchive.ts')
 const { buildPackage } = await vite.ssrLoadModule('/src/sim/buildPackage.ts')
-const { partFingerprint } = await vite.ssrLoadModule('/src/core/partOrigin.ts')
+const { partFingerprint } = await vite.ssrLoadModule('/src/core/parts/partOrigin.ts')
 const { sha256HexOfBytes } = await vite.ssrLoadModule('/src/core/sha256.ts')
 const { signedBytes } = await vite.ssrLoadModule('/src/core/librarySignature.ts')
 /** The index as the project's release signs it (scripts/sign-library.mjs), with the gates' key. */
@@ -195,7 +195,7 @@ try {
   await page.locator('.catalog-tab', { hasText: 'Products' }).click()
   await page.locator('[data-package-id="oip.ibc-tote"]').first().waitFor({ timeout: 10000 }).catch(() => {})
   check('the added part shows in its category tab in the Parts dock', (await page.locator('[data-package-id="oip.ibc-tote"]').count()) > 0)
-  // who made it goes with the copy (core/partPackage.ts PartCredit), and shows where the part is used
+  // who made it goes with the copy (core/parts/partPackage.ts PartCredit), and shows where the part is used
   const credit = (await copyOf('oip.ibc-tote')).credit
   check('the copy credits who made it', credit?.by === 'Open Industry Project' && credit?.library === 'Containers', JSON.stringify(credit))
   await page.evaluate(() => {
@@ -226,14 +226,25 @@ try {
   await waitFor(async () => (await statusOf('oip.drum')) === 'updateAvailable', 'the drum to read Update', 15000).catch(() => {})
   check('a part with a newer version reads Update', (await statusOf('oip.drum')) === 'updateAvailable', await statusOf('oip.drum'))
   check('nothing changes in the project until asked', !(await copyOf('oip.drum')).behavior.includes('library v2'))
+  // the Parts dock says so too, on the card and in the updates notice, like an update from the app or the shelf
+  await closeGetParts()
+  await page.locator('.catalog-search').fill('drum')
+  const dockBadge = page.locator('.catalog-card:has(.catalog-card-main[data-package-id="oip.drum"]) [data-testid="part-update"][data-source="library"]')
+  await dockBadge.waitFor({ timeout: 15000 }).catch(() => {})
+  check("the drum's card in the Parts dock offers the library's update", (await dockBadge.count()) === 1)
+  const noticeText = await page.locator('[data-testid="part-updates-notice"]').innerText().catch(() => '')
+  check('...and the updates notice counts both library parts', noticeText.includes('2 parts'), noticeText.split('\n')[0])
+  await page.locator('.catalog-search').fill('')
+  await openGetParts()
+  await chooseSource('oip.containers')
   await select('oip.drum')
   const updateBtn = win.locator('[data-testid="get-parts-update"]')
   await waitFor(() => updateBtn.isEnabled(), 'the update to download')
   await updateBtn.click()
-  const dialog = page.locator('[data-testid="shelf-change-dialog"]')
+  const dialog = page.locator('[data-testid="part-change-dialog"]')
   await dialog.waitFor({ timeout: 10000 })
   check('Update asks first, listing what changes', (await dialog.innerText()).length > 0)
-  await dialog.locator('[data-testid="shelf-change-confirm"]').click()
+  await dialog.locator('[data-testid="part-change-confirm"]').click()
   await waitFor(async () => (await copyOf('oip.drum'))?.origin?.library === drumV2, 'the drum to update')
   check("the project's copy is the new version", (await copyOf('oip.drum')).behavior.includes('library v2'))
   const updateAll = win.locator('[data-testid="get-parts-update-all"]')

@@ -1,6 +1,6 @@
-// Gate for find/replace in the Structured Text editor (@codemirror/search wired into
-// `stExtensions`). Asserts Ctrl-F opens a themed panel at the top, matches highlight, the
-// current match is distinguished, replace-all rewrites the buffer, Escape closes, Ctrl-D
+// Gate for find/replace in the Structured Text editor (@codemirror/search with the panel from
+// stSearchPanel.ts). Asserts Ctrl-F opens a themed panel at the top, matches highlight, the
+// current match is distinguished and counted, the replace row opens from its chevron, replace-all rewrites the buffer, Escape closes, Ctrl-D
 // multi-selects the next occurrence, and selecting a word highlights its siblings.
 // Screenshots go to e2e/shots/. Run: node e2e/verify-st-editor-search.mjs [--headed]
 //
@@ -118,9 +118,16 @@ async function main() {
     await page.waitForTimeout(200)
     const selected = await page.locator('.cm-searchMatch-selected').count()
     check('current match is distinguished', selected === 1, `selected=${selected}`)
+    const count = await page.locator('.cm-st-search-count').innerText()
+    check('the count names the current match', /^1 of 4$/.test(count), `count=${JSON.stringify(count)}`)
     await page.locator('.cm-editor').screenshot({ path: join(OUT, 'st-editor-search.png') })
 
-    // 6. replace-all rewrites the buffer
+    // 6. the replace row opens from the chevron, and replace-all rewrites the buffer
+    const replaceHidden = await page.locator('.cm-panel.cm-search input[name=replace]').isHidden()
+    await page.locator('.cm-panel.cm-search button[name=toggleReplace]').click()
+    await page.locator('.cm-panel.cm-search').screenshot({ path: join(OUT, 'st-editor-search-panel.png') })
+    check('the replace row is collapsed until asked for', replaceHidden
+      && await page.locator('.cm-panel.cm-search input[name=replace]').isVisible())
     await typeInto(page, 'replace', 'Drive')
     await page.getByRole('button', { name: /replace all/i }).click()
     await page.waitForTimeout(300)

@@ -23,7 +23,6 @@ definePart({
     fieldBottom: { type: 'number', default: 0.3, min: 0, max: 2, step: 0.01, label: 'Lowest beam (m)', desc: 'Height of the bottom beam above the floor. Where a conveyor passes through, put it just above the conveying surface: nothing can pass below that.' },
     fieldHeight: { type: 'number', default: 0.9, min: 0.2, max: 2, step: 0.01, label: 'Beam span (m)', desc: 'From the lowest beam to the highest. The four beams are spread evenly across it, and the columns stand 0.1 m above the top one.' },
     showBeam: { type: 'boolean', default: true, label: 'Show beams', desc: 'Draw the beams in the viewport. A viewing aid only - hiding them does not change what the curtain sees.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
     tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'OSSD tag (true = clear)', group: 'Comms', desc: 'The safety output: true while every beam is clear, false while anything interrupts one. Muting a load through is the program\'s job: feed this and the muting sensors to a muting block, and its output into the run permit.' },
     mutingLampTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Muting lamp tag', group: 'Comms', desc: 'Optional: the program lights the muting lamp on the emitter\'s cap with this while it is muting the curtain.' },
   },
@@ -60,17 +59,18 @@ definePart({
     parts.push({ desc: g.lathe([[0, 0], [0.017, 0], [0.017, 0.03], [0.012, 0.045], [0, 0.05]], { axis: 'y', center: [-rx, top, 0], segments: 16 }), material: 'lens', lamps: [{ name: 'muting', emissive: [1, 0.45, 0.02] }] })
     return parts
   },
-  step(ctx) {
+  react(ctx) {
     const w = ctx.params.width
     let clear = true
     for (const b of BEAMS) {
       const s = ctx.sense(b)
       if (s.hit && s.distance <= w) clear = false
     }
-    const comms = ctx.params.enableComms
+    // a PLC that drives this tag is watching a real curtain (Watch only): the lamps show what that curtain reports
+    if (ctx.params.tag && ctx.tagDriven(ctx.params.tag)) clear = !!ctx.readTag(ctx.params.tag)
     ctx.lamps.ossd = clear
     ctx.lamps.stop = !clear
-    ctx.lamps.muting = comms && !!ctx.params.mutingLampTag && ctx.readTag(ctx.params.mutingLampTag)
-    if (comms && ctx.params.tag) ctx.writeTag(ctx.params.tag, clear)
+    ctx.lamps.muting = !!ctx.params.mutingLampTag && ctx.readTag(ctx.params.mutingLampTag)
+    if (ctx.params.tag) ctx.writeTag(ctx.params.tag, clear)
   },
 })

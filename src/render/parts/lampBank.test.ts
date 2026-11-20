@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Matrix4, Quaternion, Vector3 } from 'three'
 import type { InstancedBufferAttribute, InstancedMesh, Mesh, Object3D } from 'three'
-import { clearPackages, registerPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { clearPackages, registerPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { SdkPart } from '../../core/types'
 import { createCustomVisual } from './sdkPart'
 import { examplePart, type RigGeo } from './examplePart'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 // A rig's primitive lamp links that share a unit geometry + parent draw as one InstancedMesh (lampBank.ts),
 // with paintLamp's two states carried per instance: albedo in instanceColor, glow + opacity in `lampGlow`.

@@ -154,7 +154,7 @@
   color: light-dark(#d72323, #f08a8a);
 }
 
-/* a test's flow facts (editor/testFacts.ts): neutral, since a fact never fails a test */
+/* a test's flow facts (editor/project/testFacts.ts): neutral, since a fact never fails a test */
 .test-run-facts {
   margin: 6px 0 0 20px;
   font-size: 11px;

@@ -13,7 +13,7 @@ import { BufferAttribute, BufferGeometry, InstancedMesh, Matrix4, Mesh } from 't
 import type { Material, Object3D } from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { CargoShapeRef } from '../../core/frame'
-import { getPackage } from '../../core/partRegistry'
+import { getPackage } from '../../core/parts/partRegistry'
 import type { PartInstance } from '../../core/types'
 import type { PartVisual } from './registry'
 import { createCustomVisual } from './sdkPart'
@@ -35,21 +35,31 @@ export interface PartCargoMesh {
   twin: PartVisual
   /** the visual's structure version when the pieces were built */
   rev: number
+  /** the twin's, likewise: its model can land after the visual's */
+  twinRev: number
 }
 
 const tmp = new Matrix4()
 
-function visualAt(ref: CargoShapeRef, colorParam: string, color: string): PartVisual {
-  const part = { id: '__cargo_batch', type: 'part', packageId: ref.packageId, position: [0, 0, 0], rotationY: 0, params: { ...ref.params, [colorParam]: color } } as PartInstance
-  return createCustomVisual(part)
+/** the instance a shape's visual is built from: the body's part at the origin, its colour param set to `color` */
+function partAt(ref: CargoShapeRef, colorParam: string, color: string): PartInstance {
+  return { id: '__cargo_batch', type: 'part', packageId: ref.packageId, position: [0, 0, 0], rotationY: 0, params: { ...ref.params, [colorParam]: color } } as PartInstance
 }
 
-/** Every drawn mesh under `root` with its part-local matrix (an instanced bank as one entry per instance). */
+function visualAt(ref: CargoShapeRef, colorParam: string, color: string): PartVisual {
+  return createCustomVisual(partAt(ref, colorParam, color))
+}
+
+/**
+ * Every drawn mesh under `root` with its part-local matrix (an instanced bank as one entry per instance). A hidden
+ * link hides its group, not its meshes, so the walk skips invisible subtrees: a hidden collider box would otherwise
+ * be drawn over the model.
+ */
 function drawn(root: Object3D): { mesh: Mesh; matrix: Matrix4 }[] {
   root.updateMatrixWorld(true)
   const out: { mesh: Mesh; matrix: Matrix4 }[] = []
-  root.traverse((o) => {
-    if (!(o as Mesh).isMesh || !o.visible) return
+  root.traverseVisible((o) => {
+    if (!(o as Mesh).isMesh) return
     const mesh = o as Mesh
     if ((mesh as InstancedMesh).isInstancedMesh) {
       const im = mesh as InstancedMesh
@@ -62,22 +72,31 @@ function drawn(root: Object3D): { mesh: Mesh; matrix: Matrix4 }[] {
   return out
 }
 
-/** A geometry reduced to position, normal and uv, unindexed, so any two merge. */
-function normalized(source: BufferGeometry, matrix: Matrix4, group?: { start: number; count: number }): BufferGeometry {
-  let g = source.index ? source.toNonIndexed() : source.clone()
-  if (group) {
-    const sliced = new BufferGeometry()
-    for (const name of ['position', 'normal', 'uv'] as const) {
-      const a = g.getAttribute(name)
-      if (a) sliced.setAttribute(name, new BufferAttribute((a.array as Float32Array).slice(group.start * a.itemSize, (group.start + group.count) * a.itemSize), a.itemSize))
-    }
-    g = sliced
-  }
+/**
+ * A geometry (or one material group of it) reduced to position, normal and uv, unindexed and baked through `matrix`,
+ * so any two merge. Every attribute is copied out as floats first. A model's can be normalized integers (a quantized
+ * GLB) or interleaved: baking a matrix into those in place wraps every coordinate past ±1, and two attributes of
+ * different array types refuse to merge, which dropped the piece.
+ */
+export function bakedCargoGeometry(source: BufferGeometry, matrix: Matrix4, group?: { start: number; count: number }): BufferGeometry {
+  const index = source.index
+  const position = source.getAttribute('position')
+  const total = !position ? 0 : index ? index.count : position.count
+  const start = group ? group.start : 0
+  const count = Math.max(0, group ? Math.min(group.count, total - start) : total)
   const out = new BufferGeometry()
-  out.setAttribute('position', g.getAttribute('position'))
-  if (g.getAttribute('normal')) out.setAttribute('normal', g.getAttribute('normal'))
-  const n = g.getAttribute('position').count
-  out.setAttribute('uv', g.getAttribute('uv') ?? new BufferAttribute(new Float32Array(n * 2), 2))
+  for (const name of ['position', 'normal', 'uv'] as const) {
+    const a = source.getAttribute(name)
+    if (!a) continue
+    const arr = new Float32Array(count * a.itemSize)
+    for (let i = 0; i < count; i++) {
+      const v = index ? index.getX(start + i) : start + i
+      for (let j = 0; j < a.itemSize; j++) arr[i * a.itemSize + j] = a.getComponent(v, j)
+    }
+    out.setAttribute(name, new BufferAttribute(arr, a.itemSize))
+  }
+  if (!out.getAttribute('position')) out.setAttribute('position', new BufferAttribute(new Float32Array(0), 3))
+  if (!out.getAttribute('uv')) out.setAttribute('uv', new BufferAttribute(new Float32Array(count * 2), 2))
   out.applyMatrix4(matrix)
   if (!out.getAttribute('normal')) out.computeVertexNormals()
   return out
@@ -86,13 +105,25 @@ function normalized(source: BufferGeometry, matrix: Matrix4, group?: { start: nu
 /** The colour a material shows, as a comparable string, or '' when it has none. */
 const colorOf = (m: Material): string => ((m as { color?: { getHexString(): string } }).color?.getHexString() ?? '')
 
+const revOf = (v: PartVisual): number => (v.object.userData.structureVersion as number) ?? 0
+
 /** Build the batch pieces of a cargo shape, or null when its part is not in the registry. */
 export function buildPartCargoMesh(ref: CargoShapeRef): PartCargoMesh | null {
   const pkg = getPackage(ref.packageId)
   if (!pkg) return null
   const colorParam = pkg.cargo?.colorParam ?? 'color'
-  const visual = visualAt(ref, colorParam, '#ffffff')
-  const twin = visualAt(ref, colorParam, '#000000')
+  return piecesFrom(visualAt(ref, colorParam, '#ffffff'), visualAt(ref, colorParam, '#000000'))
+}
+
+/**
+ * Build the pieces again from the visuals a stale shape kept, now that its model has loaded into them. New visuals
+ * would start the model's load over and finish it only after this build reads them, so they would never draw it.
+ */
+export function rebuildPartCargoMesh(m: PartCargoMesh): PartCargoMesh {
+  return piecesFrom(m.visual, m.twin)
+}
+
+function piecesFrom(visual: PartVisual, twin: PartVisual): PartCargoMesh {
   const white = drawn(visual.object)
   const black = drawn(twin.object)
   // material -> its geometries, and whether the colour moved it (the same structure: walked in the same order)
@@ -107,7 +138,7 @@ export function buildPartCargoMesh(ref: CargoShapeRef): PartCargoMesh | null {
       const grp = Array.isArray(mesh.material) ? mesh.geometry.groups.find((gr) => (gr.materialIndex ?? 0) === k) : undefined
       if (Array.isArray(mesh.material) && !grp) return
       const entry = byMaterial.get(m) ?? { geos: [], tinted: false }
-      entry.geos.push(normalized(mesh.geometry, matrix, grp))
+      entry.geos.push(bakedCargoGeometry(mesh.geometry, matrix, grp))
       const om = otherMats[k]
       if (om && colorOf(om) !== colorOf(m)) entry.tinted = true
       byMaterial.set(m, entry)
@@ -122,12 +153,29 @@ export function buildPartCargoMesh(ref: CargoShapeRef): PartCargoMesh | null {
     merged.computeBoundingSphere()
     pieces.push({ geometry: merged, material: material.clone(), tinted })
   }
-  return { pieces, visual, twin, rev: (visual.object.userData.structureVersion as number) ?? 0 }
+  return { pieces, visual, twin, rev: revOf(visual), twinRev: revOf(twin) }
 }
 
-/** Has a model loaded into the visual since the pieces were built (the pieces should be rebuilt)? */
+/** Has a model loaded into either visual since the pieces were built (the pieces should be rebuilt)? */
 export function partCargoMeshStale(m: PartCargoMesh): boolean {
-  return ((m.visual.object.userData.structureVersion as number) ?? 0) !== m.rev
+  return revOf(m.visual) !== m.rev || revOf(m.twin) !== m.twinRev
+}
+
+/**
+ * The shape's package changed in the registry (a Part Editor edit, a hot reload): apply the kept visuals again, as
+ * the scene's own visuals are (view.refreshPackage), and leave the pieces stale so the caller rebuilds them. `ref` is
+ * the shape as the frame now names it, whose params are resolved against the changed package. An edit that keeps the
+ * colliders keeps the shape's key, so nothing else would ever replace these visuals.
+ */
+export function refreshPartCargoVisuals(m: PartCargoMesh, ref: CargoShapeRef): void {
+  const pkg = getPackage(ref.packageId)
+  if (!pkg) return
+  const colorParam = pkg.cargo?.colorParam ?? 'color'
+  m.visual.update(partAt(ref, colorParam, '#ffffff'))
+  m.twin.update(partAt(ref, colorParam, '#000000'))
+  // stale whether or not the update rebuilt a visual: a repaint in place moves no structure version, and the pieces
+  // draw clones of the materials
+  m.rev = -1
 }
 
 /** Drop the visuals a built shape kept (never drawn, so disposed directly). The pieces are the caller's. */

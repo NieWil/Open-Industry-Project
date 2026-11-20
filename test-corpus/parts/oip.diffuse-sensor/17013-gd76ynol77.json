@@ -1,0 +1,196 @@
+{
+  "format": 6,
+  "id": "oip.diffuse-sensor",
+  "name": "Photo Eye",
+  "params": {
+    "maxRange": {
+      "type": "number",
+      "default": 2,
+      "min": 0.1,
+      "max": 10,
+      "step": 0.05,
+      "label": "Max range (m)",
+      "desc": "How far down the beam a target still counts as present. The beam is cast along local +Z, so aim the sensor by rotating it; snapping it onto a conveyor guard fits this range across the lane for you."
+    },
+    "mode": {
+      "type": "enum",
+      "default": "diffuse",
+      "label": "Sensing mode",
+      "desc": "How the eye is installed. Diffuse: the target itself reflects the light back to the eye, so nothing stands opposite it. Retro-reflective: the eye looks at a reflector on the far side of the lane and a target breaking that beam is detected; the reflector is drawn at Max range, so snapping the eye onto a conveyor guard puts it on the far guard. In the sim both detect the same way: a target in the beam before Max range.",
+      "options": [
+        {
+          "value": "diffuse",
+          "label": "Diffuse"
+        },
+        {
+          "value": "retro",
+          "label": "Retro-reflective"
+        }
+      ]
+    },
+    "showBeam": {
+      "type": "boolean",
+      "default": true,
+      "label": "Show beam",
+      "desc": "Draw the beam line in the viewport. A viewing aid only - hiding it does not change what the sensor detects."
+    },
+    "normallyClosed": {
+      "type": "boolean",
+      "default": false,
+      "label": "Normally closed (inverts the signal)",
+      "desc": "Invert the output, so the tag reads true when NOTHING is detected. The beam colour still follows the real detection, not the inverted signal."
+    },
+    "mark": {
+      "type": "string",
+      "suggest": "marks",
+      "default": "",
+      "label": "Only marked targets",
+      "desc": "Count a target only if a machine upstream left this mark on it (wrapped, or a label a labeller wrote). Empty: anything in the beam counts. This is how a program checks a product, not just its presence - a load that was never wrapped reads as clear."
+    },
+    "tag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Presence tag",
+      "group": "Comms",
+      "desc": "Where the photoeye publishes presence for the program to read. Whether true means blocked or clear is set by Normally closed above."
+    }
+  },
+  "behavior": "// Photo Eye - a photoelectric presence sensor, diffuse or retro-reflective (the package id still says diffuse:\n// stored scenes and rooms name it). Demonstrates sensing (ctx.sense), an emissive detection LED (ctx.lamps), and\n// a PLC presence tag. The lens emits a beam along local +Z; the host casts it against cargo each tick and\n// hands back the nearest hit. Both modes come down to that one cast: the first target in the beam before Max range.\n//\n// The housing is the shared photoeye (_shared/sensorPhotoeye.js), drawn by geometry().\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// ---- from examples/parts/_shared/sensorOutlines.js ----\n// a rounded-corner rectangle, for windows and panels\nfunction rrect(x0, y0, x1, y1, r) {\n  const pts = []\n  for (const [cx, cy, a0] of [[x1 - r, y0 + r, -Math.PI / 2], [x1 - r, y1 - r, 0], [x0 + r, y1 - r, Math.PI / 2], [x0 + r, y0 + r, Math.PI]])\n    for (let k = 0; k <= 3; k++) { const a = a0 + (k * Math.PI) / 6; pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]) }\n  return pts\n}\n\n// a 16-sided circle, for mounting holes\nfunction circle(cy, cz, r) {\n  const pts = []\n  for (let k = 0; k < 16; k++) { const a = (k * Math.PI) / 8; pts.push([cy + r * Math.cos(a), cz + r * Math.sin(a)]) }\n  return pts\n}\n\n// ---- from examples/parts/_shared/sensorPhotoeye.js ----\nconst PHOTOEYE = {\n  halfX: 0.0225, // 45 mm wide\n  back: -0.036,\n  front: 0.037, // the lens face: SENSOR_EMIT_Z, the beam origin and the guard contact\n  bodyY0: 0.036, // the housing's underside; the M8 plug hangs below it\n  bodyY1: 0.15,\n  height: 0.16, // SENSOR_HEIGHT: the pot on the top cap reaches it\n  emitY: 0.1, // SENSOR_EMIT_Y, inside the lens window\n  led: [0, 0.124, 0.034], // the detection LED, on the face above the window\n}\n\n// The photoeye's MOUNTING BRACKET, which bolts it to a conveyor's SIDE FRAME - with a guard or without one, and\n// touching neither anywhere but where it is bolted.\n//\n// The guard mount seats the eye with its origin 20 mm below the deck and its lens face 20 mm out from the bed edge,\n// over the frame's L-rail (examples/parts/belt-conveyor's rail template; the roller bed's is the same): a WALL whose\n// face is 10 mm out from the bed edge, running down from 5 mm under the deck, a 5 mm top LIP reaching out to 30 mm at\n// deck height, and - where the bed has one - a GUARD sheet standing on the rail 10..15 mm out (GUARD_THICKNESS).\n// Measured outward from the bed edge (u, which is FRONT + 0.02 - z in part-local z), the bracket is:\n//   - a SIDE PLATE on the housing's +X flank, bolted through its two holes. Its profile steps round the steel: from\n//     the housing down to 3 mm over the lip it stays out past u 23 mm (clear of a guard's 15), past the lip it stays\n//     out past the lip's 30 mm tip, and only well under the lip - below the axle heads studding the wall just under\n//     it - does it step in to the wall;\n//   - a TOE there, square across the beam, flat on the wall face (u 10..13 mm) and bolted to it.\n// A floor stand bolts to the toe's face the same way (src/editor/demoScenes.ts EYE_STAND_*), so its numbers are\n// transcribed there.\n//\n// A STOPGAP, and a deliberate copy: the rail's numbers above belong to the conveyor, and are repeated here only\n// because a host cannot yet say what steel it offers. Retire this (and EYE_STAND_*) when conveyors publish their\n// rail profile on their snap surface and the SDK's bracket helper draws from the seat a mount stores.\nconst PHOTOEYE_BRACKET = {\n  gauge: 0.003, // the sheet\n  width: 0.052, // the toe across the beam, from the plate: clear of the lens window by 7.5 mm\n  wall: 0.01, // u of the wall's face, which the toe's back lies on\n  clearGuard: 0.023, // u the plate keeps out past above the lip (the guard's face 0.015, the lens face 0.02)\n  clearLip: 0.033, // ...and past at the lip (its tip 0.03)\n  lipY: [0.015, 0.02], // the lip's underside and top, in part-local y (the deck is at 0.02)\n  toeTop: -0.025, // where the plate steps in to the toe: clear below the axle heads (part-local y)\n  bottom: -0.07, // the toe's foot\n  bolts: [-0.06, -0.035], // its two bolts into the wall\n  back: 0.046, // u of the plate's back edge, behind the housing's holes (0.031)\n}\n\n// The bracket's pieces. Each takes u2z, which maps u (outward from the bed edge) to part-local z on the side the\n// piece is drawn on, so a reflector across the bed can draw the same bracket mirrored.\n\n// a hex bolt head along `axis`\nfunction photoeyeHex(g, axis, center) {\n  return g.lathe([[0, 0], [0.0065, 0], [0.0065, 0.004], [0, 0.004]], { axis, center, segments: 6, smooth: false })\n}\n\n// the side plate in the x plane [x0, x0 + gauge], from yTop down; its face nearest the bed at uIn above the lip\nfunction photoeyeSidePlate(g, x0, yTop, uIn, u2z) {\n  const B = PHOTOEYE_BRACKET\n  return g.extrude([\n    [yTop, uIn], [yTop, B.back], [B.bottom, B.back], [B.bottom, B.wall + B.gauge], [B.toeTop, B.wall + B.gauge], [B.toeTop, B.clearLip],\n    [B.lipY[1] + 0.003, B.clearLip], [B.lipY[1] + 0.003, uIn],\n  ].map(([y, u]) => [y, u2z(u)]), x0, x0 + B.gauge, { axis: 'x' })\n}\n\n// the toe across [x0, x0 + width], its back on the wall\nfunction photoeyeToe(g, x0, u2z) {\n  const B = PHOTOEYE_BRACKET\n  return g.box([B.width, B.toeTop - B.bottom, B.gauge], [x0 + B.width / 2, (B.bottom + B.toeTop) / 2, (u2z(B.wall) + u2z(B.wall + B.gauge)) / 2])\n}\n\n// the toe's two bolts into the wall, at x\nfunction photoeyeToeBolts(g, x, u2z) {\n  const B = PHOTOEYE_BRACKET\n  return B.bolts.map((y) => g.lathe([[0, 0], [0.0065, 0], [0.0065, 0.004], [0, 0.004]], {\n    axis: 'z', center: [x, y, Math.min(u2z(B.wall + B.gauge), u2z(B.wall + B.gauge + 0.004))], segments: 6, smooth: false,\n  }))\n}\n\n// The housing and its bracket, as geometry() returns them. Materials: body, black (plug, cap), lens (window),\n// pot, steel (the bracket).\nfunction photoeyeHousing(g) {\n  const X = PHOTOEYE.halfX, BACK = PHOTOEYE.back, FRONT = PHOTOEYE.front, Y0 = PHOTOEYE.bodyY0, Y1 = PHOTOEYE.bodyY1\n  const CH = 0.024 // the chamfer across the lower back corner\n  // the housing: its side profile (y, z) run across the width, with two mounting holes through it\n  const body = g.extrude(\n    [[Y0, BACK + CH], [Y0, FRONT], [Y1, FRONT], [Y1, BACK], [Y0 + CH, BACK]],\n    -X, X,\n    { axis: 'x', bevel: 0.0015, holes: [circle(Y0 + 0.012, FRONT - 0.011, 0.0042), circle(Y1 - 0.012, FRONT - 0.011, 0.0042)] },\n  )\n  // the lens window on the face, the beam height inside it\n  const lens = g.extrude(rrect(-0.017, 0.062, 0.017, 0.114, 0.004), FRONT, FRONT + 0.0008, { bevel: 0.0003 })\n  // the top cap, stopping short of the face, and the sensitivity pot in it\n  const cap = g.bevelBox([2 * X, 0.005, FRONT - 0.004 - BACK], [0, Y1 + 0.0025, (BACK + FRONT - 0.004) / 2], 0.001, ['y-'])\n  const pot = g.lathe([[0, 0], [0.0055, 0], [0.0055, 0.0038], [0.0047, 0.0045], [0, 0.0045]], { axis: 'y', center: [0, Y1 + 0.005, -0.012], segments: 20 })\n  const slot = g.box([0.008, 0.0008, 0.0012], [0, Y1 + 0.0096, -0.012])\n  // the M8 plug under the housing: a turned body and a hex coupling nut\n  const PZ = (BACK + CH + FRONT) / 2\n  const plug = g.lathe([[0, 0], [0.0048, 0], [0.0052, 0.0005], [0.0052, 0.009], [0.0056, 0.009], [0.0056, 0.019], [0.0068, 0.022], [0.0068, Y0], [0, Y0]], { axis: 'y', center: [0, 0, PZ], segments: 20 })\n  const nut = g.lathe([[0, 0.009], [0.0072, 0.009], [0.0072, 0.018], [0, 0.018]], { axis: 'y', center: [0, 0, PZ], segments: 6, smooth: false })\n  // the bracket (PHOTOEYE_BRACKET): a side plate profiled round the rail's guard and lip, a toe bolted to its wall,\n  // and a hex bolt head through each of the housing's holes\n  const BT = PHOTOEYE_BRACKET.gauge, BW = PHOTOEYE_BRACKET.width\n  const U2Z = (u) => FRONT + 0.02 - u // this side: z falls as u grows\n  const HZ = FRONT - 0.011 // the housing's holes\n  const bracket = g.merge(\n    photoeyeSidePlate(g, X, Y1 - 0.002, PHOTOEYE_BRACKET.clearGuard, U2Z), photoeyeToe(g, X, U2Z), ...photoeyeToeBolts(g, X + BW * 0.62, U2Z),\n    photoeyeHex(g, 'x', [X + BT, Y0 + 0.012, HZ]), photoeyeHex(g, 'x', [X + BT, Y1 - 0.012, HZ]),\n  )\n  const both = { doubleSided: true }\n  return [\n    Object.assign({ desc: body, material: 'body' }, both),\n    Object.assign({ desc: lens, material: 'lens' }, both),\n    Object.assign({ desc: g.merge(cap, slot, plug, nut), material: 'black' }, both),\n    Object.assign({ desc: pot, material: 'pot' }, both),\n    Object.assign({ desc: bracket, material: 'steel' }, both),\n  ]\n}\n\ndefinePart({\n  lamps: ['led'],\n  params: {\n    maxRange: { type: 'number', default: 2, min: 0.1, max: 10, step: 0.05, label: 'Max range (m)', desc: 'How far down the beam a target still counts as present. The beam is cast along local +Z, so aim the sensor by rotating it; snapping it onto a conveyor guard fits this range across the lane for you.' },\n    mode: {\n      type: 'enum', default: 'diffuse', label: 'Sensing mode',\n      desc: 'How the eye is installed. Diffuse: the target itself reflects the light back to the eye, so nothing stands opposite it. Retro-reflective: the eye looks at a reflector on the far side of the lane and a target breaking that beam is detected; the reflector is drawn at Max range, so snapping the eye onto a conveyor guard puts it on the far guard. In the sim both detect the same way: a target in the beam before Max range.',\n      options: [\n        { value: 'diffuse', label: 'Diffuse' },\n        { value: 'retro', label: 'Retro-reflective' },\n      ],\n    },\n    showBeam: { type: 'boolean', default: true, label: 'Show beam', desc: 'Draw the beam line in the viewport. A viewing aid only - hiding it does not change what the sensor detects.' },\n    normallyClosed: { type: 'boolean', default: false, label: 'Normally closed (inverts the signal)', desc: 'Invert the output, so the tag reads true when NOTHING is detected. The beam colour still follows the real detection, not the inverted signal.' },\n    mark: { type: 'string', suggest: 'marks', default: '', label: 'Only marked targets', desc: 'Count a target only if a machine upstream left this mark on it (wrapped, or a label a labeller wrote). Empty: anything in the beam counts. This is how a program checks a product, not just its presence - a load that was never wrapped reads as clear.' },\n    tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Presence tag', group: 'Comms', desc: 'Where the photoeye publishes presence for the program to read. Whether true means blocked or clear is set by Normally closed above.' },\n  },\n  // The housing, drawn: a body with a chamfered lower back and two mounting holes, the lens window on the face,\n  // a top cap with a sensitivity pot, and an M8 plug underneath. Part-local metres, front (+Z) = the beam.\n  geometry(g, p) {\n    const out = photoeyeHousing(g)\n    // RETRO-REFLECTOR at the beam's far end, the eye's mirror image across the bed. A guard mount fits maxRange to\n    // the bed's width plus the lens's 20 mm stand-off at BOTH edges, so the reflector's face lands 20 mm out from the\n    // far bed edge, outside that guard as the eye is outside its own, and its bracket is the eye's, mirrored: the same\n    // side plate round that rail's guard and lip, the same toe on its wall. Its own submeshes, so the housing's still\n    // pool across every copy whatever their ranges.\n    if (p.mode === 'retro') {\n      const BT = PHOTOEYE_BRACKET.gauge, BW = PHOTOEYE_BRACKET.width\n      const F = PHOTOEYE.front + (typeof p.maxRange === 'number' && p.maxRange > 0 ? p.maxRange : 2) // the face, at far u 0.02\n      const FU2Z = (u) => F - 0.02 + u // far side: z grows with u\n      const E = PHOTOEYE.emitY, RR = 0.025, RT = 0.008 // the beam height, the disc's radius and thickness\n      const disc = g.lathe([[0, 0], [RR - 0.002, 0], [RR, 0.002], [RR, RT], [0, RT]], { axis: 'z', center: [0, E, F], segments: 24 })\n      const rim = g.lathe([[RR, 0.001], [RR + 0.003, 0.001], [RR + 0.003, RT + 0.001], [RR, RT + 0.001]], { axis: 'z', center: [0, E, F], segments: 24 })\n      // the plate behind the disc, and the side plate it is bent from at its +X edge\n      const PX0 = -0.032, PX1 = 0.058, PH = 0.032, UP = 0.02 + RT // u of the plate's face\n      const plate = g.box([PX1 - PX0, 2 * PH, BT], [(PX0 + PX1) / 2, E, FU2Z(UP + BT / 2)])\n      const rbracket = g.merge(\n        rim, plate, photoeyeSidePlate(g, PX1 - BT, E + PH, UP, FU2Z), photoeyeToe(g, PX1 - BW, FU2Z), ...photoeyeToeBolts(g, PX1 - BW * 0.62, FU2Z),\n        photoeyeHex(g, 'z', [0, E, FU2Z(UP + BT)]),\n      )\n      const both = { doubleSided: true }\n      out.push(Object.assign({ desc: disc, material: 'reflector' }, both))\n      out.push(Object.assign({ desc: rbracket, material: 'steel' }, both))\n    }\n    return out\n  },\n  step(ctx) {\n    // the host casts the beam out to the maxRange param (its rangeParam); the gate below keeps that explicit\n    const s = ctx.sense('lens')\n    const want = ctx.params.mark\n    const present = s.hit && s.distance <= ctx.params.maxRange && (!want || (!!s.marks && !!s.marks[want]))\n    // a PLC that drives this tag is watching a real eye (Watch only): the LED shows what that eye reports\n    if (ctx.params.tag && ctx.tagDriven(ctx.params.tag)) {\n      ctx.lamps.led = ctx.readTag(ctx.params.tag) !== !!ctx.params.normallyClosed\n      return\n    }\n    ctx.lamps.led = present // raw presence, not the NC-inverted output\n    let out = present\n    if (ctx.params.normallyClosed) out = !out // NC: de-energized (no cargo) reads true\n    if (ctx.params.tag) ctx.writeTag(ctx.params.tag, out)\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "lens",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.1,
+          0.037
+        ],
+        "beam": {
+          "range": 10,
+          "rangeParam": "maxRange",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "led",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.014,
+            0.008,
+            0.012
+          ]
+        },
+        "offset": [
+          0,
+          0.124,
+          0.034
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              1,
+              0.35,
+              0
+            ]
+          }
+        ]
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 0.045,
+      "width": 0.073,
+      "top": 0.16
+    }
+  },
+  "category": "Devices",
+  "snap": {
+    "mounts": [
+      {
+        "at": [
+          0,
+          0,
+          0.037
+        ],
+        "accepts": "conveyorGuard",
+        "face": "in",
+        "outwardOffset": 0.02,
+        "yOffset": 0.02,
+        "fitRangeParam": "maxRange"
+      }
+    ]
+  },
+  "materials": [
+    {
+      "id": "body",
+      "color": [
+        0.63770563,
+        0.21222135,
+        0.03189377
+      ],
+      "metalness": 0.511,
+      "roughness": 0.361
+    },
+    {
+      "id": "black",
+      "color": [
+        0.00232198,
+        0.00232198,
+        0.00232198
+      ],
+      "metalness": 0,
+      "roughness": 0.55
+    },
+    {
+      "id": "lens",
+      "color": [
+        0.00232198,
+        0.00116099,
+        0.00116099
+      ],
+      "metalness": 0,
+      "roughness": 0.35
+    },
+    {
+      "id": "pot",
+      "color": [
+        0.26327341,
+        0.26327341,
+        0.26327341
+      ],
+      "metalness": 0.3,
+      "roughness": 0.45
+    },
+    {
+      "id": "steel",
+      "color": [
+        0.47699978,
+        0.50707851,
+        0.53823552
+      ],
+      "metalness": 0.8,
+      "roughness": 0.38
+    },
+    {
+      "id": "reflector",
+      "color": [
+        0.52252155,
+        0.00309598,
+        0.00232198
+      ],
+      "metalness": 0.1,
+      "roughness": 0.25
+    }
+  ],
+  "sdk": {
+    "level": 12,
+    "of": "v2:15090:3xav7fzdrw"
+  }
+}

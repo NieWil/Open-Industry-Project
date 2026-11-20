@@ -11,7 +11,7 @@
 //   --export        print the I/O list as CSV (or write it to <file.csv>); changes nothing
 //
 // The same edit as the PLC panel's "Assign I/O" / "Import I/O list" and the agent door's assign_io
-// (src/editor/ioAssign.ts).
+// (src/editor/program/ioAssign.ts).
 //
 // Exit 0 = done, 1 = the project does not load or has no program to assign, 2 = usage/IO error.
 
@@ -62,8 +62,8 @@ try {
   const proj = await openProgramProject(vite, folder)
   const p = proj.project
   const { isKnownDialect } = await vite.ssrLoadModule('/src/core/dialect.ts')
-  const { assignIo, importIoList, ioListCsv, ioTargetFor, reportSummary } = await vite.ssrLoadModule('/src/editor/ioAssign.ts')
-  const { DEFAULT_EXTERNAL_PLC } = await vite.ssrLoadModule('/src/editor/storePrefs.ts')
+  const { assignIo, importIoList, ioListCsv, ioTargetFor, reportSummary } = await vite.ssrLoadModule('/src/editor/program/ioAssign.ts')
+  const { DEFAULT_EXTERNAL_PLC } = await vite.ssrLoadModule('/src/editor/store/storePrefs.ts')
   const settings = { ...DEFAULT_EXTERNAL_PLC, ...(o.poll ? { mode: 'poll', inputBase: o.poll[0], outputBase: o.poll[1] } : {}) }
   if (o.export) {
     const csv = ioListCsv(p.scene, p.stProgram ?? '', p.name, settings)

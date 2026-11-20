@@ -3,7 +3,7 @@
 // into, the same split a project folder writes as one file per POU, so `name` here is that file's name less its
 // extension. A POU holding a LADDER section is ladder in our text form (docs/ladder.md).
 
-import { joinProgramFiles } from '../../core/projectFolder'
+import { joinProgramFiles } from '../../core/project/projectFolder'
 import { isKnownDialect } from '../../core/dialect'
 import { programFiles, type ProgramFile } from '../../plc/programFiles'
 import {

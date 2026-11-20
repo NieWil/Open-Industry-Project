@@ -1,0 +1,207 @@
+From 470ef7652b226774e7c1e98bfa28c97471a47faf Mon Sep 17 00:00:00 2001
+From: ryevdokimov <105675984+ryevdokimov@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 00:42:44 -0400
+Subject: [PATCH 3/4] ConveyorContactListener: let a facet's declared faces
+ steer the ghost gates
+
+The gates exist for contacts cargo drives INTO along its travel - a speculative
+seam, a leading edge at a junction between two deck bodies - and they classify
+on the contact normal's LIFT alone. A side wall shares that signature: shallow
+penetration, horizontal normal. So on a registered conveyor body a flank ram was
+DISABLED rather than resolved, and cargo sank through the side of the deck.
+
+That is what forced a conveying deck to be built as a thin inset slab nested
+inside a proud plain-collision housing, with the housing kept unregistered
+precisely so the gates could not reach it: two bodies per deck, a 5 mm notch at
+every junction cargo crossed, and two authoring traps.
+
+Each facet now also carries its FLOW axis, so with the surface normal it can say
+which face a contact is on. A contact perpendicular to both is a side wall and
+resolves however shallow it is; everything else gates exactly as before. Stride
+12 -> 16. SetFlankProtectCos is negative by default, so a caller that does not
+opt in is unchanged, and facets are eligible only if they declare both axes.
+
+Keep the threshold TIGHT: mistaking an end face for a flank restores the
+leading-edge ram the gates were written to kill, whereas being too strict only
+leaves a contact gated as it already was.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ JoltJS.h   | 86 ++++++++++++++++++++++++++++++++++++++++++------------
+ JoltJS.idl |  1 +
+ 2 files changed, 69 insertions(+), 18 deletions(-)
+
+diff --git a/JoltJS.h b/JoltJS.h
+index 6d7d2cb..0de69ff 100644
+--- a/JoltJS.h
++++ b/JoltJS.h
+@@ -885,8 +885,8 @@ public:
+ /// pthread job threads, whose isolated JS realms don't hold the listener object).
+ ///
+ /// Contract with JS:
+-/// - The listener owns a fixed-capacity facet table (12 doubles per slot:
+-///   [kind (0 unused / 1 linear / 2 arc), vx, vy, vz, omega, cx, cz, nx, ny, nz, reserved]).
++/// - The listener owns a fixed-capacity facet table (16 doubles per slot:
++///   [kind (0 unused / 1 linear / 2 arc), vx, vy, vz, omega, cx, cz, nx, ny, nz, fx, fy, fz, x3]).
+ ///   JS allocates slots itself and writes velocities through a Float64Array view over
+ ///   GetFacetTablePtr(); writes must happen outside PhysicsSystem::Update (the app writes
+ ///   between steps on its physics thread). The listener only reads.
+@@ -900,6 +900,13 @@ public:
+ ///   keeps a valid normal without JS re-writing the table as it moves.
+ ///   A zero normal means undeclared and is never gated, so a table written by an older caller
+ ///   behaves exactly as it did before this field existed.
++/// - (fx, fy, fz) is the facet's FLOW axis, also body-local: the direction cargo travels along it.
++///   With the normal it tells the ghost gates which face they are looking at, so a deck can be one
++///   body instead of a conveying slab nested in a plain housing. The gates exist for contacts cargo
++///   drives INTO along its travel - a speculative seam, a leading edge at a junction - and those
++///   share a signature with a wall (horizontal normal, shallow penetration) that lift alone cannot
++///   separate. A face perpendicular to BOTH the surface and the flow is a side wall, never a ghost;
++///   see SetFlankProtectCos, which is off unless set.
+ /// - A conveyor body advertises its facets in its (32-bit) user data:
+ ///   bit 31 = conveyor tag, bits 12..30 = base slot, bits 0..11 = entry count.
+ ///   count == 0 participates in ghost filtering only (e.g. conveying rigs' frame rails).
+@@ -950,6 +957,17 @@ public:
+ 		mSurfaceGateCos = inCos;
+ 	}
+ 
++	/// Protect declared side walls from the ghost gates: a contact whose outward normal is within
++	/// this cos(angle) of perpendicular to BOTH the facet's surface normal and its flow axis is a
++	/// flank, and resolves normally however shallow it is. Negative (the default) disables the
++	/// check, leaving the gates exactly as they were. Keep it TIGHT - a value that lets an end face
++	/// pass for a flank puts back the leading-edge ram the gates exist to kill, whereas one that is
++	/// too strict merely leaves a flank gated as it is today.
++	void					SetFlankProtectCos(float inCos)
++	{
++		mFlankProtectCos = inCos;
++	}
++
+ 	virtual void			OnContactAdded(const Body &inBody1, const Body &inBody2, const ContactManifold &inManifold, ContactSettings &ioSettings) override
+ 	{
+ 		HandleContact(inBody1, inBody2, inManifold, ioSettings);
+@@ -961,21 +979,44 @@ public:
+ 	}
+ 
+ private:
+-	static constexpr size_t	cStride = 12;
++	static constexpr size_t	cStride = 16;
+ 	static constexpr uint64	cConveyorTag = 0x80000000ull;
+ 
++	/// A facet's declared axis (surface normal at 7, flow at 10) in world space, or a zero vector
++	/// when the facet declares none. Body-local in the table, so a deck riding a moving rig link
++	/// stays correct without JS rewriting it as the link moves.
++	inline Vec3				FacetAxis(const Body &inBody, const double *inFacet, size_t inOffset) const
++	{
++		Vec3 local((float)inFacet[inOffset], (float)inFacet[inOffset + 1], (float)inFacet[inOffset + 2]);
++		if (local == Vec3::sZero())
++			return local;
++		return inBody.GetRotation() * local;
++	}
++
+ 	/// Does a contact land on the running surface this facet declares? `inOutward` is the
+ 	/// contact normal pointing out of the conveyor body, already signed for it.
+ 	inline bool				OnRunningSurface(const Body &inBody, const double *inFacet, Vec3Arg inOutward) const
+ 	{
+-		double nx = inFacet[7], ny = inFacet[8], nz = inFacet[9];
+-		if (nx == 0.0 && ny == 0.0 && nz == 0.0)
++		Vec3 surface = FacetAxis(inBody, inFacet, 7);
++		if (surface == Vec3::sZero())
+ 			return true; // facet declares no running surface: ungated, as before this field existed
+-		// declared body-local, so a deck riding a moving rig link stays correct without JS rewrites
+-		Vec3 surface = inBody.GetRotation() * Vec3((float)nx, (float)ny, (float)nz);
+ 		return surface.Dot(inOutward) >= mSurfaceGateCos;
+ 	}
+ 
++	/// Is this contact on a face that is neither the running surface nor an end - a side wall? Such
++	/// a contact is legitimate support and must never be ghost-filtered, however shallow: the gates
++	/// are aimed at contacts cargo drives INTO along its travel, which a flank by definition is not.
++	inline bool				IsFlankContact(const Body &inBody, const double *inFacet, Vec3Arg inOutward) const
++	{
++		if (mFlankProtectCos < 0.0f)
++			return false;
++		Vec3 surface = FacetAxis(inBody, inFacet, 7);
++		Vec3 flow = FacetAxis(inBody, inFacet, 10);
++		if (surface == Vec3::sZero() || flow == Vec3::sZero())
++			return false; // undeclared: the gates behave as they did before this field existed
++		return abs(surface.Dot(inOutward)) <= mFlankProtectCos && abs(flow.Dot(inOutward)) <= mFlankProtectCos;
++	}
++
+ 	inline const double *	ResolveFacet(const Body &inBody, uint64 inUserData, const SubShapeID &inSubShapeID) const
+ 	{
+ 		uint32 count = (uint32)(inUserData & 0xfffull);
+@@ -999,24 +1040,32 @@ private:
+ 		if (!conveyor1 && !conveyor2)
+ 			return;
+ 
++		// Resolved before the gates, not after, so a facet can say which of its faces this is.
++		const double *e1 = conveyor1 ? ResolveFacet(inBody1, u1, inManifold.mSubShapeID1) : nullptr;
++		const double *e2 = conveyor2 ? ResolveFacet(inBody2, u2, inManifold.mSubShapeID2) : nullptr;
++
+ 		// mWorldSpaceNormal points from body 1 to body 2; flip it when the dynamic cargo is
+ 		// body 1 (i.e. the conveyor is body 2) so upDot measures the normal's lift on the box
+-		float ny = inManifold.mWorldSpaceNormal.GetY();
+-		float up_dot = conveyor1 ? ny : -ny;
++		Vec3 normal = inManifold.mWorldSpaceNormal;
++		float up_dot = conveyor1 ? normal.GetY() : -normal.GetY();
+ 		float depth = inManifold.mPenetrationDepth;
+ 		bool speculative_ghost = depth < -mGhostMinSeparation && up_dot < mGhostSpecUpDot;
+ 		bool shallow_ram_ghost = depth <= mGhostRamDepth && up_dot <= mGhostRamUpDot;
+ 		if (speculative_ghost || shallow_ram_ghost)
+ 		{
+-			ioSettings.mInvMassScale1 = 0.0f;
+-			ioSettings.mInvMassScale2 = 0.0f;
+-			ioSettings.mInvInertiaScale1 = 0.0f;
+-			ioSettings.mInvInertiaScale2 = 0.0f;
+-			return;
++			// ...unless the facet declares this face a side wall, which is support, not a ghost.
++			bool flank = (e1 != nullptr && IsFlankContact(inBody1, e1, normal))
++				|| (e2 != nullptr && IsFlankContact(inBody2, e2, -normal));
++			if (!flank)
++			{
++				ioSettings.mInvMassScale1 = 0.0f;
++				ioSettings.mInvMassScale2 = 0.0f;
++				ioSettings.mInvInertiaScale1 = 0.0f;
++				ioSettings.mInvInertiaScale2 = 0.0f;
++				return;
++			}
+ 		}
+ 
+-		const double *e1 = conveyor1 ? ResolveFacet(inBody1, u1, inManifold.mSubShapeID1) : nullptr;
+-		const double *e2 = conveyor2 ? ResolveFacet(inBody2, u2, inManifold.mSubShapeID2) : nullptr;
+ 		if (e1 == nullptr && e2 == nullptr)
+ 			return;
+ 
+@@ -1024,9 +1073,9 @@ private:
+ 		// ghost gates above this does NOT disable the contact: a flank stays solid, it just
+ 		// stops conveying. If that leaves nothing driven, the contact resolves as plain
+ 		// collision (and, like an undriven registered body, without friction coupling).
+-		if (e1 != nullptr && !OnRunningSurface(inBody1, e1, inManifold.mWorldSpaceNormal))
++		if (e1 != nullptr && !OnRunningSurface(inBody1, e1, normal))
+ 			e1 = nullptr;
+-		if (e2 != nullptr && !OnRunningSurface(inBody2, e2, -inManifold.mWorldSpaceNormal))
++		if (e2 != nullptr && !OnRunningSurface(inBody2, e2, -normal))
+ 			e2 = nullptr;
+ 		if (e1 == nullptr && e2 == nullptr)
+ 			return;
+@@ -1074,6 +1123,7 @@ private:
+ 	float					mGhostRamUpDot;
+ 	float					mFrictionCoupling = 0.0f;
+ 	float					mSurfaceGateCos = -1.0f;
++	float					mFlankProtectCos = -1.0f;
+ };
+ 
+ /// Batched body-state snapshot (OIP fork addition): one WASM call fills a flat float buffer with
+diff --git a/JoltJS.idl b/JoltJS.idl
+index a843613..1ba1523 100644
+--- a/JoltJS.idl
++++ b/JoltJS.idl
+@@ -2219,6 +2219,7 @@ interface ConveyorContactListener {
+ 	unsigned long GetFacetTablePtr();
+ 	void SetFrictionCoupling(float inCoupling);
+ 	void SetSurfaceGateCos(float inCos);
++	void SetFlankProtectCos(float inCos);
+ };
+ 
+ ConveyorContactListener implements ContactListener;
+-- 
+2.53.0.windows.2
+

@@ -20,7 +20,7 @@ import { checkRange, coerceScalar, coercerFor, configuredProgram, fits, implicit
 import type { GenInternals } from './scanCodegen'
 import { compileTyped } from './typed/compile'
 import { TypedUnsupported } from './typed/layout'
-import { bool, CALL_DEPTH_MESSAGE, calendarRangeError, copyData, type Fb, type FbArgs, fbMemberType, idiv, imod, isCalendar, isInt, isReal, makeFb, MAX_CALL_DEPTH, MAX_LOOP_ITERATIONS, num, str, unboundMessage, wrap } from './runtime'
+import { bool, CALL_DEPTH_MESSAGE, calendarRangeError, copyData, type Fb, type FbArgs, fbMemberType, idiv, imod, isCalendar, isInt, isInt32, isReal, makeFb, MAX_CALL_DEPTH, MAX_LOOP_ITERATIONS, num, str, unboundMessage, wrap } from './runtime'
 import type { ArrayDim, ArrayType, CompiledProgram, DataType, Decl, Expr, FbArg, FbDef, FbType, FuncDef, Initializer, MethodDef, ScalarType, SourcePos, Stmt, StructInit, StructRef, TagPort, TagValue, UserFbRef, VarInfo } from './types'
 import { isArray, isEnum, isInterface, isRef, isStruct, isUserFb, StError } from './types'
 
@@ -628,7 +628,7 @@ function buildPou(declared: Decl[], body: Stmt[], fbDefs: FbDefMap, funcs: FuncD
       }
       case '*': {
         const exact = l * r
-        return fits(t, exact, t === 'DINT' || t === 'DWORD' ? wrap(t, Math.imul(l | 0, r | 0)) : wrap(t, exact), e.pos)
+        return fits(t, exact, isInt32(t) ? wrap(t, Math.imul(l | 0, r | 0)) : wrap(t, exact), e.pos)
       }
       // by zero: the scan faults (runtime.ts `idiv` / `imod`, which the emitted program calls too - said here first
       // only because here there is a position to say it with)

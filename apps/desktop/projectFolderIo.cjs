@@ -1,7 +1,7 @@
 // Filesystem I/O for the on-disk project folder (docs/projects.md "the same manifest spilled into a
 // folder"). This module only moves raw {path, contents} files between disk and the renderer (text, or bytes for a
-// part's asset file). The format (manifest refs, validation, reassembly) lives in src/core/projectFolder.ts, and
-// the sync rules (what to write, what to load) in src/core/folderSync.ts, so the desktop shell never has a
+// part's asset file). The format (manifest refs, validation, reassembly) lives in src/core/project/projectFolder.ts, and
+// the sync rules (what to write, what to load) in src/core/project/folderSync.ts, so the desktop shell never has a
 // second opinion about what a project is. Plain Node (no Electron), so it is testable with
 // `node apps/desktop/projectFolderIo.test.cjs`.
 // The CLIs read a folder through this same walk (scripts/lib/projectFolderFiles.mjs).
@@ -12,11 +12,11 @@ const { dirname, join } = require('node:path')
 // The files a project folder is made of: the root manifest plus everything under the codec-owned
 // subfolders. Text-extension filtered so a stray binary (a screenshot, a .glb someone dropped in)
 // is never read into memory; unreferenced text files are ignored by the codec. The one binary
-// read is a part's asset file, which the format names by its hash (src/core/partAssets.ts).
+// read is a part's asset file, which the format names by its hash (src/core/parts/partAssets.ts).
 // `.js` = each part folder's behavior.js (parts/<id>/ is the parts-workspace two-file layout); `.st` / `.ld` = the
 // program's files (plc/, and the one-file program.st of formats 4-6).
 const MANIFEST = 'project.json'
-// the root files and subfolders (src/core/projectFolder.ts PROJECT_ROOT_FILES / PROJECT_SUBDIRS - keep in sync;
+// the root files and subfolders (src/core/project/projectFolder.ts PROJECT_ROOT_FILES / PROJECT_SUBDIRS - keep in sync;
 // projectFolder.test.ts pins this copy)
 const ROOT_FILES = [MANIFEST, 'scene.json', 'program.st']
 const SUBDIRS = ['plc', 'scenes', 'parts', 'tests', 'assemblies']
@@ -27,7 +27,7 @@ function isTextFile(name) {
   return TEXT_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext))
 }
 
-/** A part's asset file: `<part>/assets/<sha256>.<ext>` (src/core/partAssets.ts isAssetFileInTree - keep in sync). */
+/** A part's asset file: `<part>/assets/<sha256>.<ext>` (src/core/parts/partAssets.ts isAssetFileInTree - keep in sync). */
 function isAssetFile(rel) {
   return /(^|\/)assets\/[0-9a-f]{64}\.[a-z0-9]+$/.test(rel)
 }
@@ -83,7 +83,7 @@ function readProjectFolder(root) {
 /**
  * A cheap fingerprint of the folder (every project file's path, size and mtime, sorted), so the
  * renderer's once-a-second check reads no file contents unless something changed. Same shape as the
- * browser's (src/editor/projectFolderLink.ts folderSignature). Throws when the folder is gone.
+ * browser's (src/editor/project/projectFolderLink.ts folderSignature). Throws when the folder is gone.
  */
 function folderSignature(root) {
   statSync(root)
@@ -101,7 +101,7 @@ function folderSignature(root) {
 
 /**
  * The content hash the renderer's baselines are made of: an exact copy of hashText in
- * src/core/folderSync.ts (cyrb53, length-prefixed). Both test suites pin the same vectors. If they
+ * src/core/project/folderSync.ts (cyrb53, length-prefixed). Both test suites pin the same vectors. If they
  * ever disagreed, every guarded write would read as "someone else changed this file" and none would be written.
  */
 function hashText(text) {
@@ -223,7 +223,7 @@ function pruneEmpty(root, fromDir) {
 }
 
 /**
- * Carry out guarded writes (src/core/folderSync.ts FolderWriteOp): each op replaces or deletes one
+ * Carry out guarded writes (src/core/project/folderSync.ts FolderWriteOp): each op replaces or deletes one
  * file only if the file currently hashes to `op.expect` (null = must not exist, '*' = unconditional).
  * A file that changed since the renderer last read it is skipped and reported in `moved`. The renderer
  * then sees both changes and asks the user, instead of this silently writing over an agent's edit.

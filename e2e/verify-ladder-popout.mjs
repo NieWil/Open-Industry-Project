@@ -96,7 +96,7 @@ async function main() {
     await popup.locator('.palette-input').waitFor({ state: 'visible', timeout: 30000 })
     check('Ctrl+Shift+P pressed in the popped-out window opens the palette in it', (await page.locator('.palette-input').count()) === 0)
     // ---- a dialog opened from the popped-out window opens in it (dialogHost.ts), and takes its keys ----
-    await popup.locator('.palette-input').fill('External PLC')
+    await popup.locator('.palette-input').fill('PLC Controllers')
     await popup.keyboard.press('Enter')
     await popup.locator('[data-testid="controller-props"]').waitFor({ state: 'visible', timeout: 30000 })
     check('and Controller Properties, run from there, opens in the popped-out window', (await page.locator('[data-testid="controller-props"]').count()) === 0)

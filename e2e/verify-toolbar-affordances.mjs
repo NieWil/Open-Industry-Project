@@ -245,12 +245,23 @@ try {
   const before = await page.evaluate(() => document.activeElement?.textContent)
   await page.keyboard.press('ArrowDown')
   const after = await page.evaluate(() => document.activeElement?.textContent)
-  // the row after Keyboard Shortcuts is the tour's (Settings is the cog button, not a Help row)
-  expect(before !== after && /tutorial/i.test(after ?? ''), `ArrowDown moves to the next item ("${after}")`)
+  // the first row is the command palette (the web's only other way in is its chord), then Keyboard Shortcuts
+  expect(/command palette/i.test(before ?? ''), `the first Help row is the command palette ("${before}")`)
+  expect(before !== after && /shortcuts/i.test(after ?? ''), `ArrowDown moves to the next item ("${after}")`)
   await page.keyboard.press('Escape')
   await page.waitForTimeout(150)
   const back = await page.evaluate(() => ({ open: !!document.querySelector('.help-popover'), on: document.activeElement?.getAttribute('aria-label') }))
   expect(!back.open && back.on === 'Help', `Escape closes it and hands focus back to the Help button (${JSON.stringify(back)})`)
+  await page.evaluate(() => document.querySelector('.help-button').click())
+  await page.waitForTimeout(200)
+  await page.evaluate(() => [...document.querySelectorAll('.help-popover [role="menuitem"]')].find((i) => /command palette/i.test(i.textContent))?.click())
+  const palette = await page
+    .waitForFunction(() => !!document.querySelector('.palette'), null, { polling: 250, timeout: 15000 })
+    .then(() => true)
+    .catch(() => false)
+  expect(palette, 'Help > Command Palette opens the palette')
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.querySelector('.palette'), null, { polling: 250, timeout: 15000 }).catch(() => {})
 
   // ── 5d'. two ways into one dialog, each opening its own tab ─────────────────────────────────────
   // The dialog behind "Keyboard Shortcuts" is Settings (Preferences / Project / Keyboard). Settings has a

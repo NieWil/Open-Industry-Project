@@ -2,7 +2,6 @@
   "id": "oip.diverter",
   "name": "Diverter",
   "category": "Equipment",
-  "commsParam": "enableComms",
   "snap": {
     "mounts": [
       { "at": [0, 0, -1.0635], "accepts": "conveyorGuard", "face": "out", "yOffset": 0.2, "outwardOffset": 0.05, "opens": true }

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { instantiatePartScript, resolvePartParams } from '../core/partScript'
-import type { ParamValue } from '../core/partApi'
+import { instantiatePartScript, resolvePartParams } from '../core/parts/partScript'
+import { createRobot, type RobotJoint } from '../core/robot/robotController'
+import type { ParamValue } from '../core/parts/partApi'
 
 // The six-axis robot's jobs, run through its real behavior (examples/parts/six-axis-robot/behavior.ts) with the
 // PLC side played by hand: a command number, an Execute edge, and whatever the job's inputs read. What is pinned
@@ -10,6 +11,7 @@ import type { ParamValue } from '../core/partApi'
 // Enable holds the arm where it is.
 
 const SOURCE = readFileSync(new URL('../../examples/parts/six-axis-robot/behavior.ts', import.meta.url), 'utf8')
+const JOINTS = (JSON.parse(readFileSync(new URL('../../examples/parts/six-axis-robot/rig.json', import.meta.url), 'utf8')) as { geometry: { joints: RobotJoint[] } }).geometry.joints
 const DT = 1 / 60
 const R2D = 180 / Math.PI
 const MOVE = 1
@@ -27,9 +29,8 @@ const WAYPOINTS = [
 
 function robot(overrides: Record<string, ParamValue> = {}) {
   const { def } = instantiatePartScript(SOURCE)
-  if (!def?.init || !def.step) throw new Error('robot behavior did not load')
+  if (!def?.step || !def.robot) throw new Error('robot behavior did not load')
   const params = resolvePartParams(def.params, {
-    enableComms: true,
     commandTag: 'Cmd',
     executeTag: 'Exec',
     doneTag: 'Done',
@@ -47,11 +48,16 @@ function robot(overrides: Record<string, ParamValue> = {}) {
     rising: () => exec && !prevExec,
     readNumber: (t: string) => Number(tags[t] ?? 0),
     readTag: (t: string) => tags[t] === true,
+    // a tag the test sets stands for a program driving it (an enable tag counts only while driven)
+    tagDriven: (t: string) => t in tags,
     writeTag: (t: string, v: number | boolean) => { tags[t] = v },
     report: (p: string, v: number | boolean) => { reported[p] = v },
     approach: (c: number, t: number, max: number) => (t - c > max ? c + max : t - c < -max ? c - max : t),
+    robot: undefined as { step(): void } | undefined,
   }
-  def.init(ctx as never)
+  // the host's controller, over the rig's joints, as sim/embeddedBehavior.ts gives it to the part
+  const controller = createRobot(def.robot === true ? {} : def.robot, JOINTS)
+  ctx.robot = { step: () => controller.step(ctx) }
   const tick = (): number[] => {
     def.step!(ctx as never)
     prevExec = exec

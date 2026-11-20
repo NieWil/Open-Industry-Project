@@ -3,10 +3,10 @@
 // the person and the agent see the same list. A compare of two documents, no React.
 
 import { sameAsBuiltIn } from '../../core/builtInVersion'
-import type { PartPackage } from '../../core/partPackage'
-import type { TestSpec } from '../../core/projectTest'
+import type { PartPackage } from '../../core/parts/partPackage'
+import type { TestSpec } from '../../core/project/projectTest'
 import type { PartInstance, SceneJSON } from '../../core/types'
-import type { EditorStore } from '../store'
+import type { EditorStore } from '../store/store'
 import type { AgentBaseline } from './agentSession'
 
 export interface PartChangeRow {

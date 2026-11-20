@@ -24,7 +24,7 @@ Converting a straight roller bed to a `kind: 'drawn'` part (like the Spur Roller
 
 - **World phase.** Butted straight beds must drop rollers on one shared *world* pitch grid
   ([seam-resolvers.md](seam-resolvers.md#the-roller-grid)). That depends on the part's world position, which
-  `geometry(g, params)` never sees (`core/geometryEval.ts`). The rig array-link path resolves it. The Spur can be
+  `geometry(g, params)` never sees (`core/geometry/geometryEval.ts`). The rig array-link path resolves it. The Spur can be
   `drawn` because a spur never butts into a continuous run.
 - **Incline and legs.** `inclineParam` (whole-bed tilt of render **and** collision, `conveyor-incline.md`)
   and the `leg` trestle are host-resolved rig features with no equivalent for a `drawn` part.
@@ -64,7 +64,7 @@ Neither the params nor a fixed constant can fix it:
   where the neighbour's first roller straddles the seam, the lip then sits *on top of* that roller (the plate
   top sits 1 mm above the roller crown), which looks worse than the gap.
 
-So `geometry()` takes a third argument, `ctx: GeometryContext` (`core/partApi.ts`), carrying the host-resolved
+So `geometry()` takes a third argument, `ctx: GeometryContext` (`core/parts/partApi.ts`), carrying the host-resolved
 seam:
 
 ```ts

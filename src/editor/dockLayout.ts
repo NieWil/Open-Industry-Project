@@ -13,7 +13,7 @@
 
 import { defineMessages, t } from '../core/i18n'
 
-export type DockPanelId = 'tree' | 'inspector' | 'catalog' | 'st' | 'history' | 'problems'
+export type DockPanelId = 'tree' | 'inspector' | 'catalog' | 'st' | 'history' | 'problems' | 'watch'
 export type DockSlotId =
   | 'leftTop'
   | 'leftBottom'
@@ -25,6 +25,16 @@ export type DockSlotId =
   | 'rightBottom2'
   | 'bottom'
 export type DockSide = 'left' | 'right'
+/** A side column, named by its width key in DockSizes: `left`/`right` sit at the screen edge, `*2` beside the viewport. */
+export type DockColumnId = 'left' | 'left2' | 'right' | 'right2'
+/** the Top and Bottom sub-slots that make up each side column */
+export const COLUMN_SLOTS: Record<DockColumnId, readonly [DockSlotId, DockSlotId]> = {
+  left: ['leftTop', 'leftBottom'],
+  left2: ['leftTop2', 'leftBottom2'],
+  right: ['rightTop', 'rightBottom'],
+  right2: ['rightTop2', 'rightBottom2'],
+}
+const COLUMN_IDS: DockColumnId[] = ['left', 'left2', 'right', 'right2']
 /**
  * Where a panel lives: a dock slot, a floating window drawn inside the page, or 'popout' - a
  * real OS window of its own (see components/PopoutWindow), which is the only location that can
@@ -39,7 +49,7 @@ export type DockSide = 'left' | 'right'
 export type DockLocation = DockSlotId | 'floating' | 'popout'
 
 /** every movable panel */
-export const ALL_PANELS: DockPanelId[] = ['tree', 'inspector', 'catalog', 'st', 'history', 'problems']
+export const ALL_PANELS: DockPanelId[] = ['tree', 'inspector', 'catalog', 'st', 'history', 'problems', 'watch']
 
 /** panels that can be detached into a floating window (only the PLC editor) */
 export const FLOATABLE_PANELS: DockPanelId[] = ['st']
@@ -84,6 +94,7 @@ export const DOCK_PANEL_TITLES: Record<DockPanelId, string> = {
   st: 'PLC',
   history: 'History',
   problems: 'Problems',
+  watch: 'Watch',
 }
 
 // The ids are `dock.panel.<panel>`: the boot skeleton's inline script finds the cached translations by that prefix.
@@ -119,10 +130,12 @@ export const SLOT_LABELS: Record<DockSlotId, string> = {
 
 /**
  * Where each panel goes when nothing has been moved yet: History as a background tab behind the
- * Scene tree, and the PLC editor and Problems behind Parts.
+ * Scene tree, and the PLC editor, Problems and Watch behind Parts.
  *
  * The bottom strip reads in the order the work goes: place parts, write the program, check the result.
- * Problems goes last because it checks the whole twin, wiring and parts as well as the program.
+ * Problems comes after the program because it checks the whole twin, wiring and parts as well as the program.
+ * Watch is last: it is for the running line. A stored layout that predates it gets it after Problems too
+ * (`normalizeDockLayout` restores a missing panel at its place in the default order).
  *
  * The PLC editor is docked, not floating: a floating window over the viewport hides much of it on a
  * laptop screen and sits in the path of a catalog drag. Docked, it shares a strip with the Problems
@@ -138,6 +151,7 @@ const DEFAULT_LOCATION: Record<DockPanelId, DockSlotId | 'floating'> = {
   st: 'bottom',
   history: 'leftTop',
   problems: 'bottom',
+  watch: 'bottom',
 }
 
 export type DockLayout = Record<DockSlotId, DockPanelId[]> & {
@@ -154,11 +168,13 @@ export type DockLayout = Record<DockSlotId, DockPanelId[]> & {
   popout: DockPanelId[]
   /** the active (front) tab per slot; null when the slot is empty */
   active: Record<DockSlotId, DockPanelId | null>
-  /**
-   * The bottom dock is rolled up to just its tab strip (see `clickBottomDockTab`).
-   * Only the bottom slot collapses this way; the side docks have no equivalent.
-   */
+  /** The bottom dock is rolled up to just its tab strip (see `clickBottomDockTab`). */
   bottomCollapsed: boolean
+  /**
+   * Side columns folded to a rail of vertical tabs (see `clickSideDockTab`). A column folds whole,
+   * both sub-slots together, because the width is what it gives back. Never holds an empty column.
+   */
+  collapsedColumns: DockColumnId[]
   /**
    * The one panel blown up to fill everything under the toolbar, or null.
    *
@@ -212,7 +228,7 @@ export function defaultDockLayout(): DockLayout {
     rightBottom: [],
     rightTop2: [],
     rightBottom2: [],
-    bottom: ['catalog', 'st', 'problems'],
+    bottom: ['catalog', 'st', 'problems', 'watch'],
     floating: [],
     popout: [],
     active: {
@@ -227,8 +243,38 @@ export function defaultDockLayout(): DockLayout {
       bottom: 'catalog',
     },
     bottomCollapsed: false,
+    collapsedColumns: [],
     maximized: null,
   }
+}
+
+/** the side column a slot belongs to, or null for the bottom dock */
+export function columnOf(slot: DockSlotId): DockColumnId | null {
+  return COLUMN_IDS.find((c) => COLUMN_SLOTS[c].includes(slot)) ?? null
+}
+
+function columnOccupied(layout: Record<DockSlotId, DockPanelId[]>, column: DockColumnId): boolean {
+  const [top, bottom] = COLUMN_SLOTS[column]
+  return layout[top].length > 0 || layout[bottom].length > 0
+}
+
+export function isColumnCollapsed(layout: DockLayout, column: DockColumnId): boolean {
+  return layout.collapsedColumns.includes(column)
+}
+
+/** whether the slot is folded away: a rolled-up bottom dock, or a slot in a folded side column */
+function slotCollapsed(layout: DockLayout, slot: DockSlotId): boolean {
+  const column = columnOf(slot)
+  return column ? isColumnCollapsed(layout, column) : layout.bottomCollapsed
+}
+
+/** the same layout with `slot` unfolded (its side column or the bottom dock) */
+function withSlotOpen(layout: DockLayout, slot: DockSlotId): DockLayout {
+  if (!slotCollapsed(layout, slot)) return layout
+  const column = columnOf(slot)
+  return column
+    ? { ...layout, collapsedColumns: layout.collapsedColumns.filter((c) => c !== column) }
+    : { ...layout, bottomCollapsed: false }
 }
 
 /**
@@ -252,6 +298,7 @@ export function normalizeDockLayout(raw: unknown): DockLayout {
   const input = (raw ?? {}) as Partial<Record<DockSlotId, unknown>> & {
     active?: unknown
     bottomCollapsed?: unknown
+    collapsedColumns?: unknown
   }
 
   for (const slot of SLOT_ORDER) {
@@ -267,6 +314,9 @@ export function normalizeDockLayout(raw: unknown): DockLayout {
   // panels: an empty bottom dock is never "collapsed" (detach clears the flag), so a
   // blob claiming otherwise must not roll up a panel that restoration puts there.
   const bottomCollapsed = input.bottomCollapsed === true && slots.bottom.length > 0
+  // the same rule for the side columns
+  const rawColumns = Array.isArray(input.collapsedColumns) ? (input.collapsedColumns as unknown[]) : []
+  const collapsedColumns = COLUMN_IDS.filter((c) => rawColumns.includes(c) && columnOccupied(slots, c))
 
   // floating panels (detached windows): honored only for those that can float
   const floating: DockPanelId[] = []
@@ -325,7 +375,7 @@ export function normalizeDockLayout(raw: unknown): DockLayout {
   // window can only be opened from a user gesture. Honouring the flag on load would leave the
   // panel owned by a popup that was never allowed to open - present in the layout, absent from
   // the screen. The restore loop above has already put it back at its default location.
-  return { ...slots, floating, popout: [], active, bottomCollapsed, maximized: null }
+  return { ...slots, floating, popout: [], active, bottomCollapsed, collapsedColumns, maximized: null }
 }
 
 /**
@@ -415,6 +465,7 @@ function cloneLayout(layout: DockLayout): DockLayout {
     popout: [...layout.popout],
     active: { ...layout.active },
     bottomCollapsed: layout.bottomCollapsed,
+    collapsedColumns: [...layout.collapsedColumns],
     maximized: layout.maximized,
   }
 }
@@ -432,6 +483,13 @@ function detach(next: DockLayout, panel: DockPanelId): void {
   // dragging the last panel out of a collapsed bottom dock removes the dock entirely;
   // clear the flag so the next panel docked there arrives open
   if (next.bottom.length === 0) next.bottomCollapsed = false
+  next.collapsedColumns = next.collapsedColumns.filter((c) => columnOccupied(next, c))
+}
+
+/** docking a panel reveals it: unfold the slot it lands in */
+function openSlot(next: DockLayout, slot: DockSlotId): void {
+  if (slot === 'bottom') next.bottomCollapsed = false
+  else next.collapsedColumns = next.collapsedColumns.filter((c) => c !== columnOf(slot))
 }
 
 /** Dock a panel into a slot (appended as the new front tab there). No-op if already there. */
@@ -441,7 +499,7 @@ export function moveDockPanel(layout: DockLayout, panel: DockPanelId, to: DockSl
   detach(next, panel)
   next[to] = [...next[to], panel]
   next.active[to] = panel
-  if (to === 'bottom') next.bottomCollapsed = false // docking a panel reveals it
+  openSlot(next, to)
   return next
 }
 
@@ -466,7 +524,7 @@ export function moveDockPanelBefore(
   else arr.splice(idx, 0, panel)
   next[to] = arr
   next.active[to] = panel
-  if (to === 'bottom') next.bottomCollapsed = false // docking a panel reveals it
+  openSlot(next, to)
   return next
 }
 
@@ -519,9 +577,9 @@ export function clearMaximized(layout: DockLayout): DockLayout {
 }
 
 /**
- * Make a panel visible: front tab of its slot, and the bottom dock rolled back open if that's
- * where it lives. `activateDockPanel` alone isn't enough - a front tab in a collapsed bottom dock
- * still renders nothing (see DockSlot). This is what "show me this panel" means for code outside
+ * Make a panel visible: front tab of its slot, and its slot unfolded (the bottom dock or a side
+ * column). `activateDockPanel` alone isn't enough - a front tab in a folded slot still renders
+ * nothing (see DockSlot). This is what "show me this panel" means for code outside
  * the dock UI, e.g. the tutorial surfacing the PLC panel as it writes the program into it. A
  * floating panel is a window that's always up, so it needs nothing.
  */
@@ -536,9 +594,9 @@ export function revealDockPanel(layout: DockLayout, panel: DockPanelId): DockLay
   // a floating window is always up, and a popped-out one is a window the OS owns - neither has a
   // tab to bring forward. (Raising the popup is PopoutWindow's job, not the layout's.)
   if (loc === 'floating' || loc === 'popout') return base
-  const bottomCollapsed = loc === 'bottom' ? false : base.bottomCollapsed
-  if (base.active[loc] === panel && bottomCollapsed === base.bottomCollapsed) return base
-  return { ...base, active: { ...base.active, [loc]: panel }, bottomCollapsed }
+  const open = withSlotOpen(base, loc)
+  if (open.active[loc] === panel) return open
+  return { ...open, active: { ...open.active, [loc]: panel } }
 }
 
 /**
@@ -554,6 +612,13 @@ export function revealNeedsDocks(layout: DockLayout, panel: DockPanelId): boolea
   return loc !== 'floating' && loc !== 'popout'
 }
 
+/** Whether `panel` is the open front tab of a slot: not behind another tab, not in a folded slot. */
+export function tabShowsPanel(layout: DockLayout, panel: DockPanelId): boolean {
+  const loc = locate(layout, panel)
+  if (loc === 'floating' || loc === 'popout' || layout.active[loc] !== panel) return false
+  return !slotCollapsed(layout, loc)
+}
+
 /** Bring a tab to the front of its slot. No-op for a floating or popped-out panel. */
 export function activateDockPanel(layout: DockLayout, panel: DockPanelId): DockLayout {
   const loc = locate(layout, panel)
@@ -565,8 +630,7 @@ export function activateDockPanel(layout: DockLayout, panel: DockPanelId): DockL
  * What a left-click on a tab does: in the bottom dock, clicking the
  * tab that is already at the front rolls the dock up to just its tab strip, and
  * clicking any tab while it's rolled up opens it again (switching tabs on the way
- * if needed). The bottom dock is the one that costs viewport height, so it's the
- * one that toggles; re-clicking an active side tab stays a no-op, so those fall through to `activateDockPanel`.
+ * if needed). Any other tab falls through to `activateDockPanel`.
  *
  * Separate from `activateDockPanel`: the right-click path activates a
  * tab before opening its move menu, and must never collapse the dock underneath it.
@@ -578,6 +642,33 @@ export function clickBottomDockTab(layout: DockLayout, panel: DockPanelId): Dock
   }
   if (layout.active.bottom === panel) return { ...layout, bottomCollapsed: true }
   return { ...layout, active: { ...layout.active, bottom: panel } }
+}
+
+/**
+ * The side-dock twin of `clickBottomDockTab`: clicking the front tab of either sub-slot folds the
+ * whole column to a rail of vertical tabs, and clicking any tab on the rail opens the column at the
+ * width it had, with that tab in front. Anything that is not a side tab falls through to
+ * `activateDockPanel`.
+ */
+export function clickSideDockTab(layout: DockLayout, panel: DockPanelId): DockLayout {
+  const loc = locate(layout, panel)
+  if (loc === 'floating' || loc === 'popout') return activateDockPanel(layout, panel)
+  const column = columnOf(loc)
+  if (!column) return activateDockPanel(layout, panel)
+  if (isColumnCollapsed(layout, column)) {
+    return {
+      ...layout,
+      collapsedColumns: layout.collapsedColumns.filter((c) => c !== column),
+      active: { ...layout.active, [loc]: panel },
+    }
+  }
+  if (layout.active[loc] === panel) return { ...layout, collapsedColumns: [...layout.collapsedColumns, column] }
+  return { ...layout, active: { ...layout.active, [loc]: panel } }
+}
+
+/** What a left-click on any dock tab does: the bottom dock's roll-up, or a side column's fold. */
+export function clickDockTab(layout: DockLayout, panel: DockPanelId): DockLayout {
+  return locate(layout, panel) === 'bottom' ? clickBottomDockTab(layout, panel) : clickSideDockTab(layout, panel)
 }
 
 export interface DockSizes {
@@ -619,6 +710,7 @@ export const DEFAULT_BOTTOM_HEIGHT: Record<DockPanelId, number | { share: number
   catalog: 200,
   st: { share: 0.45 },
   problems: 230,
+  watch: 230,
   tree: 230,
   inspector: 230,
   history: 230,
@@ -711,7 +803,8 @@ export function dockSizeVar(key: string): string {
  * so the viewport reclaims the space, just like hiding an empty dock. The
  * internal Top/Bottom split inside a column is handled by the column itself, not
  * this grid. A collapsed bottom dock keeps its row (the tab strip is still there to
- * click) but sizes it to content and drops its resize gutter.
+ * click) but sizes it to content and drops its resize gutter; a folded side column does the same
+ * across, keeping its area for the tab rail.
  *
  * The bottom dock runs under the left columns and the viewport and stops at the right ones, which
  * run the full height beside it - Unity's default split. The two sides are not equal once the
@@ -736,12 +829,6 @@ export function buildDockGrid(layout: DockLayout, sizes: DockSizes): DockGridSty
       gridTemplateAreas: '"toolbar" "viewport"',
     }
   }
-  const occupied = (top: DockSlotId, bottom: DockSlotId): boolean =>
-    layout[top].length > 0 || layout[bottom].length > 0
-  const leftA = occupied('leftTop', 'leftBottom')
-  const leftB = occupied('leftTop2', 'leftBottom2')
-  const rightA = occupied('rightTop', 'rightBottom')
-  const rightB = occupied('rightTop2', 'rightBottom2')
   const hasBottom = layout.bottom.length > 0
 
   // each sized track reads its custom property, falling back to the committed value so the
@@ -753,26 +840,29 @@ export function buildDockGrid(layout: DockLayout, sizes: DockSizes): DockGridSty
 
   const cols: string[] = []
   const mid: string[] = []
-  // left columns run edge → viewport (A then B), each with a gutter on its right
-  if (leftA) {
-    cols.push(track('left'), '6px')
-    mid.push('leftA', 'gutlA')
+  // A shown column is its track plus a gutter on the viewport side. A folded one is only the rail,
+  // sized `auto` to its tabs like the rolled-up bottom row, with no width to drag.
+  const column = (id: DockColumnId, area: string, gutter: string): void => {
+    if (!columnOccupied(layout, id)) return
+    const left = id === 'left' || id === 'left2'
+    if (isColumnCollapsed(layout, id)) {
+      cols.push('auto')
+      mid.push(area)
+    } else if (left) {
+      cols.push(track(id), '6px')
+      mid.push(area, gutter)
+    } else {
+      cols.push('6px', track(id))
+      mid.push(gutter, area)
+    }
   }
-  if (leftB) {
-    cols.push(track('left2'), '6px')
-    mid.push('leftB', 'gutlB')
-  }
+  // left columns run edge → viewport (A then B), right columns viewport → edge (B then A)
+  column('left', 'leftA', 'gutlA')
+  column('left2', 'leftB', 'gutlB')
   cols.push('minmax(0, 1fr)')
   mid.push('viewport')
-  // right columns run viewport → edge (B then A), each with a gutter on its left
-  if (rightB) {
-    cols.push('6px', track('right2'))
-    mid.push('gutrB', 'rightB')
-  }
-  if (rightA) {
-    cols.push('6px', track('right'))
-    mid.push('gutrA', 'rightA')
-  }
+  column('right2', 'rightB', 'gutrB')
+  column('right', 'rightA', 'gutrA')
 
   const span = (name: string): string => Array(cols.length).fill(name).join(' ')
   // a bottom-dock row: `name` from the left edge to the viewport's right edge, then the right
@@ -799,4 +889,40 @@ export function buildDockGrid(layout: DockLayout, sizes: DockSizes): DockGridSty
     gridTemplateRows: rows.join(' '),
     gridTemplateAreas: areas.map((a) => `"${a}"`).join(' '),
   }
+}
+
+/** a cell of `buildDockGrid` where a column's width gutter meets the bottom dock's height gutter */
+export interface DockGridCorner {
+  side: DockSide
+  widthKey: 'left' | 'left2' | 'right' | 'right2'
+  /** grid lines, 1-based */
+  row: number
+  column: number
+}
+
+/**
+ * Where the column width gutters meet the bottom dock's height gutter. Each left gutter crosses it, in a cell of the
+ * `gutd` area. On the right the height gutter ends against the innermost right gutter, which carries on down, so
+ * that T is a corner too, in a cell of that gutter's area. Either way the cell belongs to an area, so a corner
+ * handle is placed by line, over it.
+ */
+export function dockGridCorners(layout: DockLayout): DockGridCorner[] {
+  if (layout.maximized || layout.bottom.length === 0 || layout.bottomCollapsed) return []
+  const corners: DockGridCorner[] = []
+  // left columns are laid out as [column, gutter] pairs from the edge, so a gutter's track is 2, 4;
+  // a folded column is one track (its rail) and has no gutter to meet
+  let column = 0
+  for (const id of ['left', 'left2'] as const) {
+    if (!columnOccupied(layout, id)) continue
+    if (isColumnCollapsed(layout, id)) {
+      column += 1
+      continue
+    }
+    column += 2
+    corners.push({ side: 'left', widthKey: id, row: 3, column })
+  }
+  // the viewport's track, then the first right column: its gutter when it is shown, none when it is a rail
+  const inner = columnOccupied(layout, 'right2') ? 'right2' : columnOccupied(layout, 'right') ? 'right' : null
+  if (inner && !isColumnCollapsed(layout, inner)) corners.push({ side: 'right', widthKey: inner, row: 3, column: column + 2 })
+  return corners
 }

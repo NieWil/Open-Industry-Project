@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { reseatOlderStairs, STAIRS_PACKAGE_ID } from './stairReseat'
-import { clearPackages, registerPackage } from './partRegistry'
-import { PACKAGE_FORMAT } from './partPackage'
-import type { PartPackage } from './partPackage'
-import { validateScene } from './scene'
+import { clearPackages, registerPackage } from './parts/partRegistry'
+import { PACKAGE_FORMAT } from './parts/partPackage'
+import type { PartPackage } from './parts/partPackage'
+import { validateScene } from './scene/scene'
 import type { PartInstance } from './types'
 import { SCENE_VERSION, STAIRS_LANDING_DEPTH, STAIRS_STANDARD_RISE, STAIRS_STANDARD_TREAD } from './types'
 

@@ -1,4 +1,4 @@
-// A program as files, one per top-level block: how a project folder keeps its program (core/projectFolder.ts,
+// A program as files, one per top-level block: how a project folder keeps its program (core/project/projectFolder.ts,
 // format 7). The program stays one string everywhere else (the store, a collab room, the engine). This split exists
 // only on disk, so a diff, a merge or a folder conflict shows up on the POU that changed, and the file name says
 // which grammar a file is in.
@@ -15,12 +15,12 @@
 // order they are written, and a global CONSTANT can only size an array with a constant written above it.
 //
 // One block, or source the block split cannot read (a POU half typed), is one file holding the source exactly.
-// Several are written trimmed, and read back joined by a blank line (core/projectFolder.ts `joinProgramFiles`), which
+// Several are written trimmed, and read back joined by a blank line (core/project/projectFolder.ts `joinProgramFiles`), which
 // is the document model's normal form (plc/document.ts `flattenDocument`) with a closing newline.
 
 import { parseDocument } from './document'
 import type { StBlock } from './document'
-import { matchInCode, triviaMask } from './exportText'
+import { matchInCode, triviaMask } from './exchange/exportText'
 import { lex } from './lexer'
 
 /** One file of a split program: a file name (no directory) and its text. */

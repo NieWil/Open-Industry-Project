@@ -258,5 +258,5 @@ definePart({
       { mesh: hw, material: 'platformHardware' },
     ])
   },
-  step() {},
+  react() {},
 })

@@ -1,7 +1,7 @@
 // Download every listed library version this build must keep running, then run them (docs/part-libraries.md, "How a
 // deploy keeps working with published parts").
 //
-//   node scripts/library-corpus.mjs [--no-run]      fetch the official libraries' indexes (editor/partLibraryUrls.ts
+//   node scripts/library-corpus.mjs [--no-run]      fetch the official libraries' indexes (editor/parts/partLibraryUrls.ts
 //                                                  OFFICIAL_PART_LIBRARIES), check their signatures, download every
 //                                                  version that records a behaviour digest into .cache/library-corpus/
 //                                                  (by hash, so each file is fetched once), then run
@@ -38,10 +38,10 @@ const vite = await createServer({
 let failed = 0
 const listed = []
 try {
-  const { validateLibraryIndex, libraryUrl } = await vite.ssrLoadModule('/src/core/partLibrary.ts')
+  const { validateLibraryIndex, libraryUrl } = await vite.ssrLoadModule('/src/core/parts/partLibrary.ts')
   const { checkLibrarySignature } = await vite.ssrLoadModule('/src/core/librarySignature.ts')
   const { sha256HexOfBytes } = await vite.ssrLoadModule('/src/core/sha256.ts')
-  const { OFFICIAL_PART_LIBRARIES } = await vite.ssrLoadModule('/src/editor/partLibraryUrls.ts')
+  const { OFFICIAL_PART_LIBRARIES } = await vite.ssrLoadModule('/src/editor/parts/partLibraryUrls.ts')
   const { LIBRARY_SIGNING_KEYS } = await vite.ssrLoadModule('/src/core/librarySigningKeys.ts')
   const keys = [...LIBRARY_SIGNING_KEYS]
   if (process.env.OIP_TRUST_TEST_KEY === '1') keys.push((await import('../e2e/_library-test-key.mjs')).TEST_LIBRARY_KEY)

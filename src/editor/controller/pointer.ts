@@ -3,12 +3,12 @@
 // the controller); as the input router it drives every other area, so its functions take the controller too.
 
 import { normalizeAngle } from '../../core/math'
-import { groupRoot } from '../../core/hierarchy'
-import { getPackage } from '../../core/partRegistry'
-import { partDisplayName } from '../../core/partDisplayName'
+import { groupRoot } from '../../core/scene/hierarchy'
+import { getPackage } from '../../core/parts/partRegistry'
+import { partDisplayName } from '../../core/parts/partDisplayName'
 import { ROTATION_SNAP } from '../../core/types'
 import type { SdkPart } from '../../core/types'
-import type { ListSelectItem } from '../store'
+import type { ListSelectItem } from '../store/store'
 import * as dragOps from './drag'
 import type { Drag } from './drag'
 import * as placementOps from './placement'
@@ -62,7 +62,9 @@ export function onPointerDown(pp: PointerPress, ec: EditorController, e: Pointer
   // chip is the hit target. Without the opt-out this press would capture the pointer on the viewport and
   // swallow the click, so the note could never be selected by clicking the thing that represents it. The agent chip
   // (AgentActivity.tsx) is the same: its Review, Keep and Revert buttons sit in the viewport's corner.
-  if (e.target instanceof Element && e.target.closest('.viewport-toolbar-wrap, .context-menu, .context-backdrop, .note-chip, .agent-activity')) return
+  if (e.target instanceof Element && e.target.closest('.viewport-toolbar-wrap, .context-menu, .context-backdrop, .note-chip, .agent-activity, .present-bar, .present-back, .present-values')) return
+  // a display link (locked Present): a visitor may move the camera, which the canvas handles, but not act on the design
+  if (ec.store.getState().presentLocked) return
   // right-click aborts an in-flight transform ("Transform Aborted"),
   // reverting to the drag's start pose. The container holds pointer capture
   // during a drag, so this RMB targets it directly and never reaches freelook.
@@ -291,18 +293,26 @@ export function onPointerMove(pp: PointerPress, ec: EditorController, e: Pointer
     return
   }
   if (e.pointerId !== drag.pointerId) return
+  // Every drag here is made with a button held, so a move with none means the release was lost (Alt-Tab mid-drag
+  // swallows the pointerup). Cancel, as Escape does, rather than keep moving the part with no button down.
+  if (e.buttons === 0) {
+    dragOps.cancelActiveDrag(ec)
+    return
+  }
+  // the snap-invert modifier: Ctrl, or Cmd on a Mac, the way the keymap reads "ctrl" (core/keymap.ts matchesChord)
+  const snapKey = e.ctrlKey || e.metaKey
   switch (drag.kind) {
     case 'band':
       dragOps.moveBand(ec, drag, e)
       break
     case 'gizmo':
-      dragOps.moveGizmo(ec, drag, e.clientX, e.clientY, e.ctrlKey, e.altKey, e.shiftKey)
+      dragOps.moveGizmo(ec, drag, e.clientX, e.clientY, snapKey, e.altKey, e.shiftKey)
       break
     case 'rigNode':
-      dragOps.moveRigNode(ec, drag, e.clientX, e.clientY, e.ctrlKey, e.shiftKey)
+      dragOps.moveRigNode(ec, drag, e.clientX, e.clientY, snapKey, e.shiftKey)
       break
     case 'rotate':
-      dragOps.moveRotate(ec, drag, e.clientX, e.clientY, e.ctrlKey, e.shiftKey, e.altKey)
+      dragOps.moveRotate(ec, drag, e.clientX, e.clientY, snapKey, e.shiftKey, e.altKey)
       break
     case 'resize':
       dragOps.moveResize(ec, drag, e)

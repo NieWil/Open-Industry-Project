@@ -8,9 +8,9 @@ that way.
 
 | Layer | Where | What it stops |
 |---|---|---|
-| **Code-trust gate** | `src/collab/codeTrust.ts` | A room's code from running at all until it is allowed (or, in a sandboxed browser, until it is known to be someone else's). Trusted without asking: code this app ships, in any build (`src/editor/shippedBehaviors.ts`), and code this browser wrote. |
+| **Code-trust gate** | `src/collab/codeTrust.ts` | A room's code from running at all until it is allowed (or, where the sandbox is on, until it is known to be someone else's). Trusted without asking: code this app ships, in any build (`src/editor/parts/shippedBehaviors.ts`), and code this browser wrote. |
 | **SES lockdown** | `src/core/realmLockdown.ts`, run by `src/core/lockdownBoot.ts`, which `src/editor/main.tsx` and `src/sim/worker.ts` import first (on a dev server only, the page skips it when localStorage has `oip-web/no-lockdown`; the worker always locks down) | Tampering with the intrinsics the app relies on, and every path from a handed-in function back to the host (`fn.constructor('return this')`). |
-| **Compartment** | `src/core/partScript.ts` `compileSandboxed` | Part code seeing anything but the language's own globals: no `window`, storage, network, DOM, workers or app objects. |
+| **Compartment** | `src/core/parts/partScript.ts` `compileSandboxed` | Part code seeing anything but the language's own globals: no `window`, storage, network, DOM, workers or app objects. |
 | **The boundary** | `resolvePartParams`, `src/core/hostCopy.ts`, the `ctx` setters in `src/sim/embeddedBehavior.ts` | A part corrupting host data it is handed, or handing back data that changes after it was checked. |
 | **Determinism scan and shims, loop budget** | `src/core/determinism.ts`, `partScript.ts` SHIMS, `src/core/loopGuard.ts` | Not security: reproducibility (`Math.random`, `Date`), and a runaway loop freezing the page. They still run inside the sandbox. |
 | **Desktop main process** | `apps/desktop/folderGrants.cjs`, `endpointConsent.cjs` | What an escape would be worth on the desktop: main only touches folders the user handed it, and asks natively before any socket that leaves the machine. |
@@ -18,7 +18,7 @@ that way.
 ## How part code is compiled
 
 Every host compiles through `compilePartScript` (`partScript.ts`). When the realm is locked down
-(`partSandboxActive()`, `src/core/partSandbox.ts`), the source compiles inside a fresh `Compartment` per distinct source, wrapped as:
+(`partSandboxActive()`, `src/core/parts/partSandbox.ts`), the source compiles inside a fresh `Compartment` per distinct source, wrapped as:
 
 ```js
 (function (Array, Object, Number, ..., parseInt) {      // BOUND_GLOBALS: read once, as locals
@@ -56,8 +56,7 @@ The other three keep the host's diagnostics native. `realmLockdown.ts` does not 
 These apply to every module, because the whole page and the sim worker run locked down:
 
 - **Never assign a property that an intrinsic prototype also has.** For example, `map.get = ...` on a `Map`
-  instance throws (the "override mistake"). Use `Object.defineProperty` instead
-  (`src/render/viewport/pipelineDedup.ts`). In the renderer this fails silently: the error is caught and the
+  instance throws (the "override mistake"). Use `Object.defineProperty` instead. In the renderer this fails silently: the error is caught and the
   renderer falls back to WebGL.
 - **Never fill a `new Array(n)` hole by hole in a hot loop.** Writing into holes is ~25x slower once
   `Array.prototype` is frozen. Use `.fill(...)` first, or `push`.
@@ -117,13 +116,16 @@ hole in SES.
 ## Hangs in the simulation
 
 The sim worker runs `step()`, `init()` and the worker's own `geometry()` calls. The page watches it
-([sim/client.ts](../src/sim/client.ts)): a running world sends frames many times a second, paused or not, so a run
-that sends none for 10 s (30 s before its first frame, which waits on the world build and a cold Jolt compile) is stuck.
+([sim/client.ts](../src/sim/client.ts)). A running world sends frames many times a second. A paused one sends none, but
+its step loop keeps ticking a counter the page shares with the worker (where memory cannot be shared, it sends a small
+'alive' message once a second instead). Part code runs on the loop's thread, so a stuck call stops both. A run that
+shows neither for 10 s (30 s before its first frame, which waits on the world build and a cold Jolt compile) is stuck.
 The page ends the worker, stops the run and says so; the next Play starts a fresh worker. A hidden tab restarts the
-clock instead of judging, since its timers are throttled.
+clock instead of judging, since its timers are throttled. A check that runs late, after the page was hidden, still
+sees the counter has moved and leaves a live worker alone.
 
 To say which part, part code marks itself in a small buffer the page shares with the worker
-([core/partScript.ts](../src/core/partScript.ts) `setPartCallBeacon`). The outermost call into part code (an entry point
+([core/parts/partScript.ts](../src/core/parts/partScript.ts) `setPartCallBeacon`). The outermost call into part code (an entry point
 or a script's top level, the same place the loop budget resets) writes that it is in part code and the part's name,
 and clears the mark on the way out. The worker names a script by the package whose behavior it is, once per placed
 part. The page reads the buffer before it ends the worker. Where memory cannot be shared (a page that is not
@@ -131,13 +133,12 @@ cross-origin isolated) the run is still ended, without a name. Gated by `e2e/ver
 
 ## Rooms
 
-In a browser where `partSandboxActive()` holds, a room's foreign code runs sandboxed by default, and
-`RoomCodePrompt` shows a notice with **Block**. A block is remembered per room in `oip-web/blocked-rooms`, and the
-room reloads with that code held. On the desktop, or where lockdown failed, the prompt asks first: the code is
-held until allowed.
+Where `partSandboxActive()` holds, in a browser or the desktop, a room's foreign code runs sandboxed by default,
+with nothing shown. On the desktop an escape would also meet the main process's folder grants and endpoint consent.
+Where lockdown failed, `RoomCodePrompt` asks first: the code is held until allowed.
 
 **Staying openable when a room's code freezes the page.** The sandbox confines code; it cannot stop it spinning. A
-hostile part that hangs `geometry()` on open would freeze the page before Block can be clicked, on every open. Two
+hostile part that hangs `geometry()` on open would freeze the page on every open. Two
 safe opens hold the foreign code for that open, and the prompt says why (`RoomCodeMode.safe`):
 
 - **`&nocode` in the link.** Anyone can use it to get into a room deliberately.
@@ -155,6 +156,6 @@ In the page, that is all the protection there is. A hostile link can cost one fr
   budget intact, every built-in part still builds.
 - `src/editor/roomCodeTrust.test.ts` (`@unlocked-realm`): the gate as the last line of defence where the sandbox
   is absent.
-- `src/collab/codeTrust.test.ts`, `src/editor/shippedBehaviors.test.ts`, `src/core/sha256.test.ts`.
+- `src/collab/codeTrust.test.ts`, `src/editor/parts/shippedBehaviors.test.ts`, `src/core/sha256.test.ts`.
 - `apps/desktop/folderGrants.test.cjs` and `endpointConsent.test.cjs`.
 - Every e2e gate runs the app locked down, since the app locks itself down at boot.

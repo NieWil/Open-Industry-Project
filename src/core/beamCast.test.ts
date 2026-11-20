@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { castBeamFrame, rayAabb, rayCapsuleY, rayObb } from './beamCast'
+import { castBeamFrame, castsCrossRows, changedCargoRows, rayAabb, rayCapsuleY, rayObb } from './beamCast'
 import type { BoxFrame } from './frame'
-import { qFromAxisAngle } from './rigPose'
-import type { Quat } from './rigPose'
+import { qFromAxisAngle } from './rig/rigPose'
+import type { Quat } from './rig/rigPose'
 
 describe('beamCast - ray vs box (C-sensing)', () => {
   it('rayAabb returns the entry distance for a hit and null for a miss', () => {
@@ -85,6 +85,42 @@ describe('castBeamFrame - beam vs a BoxFrame (stopped-editor twin of the sim cas
 
   it('returns null on an empty frame', () => {
     expect(castBeamFrame([0, 0, 0], [1, 0, 0], 10, frameOf([]))).toBeNull()
+  })
+})
+
+describe('changedCargoRows - what a cargo edit can change for a beam', () => {
+  const half: [number, number, number] = [0.5, 0.5, 0.5]
+
+  it('lists only the rows whose pose, size or tint moved', () => {
+    const a = frameOf([{ pos: [0, 0, 0], half }, { pos: [2, 0, 0], half }, { pos: [4, 0, 0], half }, { pos: [6, 0, 0], half }])
+    const b = frameOf([{ pos: [0, 0, 0], half }, { pos: [2.1, 0, 0], half }, { pos: [4, 0, 0], half: [0.5, 0.6, 0.5] }, { pos: [6, 0, 0], half }])
+    b.colors[9] = 1 // row 3's tint
+    expect(changedCargoRows(a, b)).toEqual([1, 2, 3])
+    expect(changedCargoRows(a, a)).toEqual([])
+  })
+
+  it('has no row-for-row answer when the row count changed', () => {
+    expect(changedCargoRows(frameOf([{ pos: [0, 0, 0], half }]), frameOf([]))).toBeNull()
+  })
+})
+
+describe('castsCrossRows - does a recorded beam enter a given row', () => {
+  const f = frameOf([
+    { pos: [2, 0, 0], half: [0.5, 0.5, 0.5] }, // on the first cast's ray
+    { pos: [0, 5, 0], half: [0.5, 0.5, 0.5] }, // on the second cast's ray, beyond its range
+    { pos: [0, 0, 9], half: [0.5, 0.5, 0.5] }, // on no ray
+  ])
+  // origin xyz, dir xyz, range: one cast along +X (range 10), one along +Y (range 3)
+  const casts = [0, 0, 0, 1, 0, 0, 10, 0, 0, 0, 0, 1, 0, 3]
+
+  it('is true for a row on a cast within its range', () => {
+    expect(castsCrossRows(casts, f, [0])).toBe(true)
+  })
+
+  it('is false for rows off every cast or beyond its range, and for no rows or no casts', () => {
+    expect(castsCrossRows(casts, f, [1, 2])).toBe(false)
+    expect(castsCrossRows(casts, f, [])).toBe(false)
+    expect(castsCrossRows([], f, [0, 1, 2])).toBe(false)
   })
 })
 

@@ -9,7 +9,7 @@ interface ImportMetaEnv {
 import type { IRenderViewTestSurface } from '../render/viewport/view'
 import type { SimClient } from '../sim/client'
 import type { EditorController } from './controller'
-import type { EditorStore } from './store'
+import type { EditorStore } from './store/store'
 
 declare global {
   /** the build's git identity, injected by vite.config.ts `define` - see editor/bench.ts */
@@ -32,10 +32,10 @@ declare global {
       /** offline generator hook: renders every first-party bundled package card, as [packageId, dataUrl][] */
       getBundledThumbnails?: () => Promise<[string, string][]>
       /** registry lookup, exposed for E2E so a test can assert a package's live (edited) content */
-      getPackage?: (id: string) => import('../core/partPackage').PartPackage | undefined
+      getPackage?: (id: string) => import('../core/parts/partPackage').PartPackage | undefined
       /** registry insert, exposed for E2E so a test can stand up a synthetic package (e.g. an SDK
        *  capability no shipped part opts into) without editing a built-in's declaration */
-      registerPackage?: (pkg: import('../core/partPackage').PartPackage, authoritative?: boolean) => boolean
+      registerPackage?: (pkg: import('../core/parts/partPackage').PartPackage, authoritative?: boolean) => boolean
       /** the ?xremu emulated WebXR headset (IWER XRDevice), for console/E2E driving */
       xrDevice?: import('iwer').XRDevice
       /** Open a project folder and keep it in sync both ways, bypassing the picker. showDirectoryPicker

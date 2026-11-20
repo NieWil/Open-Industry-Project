@@ -6,7 +6,7 @@ import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
 import { buildAuthoredCargoFrame, CARGO_KIND_PALLET } from '../core/frame'
 import type { FrameDressing } from '../core/frame'
-import { validateScene } from '../core/scene'
+import { validateScene } from '../core/scene/scene'
 import type { PartInstance } from '../core/types'
 import { SCENE_VERSION } from '../core/types'
 import { buildPackage } from './buildPackage'
@@ -171,7 +171,7 @@ describe('stretch wrapper', () => {
   it('runs one cycle per start edge while a program drives it, and says done until the load leaves', () => {
     // the load stands downstream of centre, far enough that its leading cases block the station eye (0.53 m out), as a
     // load stopped on that eye does
-    const w = new SimWorld(Jolt, wrapperScene({ enableComms: true, startTag: 'WrapStart', busyTag: 'WrapBusy', doneTag: 'WrapDone', inPositionTag: 'WrapInPos' }, load(-0.12)))
+    const w = new SimWorld(Jolt, wrapperScene({ startTag: 'WrapStart', busyTag: 'WrapBusy', doneTag: 'WrapDone', inPositionTag: 'WrapInPos' }, load(-0.12)))
     w.setBehaviorDrivenTags(['WrapStart'])
     const tag = (name: string): unknown => w.frame().tags?.['wrap']?.[name]
     w.setBehaviorInputTags({ WrapStart: false })
@@ -191,8 +191,8 @@ describe('stretch wrapper', () => {
   }, 60000)
 
   it('brakes the arm and holds the cycle while its enable is down, then finishes the wrap from there', () => {
-    const w = new SimWorld(Jolt, wrapperScene({ enableComms: true, startTag: 'WrapStart', enableTag: 'WrapEnable', busyTag: 'WrapBusy', doneTag: 'WrapDone' }, load(-0.12)))
-    w.setBehaviorDrivenTags(['WrapStart'])
+    const w = new SimWorld(Jolt, wrapperScene({ startTag: 'WrapStart', enableTag: 'WrapEnable', busyTag: 'WrapBusy', doneTag: 'WrapDone' }, load(-0.12)))
+    w.setBehaviorDrivenTags(['WrapStart', 'WrapEnable'])
     const tag = (name: string): unknown => w.frame().tags?.['wrap']?.[name]
     const joints = (): Record<string, number> => w.frame().joints?.['wrap'] ?? {}
     // a start while the enable is down is ignored

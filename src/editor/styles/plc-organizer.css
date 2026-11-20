@@ -1,4 +1,4 @@
-/* ===== PLC organizer (components/PlcOrganizer.tsx) ===== */
+/* ===== PLC organizer (components/plc/PlcOrganizer.tsx) ===== */
 /* The program as a tree beside the code: the top-level code, the tasks and what they run, then the POUs by kind.
    Every row is one line; a narrow organizer ellipsizes the NAME and keeps its tag (ST / LD) and its buttons. */
 
@@ -188,8 +188,13 @@
   color: var(--text);
 }
 
+/* an action written as words inside a note ("Set up", "Edit them here"): outlined, so it reads as a button and not as
+   more of the note, where the bare "+" buttons rely on their glyph */
 .org-inline-btn {
   margin-left: 6px;
+  border-color: var(--line-soft);
+  background: var(--control);
+  color: var(--text);
 }
 
 .org-children {

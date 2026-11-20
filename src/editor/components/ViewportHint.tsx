@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import type { EditorStore } from '../store'
+import type { EditorStore } from '../store/store'
 
 interface ViewportHintProps {
   hint: { key: number; text: string }

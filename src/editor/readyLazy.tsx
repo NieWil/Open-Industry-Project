@@ -44,6 +44,8 @@ export function readyLazy<P extends object>(load: () => Promise<ComponentType<P>
     useEffect(() => {
       if (Impl) return
       let live = true
+      // preload never rejects: a load failure is kept in `failed` and thrown to the error boundary below
+      // eslint-disable-next-line oip/no-unhandled-then
       void preload().then(() => {
         if (!live) return
         if (loaded) setImpl(() => loaded)

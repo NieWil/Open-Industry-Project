@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { CHIP_FADE_END, CHIP_FADE_START, NO_VALUE, chipOpacity, chipViews, chipsKey, readoutText } from './annotationChips'
 import type { ChipProjection } from './annotationChips'
 import { ANNOTATION_ICONS, annotationGlyph, PART_DEFS } from '../core/types'
-import { createPart } from '../core/scene'
-import { subtreeIds } from '../core/hierarchy'
+import { createPart } from '../core/scene/scene'
+import { subtreeIds } from '../core/scene/hierarchy'
 import type { AnnotationPart, PartInstance } from '../core/types'
 
 const proj = (id: string, over: Partial<ChipProjection> = {}): ChipProjection =>

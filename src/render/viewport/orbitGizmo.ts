@@ -101,6 +101,7 @@ export class OrbitGizmo {
     this.callbacks = callbacks
 
     const canvas = document.createElement('canvas')
+    canvas.className = 'orbit-gizmo'
     this.canvas = canvas
     Object.assign(canvas.style, {
       position: 'absolute',
@@ -126,6 +127,8 @@ export class OrbitGizmo {
     canvas.addEventListener('pointerleave', this.onLeave)
     canvas.addEventListener('contextmenu', this.onContextMenu)
     document.addEventListener('pointerlockchange', this.onLockChange)
+    window.addEventListener('blur', this.onBlur)
+    window.addEventListener('keydown', this.onKeyDown, true)
   }
 
   private get locked(): boolean {
@@ -163,6 +166,8 @@ export class OrbitGizmo {
     this.canvas.removeEventListener('pointerleave', this.onLeave)
     this.canvas.removeEventListener('contextmenu', this.onContextMenu)
     document.removeEventListener('pointerlockchange', this.onLockChange)
+    window.removeEventListener('blur', this.onBlur)
+    window.removeEventListener('keydown', this.onKeyDown, true)
     this.canvas.remove()
   }
 
@@ -297,6 +302,12 @@ export class OrbitGizmo {
       this.abortDrag()
       return
     }
+    // a press with no button held any more: its release was lost (Alt-Tab), which matters before the pointer lock
+    // engages or when the browser refuses it. End it as a release would, the camera staying where the orbit left it.
+    if (this.pressed && e.buttons === 0) {
+      this.releaseLost()
+      return
+    }
     if (!this.pressed) {
       const p = this.localPoint(e)
       this.setFocus(p.x, p.y)
@@ -342,6 +353,26 @@ export class OrbitGizmo {
     if (!wasDragging && this.focusedAxis >= 0) this.callbacks.snapToAxis(AXIS_DIRS[this.focusedAxis]!)
     const p = this.localPoint(e)
     this.setFocus(p.x, p.y)
+  }
+
+  /** a press whose release never came: finish it without the click's axis snap */
+  private releaseLost(): void {
+    if (this.dragging && this.locked) document.exitPointerLock()
+    this.endDrag()
+    this.canvas.style.cursor = 'default'
+  }
+
+  private readonly onBlur = (): void => {
+    if (this.pressed) this.releaseLost()
+  }
+
+  // Escape while orbiting cancels the orbit and is the gizmo's alone; without the pointer lock (which handles Escape
+  // through onLockChange) it otherwise reached the editor and cleared the selection while the orbit went on
+  private readonly onKeyDown = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape' || !this.pressed) return
+    e.preventDefault()
+    e.stopPropagation()
+    this.abortDrag()
   }
 
   /** right-click abort: restore the camera and tear down the drag without snapping */

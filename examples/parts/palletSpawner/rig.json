@@ -2,7 +2,6 @@
   "id": "oip.pallet-spawner",
   "name": "Pallet Spawner",
   "category": "Products",
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "links": [

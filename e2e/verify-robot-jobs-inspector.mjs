@@ -84,7 +84,6 @@ try {
       waypointNames: 'Home\nAbove pick\nPick\nAbove place\nPlace',
       jobs: JOBS,
       jobNames: 'Pick part\nPlace part',
-      enableComms: true,
       commandTag: 'RobotCmd',
       executeTag: 'RobotExec',
       doneTag: 'RobotDone',
@@ -162,6 +161,29 @@ try {
   check('the missing step says so', (await page.locator('.prog-missing').count()) === 1)
   await field.screenshot({ path: shot('missing') })
   await page.evaluate(() => window.__oip.store.undo())
+
+  // ---- 3b. moving a waypoint up keeps its name with it, and every step still moves to the same waypoint
+  const tableBefore = await page.evaluate(() => {
+    const p = window.__oip.store.getState().scene.parts[0].params
+    return { waypoints: p.waypoints, names: p.waypointNames, jobs: p.jobs }
+  })
+  const wpRow = (i) => page.locator('[data-param="waypoints"] .array-elem').nth(i)
+  check('the first waypoint cannot move up, the last cannot move down',
+    (await wpRow(0).locator('button[aria-label$=" up"]').isDisabled()) && (await wpRow(4).locator('button[aria-label$=" down"]').isDisabled()))
+  await wpRow(2).locator('button[aria-label$=" up"]').click()
+  const moved = await page.evaluate(() => {
+    const p = window.__oip.store.getState().scene.parts[0].params
+    return { waypoints: p.waypoints, names: p.waypointNames, jobs: p.jobs }
+  })
+  check('Pick moves above Above pick, values and name together',
+    moved.names === 'Home\nPick\nAbove pick\nAbove place\nPlace' && JSON.stringify(moved.waypoints[1]) === JSON.stringify(tableBefore.waypoints[2]) && JSON.stringify(moved.waypoints[2]) === JSON.stringify(tableBefore.waypoints[1]),
+    JSON.stringify(moved.names))
+  check('the steps follow their waypoints (Above pick 1 -> 2, Pick 2 -> 1)', moved.jobs[0][2] === 2 && moved.jobs[1][2] === 1, `${JSON.stringify(moved.jobs[0])} ${JSON.stringify(moved.jobs[1])}`)
+  const stepsAfterMove = await page.locator('.prog-job').first().locator('.prog-step').evaluateAll((els) => els.slice(0, 2).map((s) => s.querySelector('select.prog-arg-row')?.selectedOptions[0]?.textContent))
+  check('...so each step still reads the same waypoint', stepsAfterMove.join('|') === 'Above pick|Pick', stepsAfterMove.join('|'))
+  await page.evaluate(() => window.__oip.store.undo())
+  const restored = await page.evaluate(() => window.__oip.store.getState().scene.parts[0].params.waypointNames)
+  check('...as one undo step', restored === tableBefore.names, JSON.stringify(restored))
 
   // ---- 4. running: the step being run is highlighted
   await page.evaluate((src) => {

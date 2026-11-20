@@ -3,7 +3,7 @@
 // The door lets any program on this machine drive the open editor - author, run, edit PLC programs, and through
 // the folder sync, write the project's files. Its Host/Origin checks keep web pages and the network out, but not
 // another local program, nor another Windows account on a shared machine. So an installed app starts with it
-// shut and the user opens it on purpose (Help > Agent Connections..., main.cjs manageAgentDoor). A token would
+// shut and the user opens it on purpose (Settings > Agent connections, main.cjs setAgentDoor). A token would
 // protect little more, since anything running as the user can read a token from this same folder. The
 // unpackaged development shell starts with it open, so a developer's agent works without a setting.
 //

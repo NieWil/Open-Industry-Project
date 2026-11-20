@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { IRenderView } from '../../render/api'
-import type { EditorStore } from '../store'
+import type { EditorStore } from '../store/store'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('pilotTouch', {

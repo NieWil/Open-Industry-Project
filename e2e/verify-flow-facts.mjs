@@ -1,5 +1,5 @@
-// Verifies that a run's flow facts (src/core/flowFacts.ts) reach the main thread, end to end in a real browser: the sim
-// worker collects them and the client's log keeps them (core/flowFactLog.ts), which get_problems reads.
+// Verifies that a run's flow facts (src/core/flow/flowFacts.ts) reach the main thread, end to end in a real browser: the sim
+// worker collects them and the client's log keeps them (core/flow/flowFactLog.ts), which get_problems reads.
 //   - a box running off the end of a conveyor with nothing to catch it is a 'dropped' fact naming the conveyor
 //   - facts are not problems: the Problems dock lists no row for it, and its error and warning counts do not move
 //   - the log outlasts Stop, and the next Run empties it
@@ -22,7 +22,7 @@ function expect(cond, msg) {
 
 // a running conveyor (no comms: it runs at its own speed) with a spawner over its tail and nothing past its head end, so
 // every box rides off the end and falls to the floor. Low (bed at 0.45 m) so a box leaves the bed and lands within the
-// tracker's half-second trail, which is how a drop names the conveyor it came off (core/flowFacts.ts lastOn)
+// tracker's half-second trail, which is how a drop names the conveyor it came off (core/flow/flowFacts.ts lastOn)
 const SCENE = {
   version: 4,
   parts: [

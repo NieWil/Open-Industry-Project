@@ -48,6 +48,33 @@ describe('standard functions: arithmetic + selection', () => {
     expect(evalExpr('INT', 'MUX(k, 100, 200, 300)', { k: 0 }, decl)).toBe(100)
     expect(evalExpr('INT', 'MUX(k, 100, 200, 300)', { k: 2 }, decl)).toBe(300)
     expect(evalExpr('INT', 'MUX(k, 100, 200, 300)', { k: 9 }, decl)).toBe(0)
+    expect(evalExpr('INT', 'MUX(k, 100, 200, 300)', { k: 3 }, decl)).toBe(0)
+    // a negative selector too, not the selector itself
+    expect(evalExpr('INT', 'MUX(k, 100, 200, 300)', { k: -1 }, decl)).toBe(0)
+    expect(evalBuiltin('MUX', 'INT', [-1, 100, 200])).toBe(0)
+  })
+
+  it('a 32-bit product keeps its low bits, by MUL as by the * operator', () => {
+    const ud = 'VAR_INPUT a : UDINT; END_VAR '
+    expect(evalExpr('UDINT', 'a * a', { a: 0xffffffff }, ud)).toBe(1)
+    expect(evalExpr('UDINT', 'MUL(a, a)', { a: 0xffffffff }, ud)).toBe(1)
+    expect(evalExpr('UDINT', 'MUL(a, a, a)', { a: 0xffffffff }, ud)).toBe(0xffffffff)
+    const d = 'VAR_INPUT a : DINT; END_VAR '
+    expect(evalExpr('DINT', 'a * a', { a: 0x7fffffff }, d)).toBe(1)
+    expect(evalExpr('DINT', 'MUL(a, a)', { a: 0x7fffffff }, d)).toBe(1)
+    expect(evalExpr('DWORD', 'MUL(a, a)', { a: 0xffffffff }, 'VAR_INPUT a : DWORD; END_VAR ')).toBe(1)
+  })
+
+  it('ADD and MUL with three or more inputs round or wrap after each step, as the operators do', () => {
+    // 2^24 + 1 rounds back to 2^24 in a REAL; summed in binary64 and rounded once, ADD would answer 2^24 + 2
+    expect(evalBuiltin('ADD', 'REAL', [16777216, 1, 1])).toBe(16777216)
+    expect(evalBuiltin('MUL', 'REAL', [88, Math.fround(376 / 3), Math.fround(67 / 11)])).toBe(67178.671875)
+    // LREAL is binary64 at every step already
+    expect(evalBuiltin('ADD', 'LREAL', [2 ** 53, 1, 1])).toBe(2 ** 53)
+    // 32767^4 is past 2^53, so an INT product wrapped once at the end would answer 0
+    expect(evalBuiltin('MUL', 'INT', [32767, 32767, 32767, 32767])).toBe(1)
+    const r = 'VAR_INPUT a : REAL; b : REAL; END_VAR '
+    expect(evalExpr('BOOL', 'ADD(a, b, b) = a + b + b', { a: 16777216, b: 1 }, r)).toBe(true)
   })
 })
 
@@ -171,6 +198,11 @@ describe('builtins in the ST -> TS emitter (shown == executed)', () => {
     const shift = toTypeScript('VAR a : BYTE; y : BYTE; END_VAR\ny := SHL(a, 2);')
     expect(shift).toContain("shl('BYTE', S.a, 2)")
     expect(shift).toContain("import { wrap, idiv, imod, makeFb, shl } from './runtime'")
+  })
+
+  it('emits REAL and integer ADD / MUL rounded or wrapped after each step', () => {
+    expect(toTypeScript('VAR a : REAL; y : REAL; END_VAR\ny := ADD(a, a, a);')).toContain("wrap('REAL', wrap('REAL', S.a + S.a) + S.a)")
+    expect(toTypeScript('VAR a : INT; y : INT; END_VAR\ny := MUL(a, a, a);')).toContain("wrap('INT', wrap('INT', S.a * S.a) * S.a)")
   })
 
   it('leaves the helper import untouched for a program that uses no helpers', () => {

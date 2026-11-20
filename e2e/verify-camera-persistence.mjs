@@ -1,4 +1,4 @@
-// The viewport camera is per-project workspace state (editor/storePrefs viewport state), like the dock
+// The viewport camera is per-project workspace state (editor/store/storePrefs viewport state), like the dock
 // sizes: where you left a project is where it reopens. (A project holds one scene, so its slot is
 // documentStore.sceneSlotKey(SCENE_SLOT): the document id + 'scene-1'.)
 //
@@ -31,7 +31,7 @@ const check = (name, ok, info = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${info ? `  (${info})` : ''}`)
 }
 
-const DEMO_OPENING_VIEW = { px: -9, py: 9, pz: 4.5, tx: 4, ty: 0.6, tz: -5 } // editor/demoScenes.ts
+const DEMO_OPENING_VIEW = { px: -9, py: 9, pz: 4.5, tx: 4, ty: 0.6, tz: -5 } // editor/demo/demoScenes.ts
 const DEFAULT_POSE = { px: 9, py: 7, pz: 9, tx: 0, ty: 0, tz: 0 } // render/api.ts DEFAULT_CAMERA_POSE
 const near = (a, b) => a && b && ['px', 'py', 'pz', 'tx', 'ty', 'tz'].every((k) => Math.abs(a[k] - b[k]) < 0.05)
 const fmt = (p) => (p ? `${p.px.toFixed(1)},${p.py.toFixed(1)},${p.pz.toFixed(1)} -> ${p.tx.toFixed(1)},${p.ty.toFixed(1)},${p.tz.toFixed(1)}` : 'null')

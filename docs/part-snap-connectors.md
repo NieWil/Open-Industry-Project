@@ -8,8 +8,8 @@ how to change any of them safely.
 ## The model
 
 A part's `snap` block is a set of declarations in a closed vocabulary. The engine
-([snapFeatures.ts](../src/core/snapFeatures.ts)) never reads those kinds directly. It reads
-**connectors** ([snapConnectors.ts](../src/core/snapConnectors.ts)):
+([snapFeatures.ts](../src/core/snap/snapFeatures.ts)) never reads those kinds directly. It reads
+**connectors** ([snapConnectors.ts](../src/core/snap/snapConnectors.ts)):
 
 - A **plug** is a feature of the part being dragged. It seeks a socket of a kind, or, for a peer plug, a
   same-group plug on the other part. `plugsOf(snap)` compiles a declaration into plugs once and caches them.
@@ -68,7 +68,7 @@ or a deliberate SDK-only mark with its reason. A kind that only synthetic specim
 
 ## Conveyor to conveyor
 
-The conveyor engine (`snapConveyor` in `src/core/snapFeatures.ts`) follows the same idea inside itself. It
+The conveyor engine (`snapConveyor` in `src/core/snap/snapConveyor.ts`) follows the same idea inside itself. It
 solves every join the mover could make: each of its ends onto each end of the target and, on a straight
 target, onto each flank (a side merge). The cheapest one that engages is taken. There is no up-front "end or
 side?" decision. Choosing a mode first, from the mover's origin and body axis, would send a spur held at a
@@ -130,6 +130,6 @@ change to a declaration's reach, and a 1 mm change inside the engine.
   change. Declare it.
 - **A new pairing** of existing shapes is a case in `solvePlug` plus a solver.
 - **A new shape** is a `Plug` member in `snapConnectors.ts`, a socket resolver and a solver in
-  `snapFeatures.ts`, validation in `partPackage.ts` (`validateSnap`, plus `SNAP_PARAM_REFS` if it names
+  its own `snap*.ts` module beside `snapFeatures.ts`, validation in `partValidate.ts` (`validateSnap`, plus `SNAP_PARAM_REFS` if it names
   params), an owner entry in `SNAP_KIND_OWNER` (bundledPackageData.test.ts, a compile error until you add
   one), a golden specimen, and this doc.

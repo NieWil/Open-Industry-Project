@@ -60,7 +60,7 @@ password. View-only links are enforced by the server. See [docs/collab.md](docs/
 ### The desktop app's local servers have no passwords
 
 - The **AI agent connection**, which lets an AI agent control the editor, is off until you turn it on
-  under **Help > Agent Connections…**. While it's on, any program on your computer can edit
+  under **Settings > Agent connections** (**Help > Agent Connections…** opens it). While it's on, any program on your computer can edit
   the open project.
 - The built-in **OPC UA server** and **Modbus TCP server** have no login. They only accept
   connections from your own computer unless you set them to listen on the network.

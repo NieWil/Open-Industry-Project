@@ -41,7 +41,7 @@ export function builtInUpdateChoices(controller: EditorController, packageId: st
   ]
 }
 
-/** the update prompt's headline (PartUpdatesNotice) */
+/** the update prompt's headline (PartUpdatesNotice), for updates from any source */
 export function updatesAvailableText(count: number): string {
   return count === 1 ? '1 part in this project has an update' : `${count} parts in this project have updates`
 }
@@ -49,7 +49,7 @@ export function updatesAvailableText(count: number): string {
 /** what Update all asks first: how many change, and by name which of them lose this project's own changes */
 export function updateAllQuestion(names: readonly string[], editedNames: readonly string[]): string {
   const list = (xs: readonly string[]): string => xs.slice(0, 4).join(', ') + (xs.length > 4 ? ` and ${xs.length - 4} more` : '')
-  const what = names.length === 1 ? `Update ${names[0]} to the app's new version?` : `Update ${names.length} parts to the app's new versions (${list(names)})?`
+  const what = names.length === 1 ? `Update ${names[0]} to its newer version?` : `Update ${names.length} parts to their newer versions (${list(names)})?`
   const lost =
     editedNames.length === 0
       ? ''

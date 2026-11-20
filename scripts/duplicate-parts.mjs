@@ -9,12 +9,12 @@
 //   --id-suffix S      each copy's id is <id>S (an id that is taken is an error); default <id>-2, or the next free
 //   --strict           a clash (below) fails the run, and nothing is written
 //
-// What follows the copies and what does not (core/partDuplicate.ts): a part's soft-parented subtree comes along;
+// What follows the copies and what does not (core/parts/partDuplicate.ts): a part's soft-parented subtree comes along;
 // `parent` links and `partRef` params (a spawner's conveyorId) that point INSIDE the group are moved onto the
 // copies, and ones pointing outside are kept. A copied tag the part WRITES that another part already writes is a
 // CLASH (two drivers: last one wins), warned about; a copied INPUT tag left unchanged (a lane's run tag shared with
 // the main belt) is listed, since that is often meant. Guard openings, spur extents and the other seam-derived
-// geometry are not stored on parts (core/sceneResolve.ts recomputes them from the scene), so the copies get their
+// geometry are not stored on parts (core/scene/sceneResolve.ts recomputes them from the scene), so the copies get their
 // own from where they land.
 //
 // Why this exists: adding a second identical station took six hand-coordinated add/snap calls with shifted
@@ -84,7 +84,7 @@ try {
     throw e
   }
   const { scene } = lib
-  const { duplicateParts, parseRenameMap } = await vite.ssrLoadModule('/src/core/partDuplicate.ts')
+  const { duplicateParts, parseRenameMap } = await vite.ssrLoadModule('/src/core/parts/partDuplicate.ts')
   let rename
   try {
     rename = o.rename ? parseRenameMap(o.rename) : undefined

@@ -5,13 +5,13 @@
 // and the shared snap / rest helpers).
 
 import { isCargoPart } from '../../core/frame'
-import { createPart, createSdkPart, nextId } from '../../core/scene'
-import { getPackage } from '../../core/partRegistry'
-import { partFootprint } from '../../core/partGeometry'
+import { createPart, createSdkPart, nextId } from '../../core/scene/scene'
+import { getPackage } from '../../core/parts/partRegistry'
+import { partFootprint } from '../../core/parts/partGeometry'
 import { PART_DEFS } from '../../core/types'
 import type { PartInstance, PartType, SceneJSON } from '../../core/types'
-import { surfaceAlignPose } from '../../core/snapFeatures'
-import type { SnapCandidate, SnapPose } from '../../core/snapFeatures'
+import { surfaceAlignPose } from '../../core/snap/snapSurfacePose'
+import type { SnapCandidate, SnapPose } from '../../core/snap/snapFeatures'
 import type { EditorController } from '../controller'
 
 // --- placement -----------------------------------------------------------

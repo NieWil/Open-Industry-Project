@@ -184,6 +184,13 @@ describe('rig joint commands (ctx.setJoint)', () => {
     expect(out.subPoses).toEqual({ hand: { position: [0, 2, 0], rotation: [0, 0, 0] } })
   })
 
+  it('ctx.setSubPose takes a quat, normalised, in place of the Euler rotation; a zero quat is dropped', () => {
+    const h = create(`definePart({ step(ctx){ ctx.setSubPose('tray', { quat: [0, 0, 2, 0], rotation: [1, 2, 3] }); ctx.setSubPose('bad', { quat: [0, 0, 0, 0], rotation: [0, 1, 0] }) } })`, '{}')
+    const out = JSON.parse(step(h, JSON.stringify({ simTime: 0 }), 1 / 60)) as { subPoses: Record<string, { rotation?: number[]; quat?: number[] }> }
+    destroy(h)
+    expect(out.subPoses).toEqual({ tray: { quat: [0, 0, 1, 0] }, bad: { rotation: [0, 1, 0] } })
+  })
+
   it('ctx.drive emits a base velocity command (C-drive), reset each tick, finite-guarded', () => {
     // a navigator commands forward speed + yaw rate; absent when not commanded
     const src = `definePart({ step(ctx){ if (ctx.readTag('go')) ctx.drive(1.5, 0.3) } })`

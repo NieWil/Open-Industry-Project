@@ -60,18 +60,18 @@ const vite = await createServer({
 try {
   // the app's built-in parts: a format-3 project names them by id and keeps no copy (scripts/lib/builtIns.mjs)
   await declareBuiltIns(vite)
-  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/projectFolder.ts')
-  const { validateProject } = await vite.ssrLoadModule('/src/core/project.ts')
-  const { validateScene } = await vite.ssrLoadModule('/src/core/scene.ts')
+  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/project/projectFolder.ts')
+  const { validateProject } = await vite.ssrLoadModule('/src/core/project/project.ts')
+  const { validateScene } = await vite.ssrLoadModule('/src/core/scene/scene.ts')
   const { validatePart, formatPartDiagnostics } = await vite.ssrLoadModule('/src/sim/validatePart.ts')
-  const { registerPackage } = await vite.ssrLoadModule('/src/core/partRegistry.ts')
+  const { registerPackage } = await vite.ssrLoadModule('/src/core/parts/partRegistry.ts')
   const { checkWiring, wiredBindings } = await vite.ssrLoadModule('/src/plc/wiring.ts')
-  const { LocalPlcLink } = await vite.ssrLoadModule('/src/plc/plcLink.ts')
+  const { LocalPlcLink } = await vite.ssrLoadModule('/src/plc/link/plcLink.ts')
   const { controllerFor, runnableSource } = await vite.ssrLoadModule('/src/plc/controller.ts')
   const { wrappedProgramWarning } = await vite.ssrLoadModule('/src/plc/sceneProgram.ts')
   const { dialectRefusal, isKnownDialect } = await vite.ssrLoadModule('/src/core/dialect.ts')
-  const { validateTestSpec } = await vite.ssrLoadModule('/src/core/projectTest.ts')
-  const { coverByTests } = await vite.ssrLoadModule('/src/core/projectTestTags.ts')
+  const { validateTestSpec } = await vite.ssrLoadModule('/src/core/project/projectTest.ts')
+  const { coverByTests } = await vite.ssrLoadModule('/src/core/project/projectTestTags.ts')
 
   const bakePart = (manifestJson, behaviorJs) => {
     let manifest
@@ -159,7 +159,7 @@ try {
     }
     const report = checkWiring(entry.scene.parts ?? [], link)
     // a program wholly inside two or more PROGRAMs has only `Main.X` tags (one PROGRAM answers to bare names too,
-    // plc/plcLink.ts soleInstanceAliases), so every bare tag above reads as undriven-by-nothing-in-particular: say why
+    // plc/link/plcLink.ts soleInstanceAliases), so every bare tag above reads as undriven-by-nothing-in-particular: say why
     const partTagRefs = (entry.scene.parts ?? []).flatMap((p) => Object.values(p.params ?? {}).filter((v) => typeof v === 'string'))
     const wrapped = entry.stProgram ? wrappedProgramWarning(entry.name, entry.stProgram, [...report.tags.map((t) => t.name), ...partTagRefs]) : null
     if (wrapped) report.problems.push({ severity: 'warning', kind: 'wrapped-program', tag: '', message: wrapped, parts: [] })

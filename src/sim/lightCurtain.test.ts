@@ -1,10 +1,10 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 /// <reference types="vite/client" />
 import initJolt from 'jolt-physics'
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearPartDiagnostics, partDiagnosticsFor } from '../core/partDiagnostics'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartMaterial, PartPackageGeometry } from '../core/partPackage'
+import { clearPartDiagnostics, partDiagnosticsFor } from '../core/parts/partDiagnostics'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartMaterial, PartPackageGeometry } from '../core/parts/partPackage'
 import { SCENE_VERSION } from '../core/types'
 import type { SdkPart, SceneJSON } from '../core/types'
 import { buildPackage } from './buildPackage'
@@ -33,7 +33,7 @@ function registerCurtain(): string {
 }
 
 // a 1.4 m opening, beams at 0.3 .. 1.2 m, spanning local X; travel through it is along Z
-const FIELD = { width: 1.4, fieldBottom: 0.3, fieldHeight: 0.9, enableComms: true, tag: 'ossd', mutingLampTag: 'lamp' }
+const FIELD = { width: 1.4, fieldBottom: 0.3, fieldHeight: 0.9, tag: 'ossd', mutingLampTag: 'lamp' }
 
 describe('light curtain', () => {
   let world: SimWorld | null = null
@@ -77,7 +77,7 @@ describe('light curtain', () => {
     expect(ossd(world)).toBe(true)
   })
 
-  it('lights its muting lamp from the program\'s tag, and only with comms on', () => {
+  it('lights its muting lamp from the program\'s tag, and stays dark with no lamp tag named', () => {
     world = make()
     world.setBehaviorInputTags({ lamp: true })
     world.step()
@@ -89,7 +89,7 @@ describe('light curtain', () => {
     expect(world.frame().lamps?.lc?.muting).toBe(false)
     world.dispose()
     clearPackages()
-    world = make({ enableComms: false })
+    world = make({ mutingLampTag: '' })
     world.setBehaviorInputTags({ lamp: true })
     world.step()
     world.step()

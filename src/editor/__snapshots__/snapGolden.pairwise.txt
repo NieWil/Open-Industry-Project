@@ -65,7 +65,7 @@ golden.two-mount-sensor onto oip.guard-rail: 184 94b1cc40062fe96e
 golden.two-mount-sensor onto oip.guard-rail~2m: 184 f48a7e34d9c31c90
 golden.two-mount-sensor onto oip.laser-sensor: 184 3bddad382f06ea1b
 golden.two-mount-sensor onto oip.light-curtain: 184 75e2898284056176
-golden.two-mount-sensor onto oip.pallet-dispenser: 184 e948f8601bcf9aea
+golden.two-mount-sensor onto oip.pallet-dispenser: 184 a3ab04f44fdf729e
 golden.two-mount-sensor onto oip.pallet-spawner: 184 638c81e176bfdf3a
 golden.two-mount-sensor onto oip.pallet: 184 3730f1c78db7b9cb
 golden.two-mount-sensor onto oip.platform: 196 0399440c5faa7632
@@ -229,7 +229,7 @@ oip.push-button onto oip.guard-rail: 184 e63ad633e565fc74
 oip.push-button onto oip.guard-rail~2m: 184 65245f6fd995c8ad
 oip.push-button onto oip.laser-sensor: 184 149d3a347639d23e
 oip.push-button onto oip.light-curtain: 184 c84f0b3d0d1e2459
-oip.push-button onto oip.pallet-dispenser: 184 7661dcf5b0eead68
+oip.push-button onto oip.pallet-dispenser: 184 b01d583c69065ae9
 oip.push-button onto oip.pallet-spawner: 184 598294ccea81c2d5
 oip.push-button onto oip.pallet: 184 3efd6a62f891cac5
 oip.push-button onto oip.platform: 196 a1459555497e8ae4
@@ -282,7 +282,7 @@ oip.rack onto oip.guard-rail: 92 2d2a007046ed92f4
 oip.rack onto oip.guard-rail~2m: 92 7eae65ab2a600b32
 oip.rack onto oip.laser-sensor: 92 8d348a9cd3cf7d30
 oip.rack onto oip.light-curtain: 92 075b6fa6feaaf721
-oip.rack onto oip.pallet-dispenser: 80 f58cfe39445335a0
+oip.rack onto oip.pallet-dispenser: 80 dcce343c5e7cf90d
 oip.rack onto oip.pallet-spawner: 88 0aa15dbb3a20619d
 oip.rack onto oip.pallet: 80 a3d5ccf5fb1dc90f
 oip.rack onto oip.platform: 160 046a1654a3612e8b

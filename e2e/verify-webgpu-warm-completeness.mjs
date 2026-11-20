@@ -4,7 +4,7 @@
 // Its sibling verify-webgpu-cover-holds asserts ordering (cover-lift >= warm-done) and cannot see
 // the failure this one catches: shrink what the pre-warm covers and both signals move together, so
 // the cover lifts sooner, the gate stays green, and the compiles happen on the user's first frames
-// instead. Measured with ?phase1overlap: dropping phase 1's await moves the cover 3613 -> 3067 ms
+// instead. Measured with an experiment that dropped phase 1's await: the cover moved 3613 -> 3067 ms
 // and at the same time shrinks the pre-warm from 485 items / 80 pipelines to 101 / 45, because
 // phase 1's 1.3 s wait is also the window in which the parts' async GLB attachments arrive.
 // 35 pipelines then compile on-draw after the reveal, and cover-holds passes on both arms.
@@ -32,7 +32,7 @@ const RUNS = Number(process.env.RUNS || 2)
 // Floors on what the pre-warm had covered when the cover lifted. Demo scene, measured.
 //
 // ITEMS is the one that matters: it is what drops sharply when the pre-warm walks a half-built scene
-// (healthy 491, ?phase1overlap 262 on the dev server / 101 on dist). PIPELINES-at-reveal is a weaker
+// (healthy 491, that experiment 262 on the dev server / 101 on dist). PIPELINES-at-reveal is a weaker
 // signal and is kept only as a floor against a pre-warm that walks the scene but compiles nothing: it
 // is sampled at one instant while async compiles continue, and the regression arm read higher than the
 // healthy one on dev (97 vs 77). Do not make this gate rely more on that number.

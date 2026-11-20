@@ -2,19 +2,19 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { PartPackage } from '../core/partPackage'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import { isConveyorLike, partFootprint } from '../core/partGeometry'
-import { subtreeIds } from '../core/hierarchy'
-import { createSdkPart } from '../core/scene'
-import { findSnap } from '../core/snapFeatures'
-import type { SnapCandidate, SnapOptions, SnapPose } from '../core/snapFeatures'
+import type { PartPackage } from '../core/parts/partPackage'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import { isConveyorLike, partFootprint } from '../core/parts/partGeometry'
+import { subtreeIds } from '../core/scene/hierarchy'
+import { createSdkPart } from '../core/scene/scene'
+import { findSnap } from '../core/snap/snapFeatures'
+import type { SnapCandidate, SnapOptions, SnapPose } from '../core/snap/snapFeatures'
 import type { PartInstance } from '../core/types'
 import { buildPackage } from '../sim/buildPackage'
-import { bundledBehaviors, bundledManifests } from './bundledExamples'
-import { createPlcDemoScene } from './demoScenes'
+import { bundledBehaviors, bundledManifests } from './parts/bundledExamples'
+import { createPlcDemoScene } from './demo/demoScenes'
 
-// The snap golden table: what the snap engine (core/snapFeatures.ts findSnap) answers for the real shipped parts,
+// The snap golden table: what the snap engine (core/snap/snapFeatures.ts findSnap) answers for the real shipped parts,
 // pinned in __snapshots__/snapGolden.{pairwise,demo}.txt.
 //
 // Why it exists. snapFeatures.test.ts proves each snap kind on synthetic packages, so it misses a real part that

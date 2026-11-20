@@ -1,5 +1,5 @@
 import { defineMessages, t } from '../../core/i18n'
-import type { EditorStore } from '../store'
+import type { EditorStore } from '../store/store'
 
 const M = defineMessages('pilotFab', {
   title: 'Pilot Mode: first-person walk-around',

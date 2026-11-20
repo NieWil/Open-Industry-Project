@@ -1,9 +1,9 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 import initJolt from 'jolt-physics'
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/partPackage'
-import { createSdkPart } from '../core/scene'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/parts/partPackage'
+import { createSdkPart } from '../core/scene/scene'
 import { SCENE_VERSION } from '../core/types'
 import type { PartInstance, SdkPart } from '../core/types'
 import { buildPackage } from './buildPackage'
@@ -56,7 +56,7 @@ describe('a deck starting wakes its own cargo, not the whole scene', () => {
     const box = loadPkg('box')
     // a 4 m belt along +x, held at 0 by its speed tag until the start
     const conveyor = createSdkPart(belt, 'belt', [0, 1, 0], 0) as SdkPart
-    Object.assign(conveyor.params, { segments: [[4, 0]], speed: 0.5, enableComms: true, speedTag: 'sp' })
+    Object.assign(conveyor.params, { segments: [[4, 0]], speed: 0.5, speedTag: 'sp' })
     const parts: PartInstance[] = [conveyor, createSdkPart(box, 'ride', [1, 1.6, 0], 0)]
     // a three-high pile of cases on the floor, 6 m off the belt's side
     for (let i = 0; i < 3; i++) parts.push(createSdkPart(box, `pile${i}`, [2, 0.2 + 0.4 * i, 6], 0))

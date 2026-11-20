@@ -91,11 +91,11 @@ async function main() {
       if (!robotPkg || !agvPkg) return false
       const parts = [
         { id: 'robot_1', type: 'part', packageId: 'oip.six-axis-robot', position: [0, 0, 0], rotationY: 0, params: {
-          enableComms: true, commandTag: 'ArmCmd', executeTag: 'ArmExec',
+          commandTag: 'ArmCmd', executeTag: 'ArmExec',
           waypoints: [HOME, WP1], pose: [HOME],
         } },
         { id: 'agv_1', type: 'part', packageId: 'oip.agv', position: [0, 0, 3], rotationY: 0, params: {
-          enableComms: true, commandTag: 'AgvCmd', executeTag: 'AgvExec',
+          commandTag: 'AgvCmd', executeTag: 'AgvExec',
           waypoints: [[0, 3, 0, 0], [4, 3, 90, 0]], driveSpeed: 2,
         } },
       ]

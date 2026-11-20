@@ -48,7 +48,7 @@ only. No art asset in this repository comes from Godot.
 
 ## oip-comms
 
-The S7 client (`src/plc/s7Client.ts`, with the wire templates in `src/plc/s7Client.test.ts`)
+The S7 client (`src/plc/link/s7Client.ts`, with the wire templates in `src/plc/link/s7Client.test.ts`)
 is a TypeScript port of the S7 driver in [oip-comms](https://github.com/Open-Industry-Project/oip-comms)
 (`S7Com.cpp`). oip-comms is distributed under the MIT License:
 
@@ -147,6 +147,9 @@ The primary ones:
 | meshoptimizer decoder (inside three.js addons; Copyright Arseny Kapoulkine) | MIT |
 | Draco decoder (via three.js addons) | Apache-2.0 |
 | occt-import-js (STEP import: Open CASCADE Technology compiled to WebAssembly, a lazy worker chunk) | LGPL-2.1 |
+| @huggingface/usd-web-viewer (USD import: a USD reader in Rust compiled to WebAssembly, a lazy worker chunk; its `THIRD_PARTY_LICENSES` lists the Rust crates inside) | MIT (the crates inside: each used under MIT) |
+| meshoptimizer simplifier (USD import's reduced detail, a lazy chunk; Copyright Arseny Kapoulkine) | MIT |
+| yaml (the YAML files a xacro robot description reads, a lazy chunk) | ISC |
 
 This list covers the primary redistributed runtime dependencies (the generated
 file has all of them); build-only tooling is not bundled into the shipped artifact.
@@ -208,16 +211,18 @@ by messages and is fetched only when someone imports a STEP file.
 ### jolt-physics is a local fork, not the upstream package
 
 `jolt-physics` does not come from npm here. It is a local build, version
-**`1.1.0-oip.8`**, installed from `vendor/jolt-physics-1.1.0-oip.8.tgz` through a
+**`1.1.1-oip.10`**, installed from `vendor/jolt-physics-1.1.1-oip.10.tgz` through a
 `file:` dependency in `package.json`. No such version is published on npm.
 
 The vendored `package.json` names the version and the fork in its `description`, but
 keeps upstream's `repository` and `homepage` fields. Those point at
-<https://github.com/jrouwe/JoltPhysics.js>, which has no `1.1.0-oip.8` and none of the
+<https://github.com/jrouwe/JoltPhysics.js>, which has no `1.1.1-oip.10` and none of the
 changes listed here.
 
-**The fork's source is public:** <https://github.com/ryevdokimov/JoltPhysics.js>,
-branch `oip/1.1.0`, which is upstream's `1.1.0` tag plus three commits.
+**The fork's source is in this repository:** upstream commit `c43eabb` (Jolt 5.7.0, three
+commits after the `1.1.1` tag) plus the four patches
+in `vendor/jolt-physics-src/`, which `node scripts/jolt-src.mjs <dir>` applies to a fresh
+upstream clone.
 
 - **Upstream:** JoltPhysics.js by Jorrit Rouwe (MIT), a WASM build of Jolt Physics.
 - **License:** unchanged. The MIT text travels with the binary inside the tarball at
@@ -228,19 +233,18 @@ branch `oip/1.1.0`, which is upstream's `1.1.0` tag plus three commits.
   between them at runtime (`src/sim/worker.ts`, `src/sim/world.ts`). The live one is
   reported as `conveyorListener: 'native' | 'js' | 'none'`, and `?jsconveyor` forces
   the JS path. So the fork is detectable, and the app runs without it.
-- **What the three commits touch**, against upstream's `1.1.0` tag (514 insertions in
+- **What the four commits touch**, against that upstream commit (518 insertions in
   6 files):
-  `JoltJS.h` (+306, the listener and `BodySnapshot`, a batched reader for body positions
+  `JoltJS.h` (+315, the listener and `BodySnapshot`, a batched reader for body positions
   and rotations), `JoltJS.idl` (+20, the bindings that expose them to JavaScript),
-  `CMakeLists.txt` (+17/-2: sizes the thread pool to the machine, fixes a node worker
-  import, applies the patch), and a `patches/` directory that applies a
+  `CMakeLists.txt` (+10/-1: sizes the thread pool to the machine, applies the patch), and a `patches/` directory that applies a
   coupled-planar-friction patch to the Jolt C++ source the build pulls in. The shipped
   single-threaded builds are also compiled with SIMD, a build option rather than a source
   change (`vendor/README.md`).
-- **Rebuilding:** see [vendor/README.md](vendor/README.md). The fork's
-  `patches/README.md` explains the friction patch.
+- **Rebuilding:** see [vendor/README.md](vendor/README.md). The `patches/README.md` that
+  the first patch adds explains the friction patch.
 - **Traceability:** the `-oip.N` suffix is applied when the tarball is packaged, and
-  the fork's own `package.json` reads `1.1.0`. So `-oip.8` does not name a commit of
+  the fork's own `package.json` reads `1.1.1`. So `-oip.10` does not name a commit of
   the fork.
 
 Only the built tarball lives here. MIT requires the copyright notice to travel with it,
@@ -271,10 +275,10 @@ shell's production dependency tree before packaging (`scripts/desktop-licenses.m
 under BSD-3-Clause, Apache-2.0, ISC, 0BSD, BlueOak-1.0.0, Python-2.0 and the Unlicense.
 Electron's own license and Chromium's (`LICENSE.electron.txt`, `LICENSES.chromium.html`)
 sit beside the executable. Electron (the version `apps/desktop/package-lock.json` pins,
-currently 42.11.10) includes Chromium's build of FFmpeg as
+currently 45.2.3) includes Chromium's build of FFmpeg as
 `ffmpeg.dll` / `libffmpeg.so`, which is LGPL-2.1-or-later. It is shipped unmodified, as
 Electron releases it; its source is Chromium's `third_party/ffmpeg` at the Chromium version
-that Electron release is built on (Chromium 148.0.7778.280 for Electron 42.11.10:
+that Electron release is built on (Chromium 156.0.8078.80 for Electron 45.2.3:
 <https://chromium.googlesource.com/chromium/third_party/ffmpeg/>, at the revision pinned by
 that Chromium's `DEPS`), and Electron publishes the matching binaries as the `ffmpeg-v<version>-*`
 assets of each release at <https://github.com/electron/electron/releases>. The desktop app
@@ -357,6 +361,7 @@ and their names appear in this repository. None of them are ours:
 - **CODESYS** - a trademark of CODESYS GmbH.
 - **TwinCAT, Beckhoff** - trademarks of Beckhoff Automation GmbH & Co. KG.
 - **TIA Portal, S7-1200, S7-1500, Siemens** - trademarks of Siemens AG.
+- **Mitsubishi Electric, MELSEC, GX Works3, iQ-R, iQ-F** - trademarks of Mitsubishi Electric Corporation.
 - **Ignition** - a trademark of Inductive Automation, LLC.
 - **EtherNet/IP** - a trademark of ODVA, Inc.
 - **OPC UA** - a trademark of the OPC Foundation.

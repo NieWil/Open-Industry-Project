@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Euler, Quaternion, Vector3 } from 'three'
-import { qFromEulerXYZ } from '../../core/rigPose'
+import { qFromEulerXYZ } from '../../core/rig/rigPose'
 import { nodeRotationAfterTurn } from './drag'
 
 type Q = [number, number, number, number]

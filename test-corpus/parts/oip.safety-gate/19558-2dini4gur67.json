@@ -1,0 +1,240 @@
+{
+  "format": 6,
+  "id": "oip.safety-gate",
+  "name": "Safety Gate",
+  "params": {
+    "length": {
+      "type": "number",
+      "default": 1,
+      "min": 0.5,
+      "max": 6,
+      "step": 0.05,
+      "label": "Width (m)",
+      "desc": "Gate width, hinge post to latch post. Size it to the gap you are closing in the fence line."
+    },
+    "open": {
+      "type": "boolean",
+      "default": false,
+      "label": "Open",
+      "group": "Start state",
+      "desc": "Swing the leaf open. This is the state it starts in; Use swings it by hand, which is how someone in pilot mode walks through the guard line."
+    },
+    "openAngle": {
+      "type": "number",
+      "default": 110,
+      "min": -180,
+      "max": 180,
+      "step": 1,
+      "label": "Open angle (°)",
+      "desc": "How far the leaf swings about the hinge when open. Negative angles swing it the other way, for a gate that has to open into the aisle."
+    },
+    "openSpeed": {
+      "type": "number",
+      "default": 180,
+      "min": 10,
+      "max": 720,
+      "step": 5,
+      "label": "Open speed (°/s)",
+      "desc": "How fast the leaf travels between shut and the open angle."
+    },
+    "normallyClosed": {
+      "type": "boolean",
+      "default": false,
+      "label": "Normally closed (inverts the signal)",
+      "desc": "Invert the signal this gate publishes, so the tag reads true while the gate is SHUT - the safety convention, where a broken wire and an open gate look the same to the program. Affects the tag only, never the visuals."
+    },
+    "postColor": {
+      "type": "color",
+      "default": "#f2bd0f",
+      "label": "Post color",
+      "group": "Colors",
+      "desc": "Post tint."
+    },
+    "meshColor": {
+      "type": "color",
+      "default": "#0d0d0d",
+      "label": "Mesh color",
+      "group": "Colors",
+      "desc": "Tint of the leaf frame and the panel it holds."
+    },
+    "handleColor": {
+      "type": "color",
+      "default": "#c91717",
+      "label": "Handle color",
+      "group": "Colors",
+      "desc": "Tint of the emergency release handle."
+    },
+    "omitPostStart": {
+      "type": "boolean",
+      "default": false,
+      "label": "Omit start post",
+      "group": "Posts",
+      "desc": "Suppress the post at local -X so a snapped neighbour draws the shared one instead. Snapping sets this for you."
+    },
+    "omitPostEnd": {
+      "type": "boolean",
+      "default": false,
+      "label": "Omit end post",
+      "group": "Posts",
+      "desc": "Suppress the post at local +X so a snapped neighbour draws the shared one instead. Snapping sets this for you."
+    },
+    "tag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Gate signal tag",
+      "group": "Comms",
+      "desc": "Where the gate publishes its state for the program to read. Whether true means open or shut is set by Normally closed above."
+    }
+  },
+  "behavior": "// Safety Gate — a swinging interlock gate: a black wire-mesh leaf carrying a red e-stop handle, hinged at the\n// -X post between yellow posts, swinging to 'openAngle' at 'openSpeed' (°/s). A safety interlock switch on the\n// latch post takes an actuator on the leaf when it's shut (the look of one; the signal is the 'open' state below).\n// Demonstrates procedural geometry on a MOVING link — geometry() emits the posts/caps on the rig root and tags the leaf mesh to the swinging\n// 'hinge' frame (MeshPart.link), so it rides the joint; the hidden 'leaf' box is the collision. A PLC input\n// (safety-door switch): it writes 'open XOR normallyClosed' and never reads a tag.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// ---- from examples/parts/_shared/hardware.js ----\n// SEAT: how far a piece sinks into the face it stands on. VERT_CAP: stop adding to one submesh well short of\n// the host's per-mesh vertex budget.\nvar SEAT = 0.0005, VERT_CAP = 150000\n// one submesh under construction, counting its vertices against VERT_CAP\nfunction mesh(g) { return { sb: g.surface(), n: 0, full: false } }\nfunction room(m, k) {\n  if (m.full || m.n + k > VERT_CAP) { m.full = true; return false }\n  m.n += k\n  return true\n}\n// an oriented box: centre c, half-extent axes e[0..2] (right-handed: e0 x e1 = e2), each face its own four\n// vertices wound CCW from outside\nfunction obox(m, c, e) {\n  if (!room(m, 24)) return\n  var sb = m.sb\n  var pt = function (s0, s1, s2) {\n    return sb.vertex(c[0] + s0 * e[0][0] + s1 * e[1][0] + s2 * e[2][0], c[1] + s0 * e[0][1] + s1 * e[1][1] + s2 * e[2][1], c[2] + s0 * e[0][2] + s1 * e[1][2] + s2 * e[2][2])\n  }\n  // the face normal to axis n (sign sg): its other two axes a, b with a x b = +n, walked CCW seen from outside\n  var face = function (n, sg) {\n    var a = (n + 1) % 3, b = (n + 2) % 3\n    var q = [[-1, -1], [1, -1], [1, 1], [-1, 1]]\n    var idx = []\n    for (var k = 0; k < 4; k++) {\n      var sv = [0, 0, 0]\n      sv[n] = sg\n      sv[a] = q[k][0] * sg // flipping one in-plane axis reverses the winding for the negative face\n      sv[b] = q[k][1]\n      idx.push(pt(sv[0], sv[1], sv[2]))\n    }\n    sb.quad(idx[0], idx[1], idx[2], idx[3])\n  }\n  for (var n = 0; n < 3; n++) { face(n, 1); face(n, -1) }\n}\n// an axis-aligned box from its min and max corners\nfunction abox(m, x0, y0, z0, x1, y1, z1) {\n  obox(m, [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2], [[(x1 - x0) / 2, 0, 0], [0, (y1 - y0) / 2, 0], [0, 0, (z1 - z0) / 2]])\n}\n// the in-plane axes (u, v) of a face normal to axis ax, with u x v = +ax\nvar PLANE = [[1, 2], [2, 0], [0, 1]]\n// a hex prism (bolt head, nut, thread end) standing on a face: base centre p, rising h along axis ax in\n// direction s (+1/-1), af across flats. The base sits on the face and is never seen, so it isn't emitted.\nfunction hex(m, p, ax, s, af, h) {\n  if (!room(m, 31)) return\n  var sb = m.sb, u = PLANE[ax][0], v = PLANE[ax][1], r = af / Math.sqrt(3)\n  var ring = function (t) {\n    var out = []\n    for (var k = 0; k < 6; k++) {\n      var a = (k * Math.PI) / 3, q = [p[0], p[1], p[2]]\n      q[u] += r * Math.cos(a)\n      q[v] += r * Math.sin(a)\n      q[ax] += s * t\n      out.push(q)\n    }\n    return out\n  }\n  var lo = ring(-SEAT), hi = ring(h)\n  var V = function (q) { return sb.vertex(q[0], q[1], q[2]) }\n  for (var k = 0; k < 6; k++) {\n    var k1 = (k + 1) % 6\n    var b0 = V(lo[k]), b1 = V(lo[k1]), f1 = V(hi[k1]), f0 = V(hi[k])\n    // CCW about +ax, so tangent x (+ax) points outward; a prism rising along -ax walks the other way\n    if (s > 0) sb.quad(b0, b1, f1, f0)\n    else sb.quad(b1, b0, f0, f1)\n  }\n  var cc = [p[0], p[1], p[2]]\n  cc[ax] += s * h\n  var c = V(cc), cap = []\n  for (var k2 = 0; k2 < 6; k2++) cap.push(V(hi[k2]))\n  for (var k3 = 0; k3 < 6; k3++) {\n    if (s > 0) sb.triangle(c, cap[k3], cap[(k3 + 1) % 6])\n    else sb.triangle(c, cap[(k3 + 1) % 6], cap[k3])\n  }\n}\n// a floor anchor on a plate whose top is at y: a square washer, a hex nut, and the stud end standing out of it\nfunction anchor(m, x, y, z, af) {\n  af = af || 0.022\n  var w = af * 1.45, wt = 0.003, nh = af * 0.55\n  abox(m, x - w / 2, y - SEAT, z - w / 2, x + w / 2, y + wt, z + w / 2)\n  hex(m, [x, y + wt, z], 1, 1, af, nh)\n  hex(m, [x, y + wt + nh, z], 1, 1, af * 0.55, af * 0.4)\n}\n\nconst D2R = Math.PI / 180\nlet angle = 0 // current swing angle (rad)\nlet flip = false // viewport Use toggles: XORed with the authored 'open' param\n\ndefinePart({\n  interactive: true,\n  useParam: 'open', // the hand state is the param: the state a run starts from. The Inspector sets it; Use never writes it\n  joints: ['swing'],\n  params: {\n    length: { type: 'number', default: 1, min: 0.5, max: 6, step: 0.05, label: 'Width (m)', desc: 'Gate width, hinge post to latch post. Size it to the gap you are closing in the fence line.' },\n    open: { type: 'boolean', default: false, label: 'Open', group: 'Start state', desc: 'Swing the leaf open. This is the state it starts in; Use swings it by hand, which is how someone in pilot mode walks through the guard line.' },\n    openAngle: { type: 'number', default: 110, min: -180, max: 180, step: 1, label: 'Open angle (°)', desc: 'How far the leaf swings about the hinge when open. Negative angles swing it the other way, for a gate that has to open into the aisle.' },\n    openSpeed: { type: 'number', default: 180, min: 10, max: 720, step: 5, label: 'Open speed (°/s)', desc: 'How fast the leaf travels between shut and the open angle.' },\n    normallyClosed: { type: 'boolean', default: false, label: 'Normally closed (inverts the signal)', desc: 'Invert the signal this gate publishes, so the tag reads true while the gate is SHUT - the safety convention, where a broken wire and an open gate look the same to the program. Affects the tag only, never the visuals.' },\n    postColor: { type: 'color', default: '#f2bd0f', label: 'Post color', group: 'Colors', desc: 'Post tint.' },\n    meshColor: { type: 'color', default: '#0d0d0d', label: 'Mesh color', group: 'Colors', desc: 'Tint of the leaf frame and the panel it holds.' },\n    handleColor: { type: 'color', default: '#c91717', label: 'Handle color', group: 'Colors', desc: 'Tint of the emergency release handle.' },\n    omitPostStart: { type: 'boolean', default: false, label: 'Omit start post', group: 'Posts', desc: 'Suppress the post at local -X so a snapped neighbour draws the shared one instead. Snapping sets this for you.' },\n    omitPostEnd: { type: 'boolean', default: false, label: 'Omit end post', group: 'Posts', desc: 'Suppress the post at local +X so a snapped neighbour draws the shared one instead. Snapping sets this for you.' },\n    tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Gate signal tag', group: 'Comms', desc: 'Where the gate publishes its state for the program to read. Whether true means open or shut is set by Normally closed above.' },\n  },\n  geometry(g, p) {\n    var length = typeof p.length === 'number' && p.length > 0 ? p.length : 1\n    var omitStart = p.omitPostStart === true\n    var omitEnd = p.omitPostEnd === true\n    // fixed dimensions (m)\n    var H = 2.0, POST = 0.06, GAP = 0.04, INSET = 0.08\n    var FRAME = 0.03, WIRE = 0.008, SPACING = 0.1, CAP_H = 0.03, CAP_FP = POST * 1.08\n    // the pull handle, one each face: a round bar BAR_R in radius bent at BEND_R into a D standing STANDOFF off the\n    // leaf's centre plane, its legs LEG_IN in from the ends of a PLATE_X x PLATE_Y mounting plate PLATE_Z thick\n    // (thicker than the wires it clamps, thinner than the frame bar), each foot on a round-ish ROSETTE\n    var BAR_R = 0.011, BEND_R = 0.028, STANDOFF = 0.068, LEG_IN = 0.035, HANDLE_H = 1.0, ROSETTE = 0.03, ROSETTE_T = 0.004\n    var PLATE_X = 0.22, PLATE_Y = 0.1, PLATE_Z = 0.022\n    // the safety INTERLOCK on the latch post, SWITCH_UP above the handle: a switch body on the post's +Z face and\n    // a head that overhangs toward the leaf, which the leaf's ACTUATOR tongue enters when the gate is shut. The\n    // leaf swings open toward -Z (a positive angle about +Y), so the head on the +Z side is never in its path.\n    var SWITCH_UP = 0.24, SW_W = 0.045, SW_H = 0.1, SW_D = 0.034, HEAD_W = 0.07, HEAD_H = 0.042, ACT_T = 0.006\n    // post hardware, the SAME numbers and clamp heights as the Fence (examples/parts/fence/part.js) so a gate in a\n    // fence line matches it: a floor plate under each post and a collar round it at each clamp height. On the hinge\n    // side the leaf's straps run into those collars as its hinges; the swing axis is the post's own centreline, so\n    // a strap's inner end stays inside the collar at every angle.\n    var FOOT = 0.12, FOOT_T = 0.01, COLLAR = POST + 0.012, COLLAR_H = 0.05, STRAP_H = 0.04, STRAP_T = 0.012\n    var CLAMP_IN = 0.2, SINK = 0.005, ANCHOR_IN = 0.043, ANCHOR_AF = 0.016\n    // hinge KNUCKLES: a hex barrel on the leaf stacked just above and below each hinge-side collar, round the swing\n    // axis (the post's centreline), so it turns with the leaf like a real hinge's leaf-side knuckle. KNUCKLE_AF\n    // keeps the flats clear of the square post's corners (half-diagonal 0.042) at any angle.\n    var KNUCKLE_AF = 0.09, KNUCKLE_H = 0.035, KNUCKLE_GAP = 0.003\n    var box = function (cx, cy, cz, sx, sy, sz) { return g.box([sx, sy, sz], [cx, cy, cz]) }\n    var hl = length / 2\n    var posts = [], caps = [], leaf = [], handle = []\n    var rootHw = mesh(g), leafHw = mesh(g) // anchors on the root; knuckles on the swinging hinge link\n    var yb = INSET, yt = H - INSET\n    var clampYs = yt - yb > CLAMP_IN * 3 ? [yb + CLAMP_IN, yt - CLAMP_IN] : [(yb + yt) / 2]\n\n    // omit an end post where a snapped corner neighbour supplies it (its own collars stand at the same heights)\n    var post = function (x) {\n      posts.push(box(x, H / 2, 0, POST, H, POST), box(x, FOOT_T / 2, 0, FOOT, FOOT_T, FOOT))\n      caps.push(box(x, H + CAP_H / 2, 0, CAP_FP, CAP_H, CAP_FP))\n      for (var c = 0; c < clampYs.length; c++) caps.push(box(x, clampYs[c], 0, COLLAR, COLLAR_H, COLLAR))\n      for (var ax = -1; ax <= 1; ax += 2) for (var az = -1; az <= 1; az += 2) anchor(rootHw, x + ax * ANCHOR_IN, FOOT_T, az * ANCHOR_IN, ANCHOR_AF)\n    }\n    if (!omitStart) post(-hl)\n    if (!omitEnd) post(hl)\n\n    // Leaf wire-mesh + e-stop in the hinge link's local frame: the hinge pivots at the −X post, so its local x\n    // runs GAP..length−GAP and y runs INSET..H−INSET. Tagged link:'hinge' to ride the swing joint — tagging the\n    // hidden 'leaf' box (same pose, collision-only) instead would inherit its invisibility.\n    var xa = GAP, xb = length - GAP\n    var cx = (xa + xb) / 2, cy = (yb + yt) / 2, w = xb - xa, h = yt - yb\n    leaf.push(box(cx, yb, 0, w, FRAME, FRAME), box(cx, yt, 0, w, FRAME, FRAME))\n    leaf.push(box(xa, cy, 0, FRAME, h, FRAME), box(xb, cy, 0, FRAME, h, FRAME))\n    var cols = Math.max(1, Math.round(w / SPACING)), colStep = w / cols\n    for (var i = 1; i < cols; i++) leaf.push(box(xa + i * colStep, cy, 0, WIRE, h, WIRE))\n    var rows = Math.max(1, Math.round(h / SPACING)), rowStep = h / rows\n    for (var j = 1; j < rows; j++) leaf.push(box(cx, yb + j * rowStep, 0, w, WIRE, WIRE))\n    // hinge straps: from inside the hinge post's collar (the pivot is x = 0 here) out to the leaf's frame bar\n    var x0 = COLLAR / 2 - SINK\n    for (var k = 0; k < clampYs.length; k++) {\n      leaf.push(box((x0 + xa) / 2, clampYs[k], 0, xa - x0, STRAP_H, STRAP_T))\n      hex(leafHw, [0, clampYs[k] + COLLAR_H / 2 + KNUCKLE_GAP, 0], 1, 1, KNUCKLE_AF, KNUCKLE_H)\n      hex(leafHw, [0, clampYs[k] - COLLAR_H / 2 - KNUCKLE_GAP, 0], 1, -1, KNUCKLE_AF, KNUCKLE_H)\n    }\n\n    // the handle's mounting plate on the latch side (+X), mesh colour, clamping the wires between its two faces\n    var hy = Math.min(Math.max(HANDLE_H, yb + PLATE_Y), Math.max(yb + PLATE_Y, yt - PLATE_Y))\n    leaf.push(box(xb - PLATE_X / 2, hy, 0, PLATE_X, PLATE_Y, PLATE_Z))\n\n    // the pull handle on each face (handle colour): a round bar swept along a D - out from the plate, a bend, the\n    // grip, a bend, back in - so it reads as a bent bar rather than three blocks. Each foot sits on a rosette.\n    var ring = []\n    for (var q = 0; q < 12; q++) ring.push([BAR_R * Math.cos((q * Math.PI) / 6), BAR_R * Math.sin((q * Math.PI) / 6)])\n    var bend = function (out, P, dIn, dOut) {\n      // a quarter circle rounding the corner P from direction dIn to dOut (both unit, in the X-Z plane)\n      var cx = P[0] + (dOut[0] - dIn[0]) * BEND_R, cz = P[2] + (dOut[2] - dIn[2]) * BEND_R\n      for (var t = 0; t <= 6; t++) {\n        var a = (t / 6) * Math.PI / 2, co = Math.cos(a), sn = Math.sin(a)\n        out.push([cx - dOut[0] * BEND_R * co + dIn[0] * BEND_R * sn, P[1], cz - dOut[2] * BEND_R * co + dIn[2] * BEND_R * sn])\n      }\n    }\n    var gx0 = xb - PLATE_X + LEG_IN, gx1 = xb - LEG_IN\n    var feet = mesh(g)\n    for (var si = 0; si < 2; si++) {\n      var side = si === 0 ? 1 : -1\n      var foot = side * (PLATE_Z / 2 + ROSETTE_T - 0.002), top = side * STANDOFF\n      var path = [[gx0, hy, foot]]\n      bend(path, [gx0, hy, top], [0, 0, side], [1, 0, 0])\n      bend(path, [gx1, hy, top], [1, 0, 0], [0, 0, -side])\n      path.push([gx1, hy, foot])\n      handle.push(g.sweep(ring, path))\n      hex(feet, [gx0, hy, side * PLATE_Z / 2], 2, side, ROSETTE, ROSETTE_T)\n      hex(feet, [gx1, hy, side * PLATE_Z / 2], 2, side, ROSETTE, ROSETTE_T)\n    }\n    handle.push(feet.sb.build())\n\n    // the interlock: the switch on the latch post (root; only where this gate draws that post), and its actuator\n    // on the leaf - an L from the frame bar out to where the switch head is when shut\n    var sy = Math.min(hy + SWITCH_UP, yt - HEAD_H)\n    if (!omitEnd) {\n      var pz = POST / 2 - SINK, bx = hl - POST / 2 + SW_W / 2 + 0.004\n      caps.push(box(bx, sy - SW_H / 2, pz + SW_D / 2, SW_W, SW_H, SW_D))\n      // the head: 4 mm deeper than the body so their front faces never share a plane, and reaching back over\n      // the leaf's frame bar, which it sits in front of when the gate is shut\n      var hx1 = hl - POST / 2 + SW_W + 0.004 - 0.003, hx0 = hx1 - HEAD_W\n      caps.push(box((hx0 + hx1) / 2, sy + HEAD_H / 2 - 0.002, pz + (SW_D + 0.004) / 2, HEAD_W, HEAD_H, SW_D + 0.004))\n      hex(rootHw, [bx, sy - SW_H, pz + SW_D / 2], 1, -1, 0.016, 0.012) // the cable gland\n    }\n    // the actuator: a stub from the frame bar's +Z face into the back of the head, seen across the gap between them\n    leaf.push(box(xb - 0.002, sy + HEAD_H / 2, (FRAME / 2 - SINK + POST / 2 + 0.01) / 2, 0.02, 0.02, POST / 2 + 0.01 - FRAME / 2 + SINK))\n\n    var parts = []\n    if (posts.length) parts.push({ desc: g.merge.apply(g, posts), material: 'postMetal', colorParam: 'postColor' })\n    // the anchors and knuckles join the meshColor submesh on their link (no draw of their own)\n    caps.push(rootHw.sb.build())\n    leaf.push(leafHw.sb.build())\n    parts.push({ desc: g.merge.apply(g, caps), material: 'meshMetal', colorParam: 'meshColor' })\n    parts.push({ desc: g.merge.apply(g, leaf), link: 'hinge', material: 'meshMetal', colorParam: 'meshColor' })\n    parts.push({ desc: g.merge.apply(g, handle), link: 'hinge', material: 'handleMetal', colorParam: 'handleColor' })\n    return parts\n  },\n  step(ctx) {\n    if (ctx.used()) flip = !flip\n    const open = ctx.params.open !== flip\n    ctx.report('open', open) // the hand state it is actually in (useParam requires it): authored, then hand-flipped\n    const target = open ? ctx.params.openAngle * D2R : 0\n    angle = ctx.approach(angle, target, ctx.params.openSpeed * D2R * ctx.dt)\n    ctx.joints.swing = angle\n    // safety-door-switch output — normallyClosed inverts the signal only, not the motion\n    if (ctx.params.tag) ctx.writeTag(ctx.params.tag, open !== ctx.params.normallyClosed)\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "hinge",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5
+          }
+        ]
+      },
+      {
+        "name": "leaf",
+        "parent": "hinge",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.92,
+            2,
+            0.06
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1,
+              "add": -0.08
+            }
+          ]
+        },
+        "offset": [
+          0.5,
+          1,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5
+          }
+        ],
+        "hidden": true
+      },
+      {
+        "name": "interact",
+        "shape": {
+          "kind": "box",
+          "size": [
+            1,
+            2,
+            0.3
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          1,
+          0
+        ],
+        "hidden": true,
+        "collision": "none"
+      }
+    ],
+    "joints": [
+      {
+        "name": "swing",
+        "link": "hinge",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -3.15,
+        "max": 3.15
+      }
+    ],
+    "bounds": {
+      "length": 1,
+      "width": 0.2,
+      "top": 2
+    }
+  },
+  "category": "Structure",
+  "interactive": true,
+  "useParam": "open",
+  "snap": {
+    "chain": {
+      "group": "barrierFence",
+      "lengthParam": "length",
+      "reach": 1,
+      "omitStartParam": "omitPostStart",
+      "omitEndParam": "omitPostEnd"
+    }
+  },
+  "materials": [
+    {
+      "id": "postMetal",
+      "color": [
+        0.949,
+        0.741,
+        0.059
+      ],
+      "metalness": 0.1,
+      "roughness": 0.45
+    },
+    {
+      "id": "meshMetal",
+      "color": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "metalness": 0.4,
+      "roughness": 0.5
+    },
+    {
+      "id": "handleMetal",
+      "color": [
+        0.788,
+        0.09,
+        0.09
+      ],
+      "metalness": 0.2,
+      "roughness": 0.4
+    }
+  ],
+  "sdk": {
+    "level": 6,
+    "of": "v2:17308:1k29olsnj37"
+  }
+}

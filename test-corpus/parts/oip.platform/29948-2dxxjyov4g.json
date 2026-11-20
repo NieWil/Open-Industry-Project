@@ -1,0 +1,1637 @@
+{
+  "format": 6,
+  "id": "oip.platform",
+  "name": "Platform",
+  "params": {
+    "length": {
+      "type": "number",
+      "default": 4,
+      "min": 0.5,
+      "step": 0.1,
+      "label": "Length (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "x"
+      },
+      "desc": "Deck extent along local X. Drag the dot on either end face to resize in the viewport; the frame, railing and columns reflow to match."
+    },
+    "width": {
+      "type": "number",
+      "default": 4,
+      "min": 0.5,
+      "max": 20,
+      "step": 0.1,
+      "label": "Width (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "z"
+      },
+      "desc": "Deck extent along local Z. Drag the dot on either side face to resize in the viewport."
+    },
+    "height": {
+      "type": "number",
+      "default": 2,
+      "min": 0.3,
+      "max": 8,
+      "step": 0.05,
+      "rest": "surfaceBelow",
+      "label": "Height (m)",
+      "desc": "Height of the deck top above whatever it stands on, which is also the column length. The origin is the deck top, so raising the platform regrows the columns to reach the floor rather than leaving them hanging."
+    },
+    "deckSurface": {
+      "type": "enum",
+      "default": "tread",
+      "options": [
+        {
+          "value": "tread",
+          "label": "Tread plate"
+        },
+        {
+          "value": "deck",
+          "label": "Solid deck"
+        }
+      ],
+      "label": "Deck surface",
+      "desc": "What the deck is made of. Tread plate is the steel walking surface of an access platform; a solid deck is what an equipment platform carrying conveyors or machines has. Only the look changes."
+    },
+    "color": {
+      "type": "color",
+      "default": "#f2bd0f",
+      "label": "Steel color",
+      "desc": "Steel tint of the frame, columns and railing."
+    },
+    "showRailings": {
+      "type": "boolean",
+      "default": true,
+      "label": "Perimeter railing",
+      "desc": "Guard railing around the deck edge. Turning it off removes the barrier a walking pilot leans on, not just the visual."
+    },
+    "showSupports": {
+      "type": "boolean",
+      "default": true,
+      "label": "Middle supports",
+      "desc": "Interior columns under a large deck, in addition to the corner ones. Cosmetic on a small platform, which the corners already carry."
+    }
+  },
+  "behavior": "// Platform — an elevated walkway/storage deck. Purely structural: its length/width/height params\n// drive a deck (steel tread plate or a solid deck: deckSurface), a steel column/beam frame and a perimeter safety railing\n// (parametric geometry + per-link steel colour), and the step does nothing. showSupports adds the OSHA\n// middle-column grid + under-deck beams (off → a bare table on 4 corner legs); showRailings toggles the whole\n// perimeter railing (the links' showParam).\n//\n// geometry() adds what makes the frame read as bolted steel, which a rig can't place because it all sits at\n// the columns, and the column grid moves with length, width and showSupports: four anchors on every base\n// plate; a shear tab bolted through the beam web on each side of a column a beam runs from; and a knee brace\n// from each perimeter column up to the beam beside it, bolted at both ends. The railing gets none of it on\n// purpose: a stair landing cuts openings into it (core/structureCuts.ts), which geometry() never sees, so\n// hardware there would float in the gap. Render-only; the columns and deck collide.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// ---- from examples/parts/_shared/hardware.js ----\n// SEAT: how far a piece sinks into the face it stands on. VERT_CAP: stop adding to one submesh well short of\n// the host's per-mesh vertex budget.\nvar SEAT = 0.0005, VERT_CAP = 150000\n// one submesh under construction, counting its vertices against VERT_CAP\nfunction mesh(g) { return { sb: g.surface(), n: 0, full: false } }\nfunction room(m, k) {\n  if (m.full || m.n + k > VERT_CAP) { m.full = true; return false }\n  m.n += k\n  return true\n}\n// an oriented box: centre c, half-extent axes e[0..2] (right-handed: e0 x e1 = e2), each face its own four\n// vertices wound CCW from outside\nfunction obox(m, c, e) {\n  if (!room(m, 24)) return\n  var sb = m.sb\n  var pt = function (s0, s1, s2) {\n    return sb.vertex(c[0] + s0 * e[0][0] + s1 * e[1][0] + s2 * e[2][0], c[1] + s0 * e[0][1] + s1 * e[1][1] + s2 * e[2][1], c[2] + s0 * e[0][2] + s1 * e[1][2] + s2 * e[2][2])\n  }\n  // the face normal to axis n (sign sg): its other two axes a, b with a x b = +n, walked CCW seen from outside\n  var face = function (n, sg) {\n    var a = (n + 1) % 3, b = (n + 2) % 3\n    var q = [[-1, -1], [1, -1], [1, 1], [-1, 1]]\n    var idx = []\n    for (var k = 0; k < 4; k++) {\n      var sv = [0, 0, 0]\n      sv[n] = sg\n      sv[a] = q[k][0] * sg // flipping one in-plane axis reverses the winding for the negative face\n      sv[b] = q[k][1]\n      idx.push(pt(sv[0], sv[1], sv[2]))\n    }\n    sb.quad(idx[0], idx[1], idx[2], idx[3])\n  }\n  for (var n = 0; n < 3; n++) { face(n, 1); face(n, -1) }\n}\n// an axis-aligned box from its min and max corners\nfunction abox(m, x0, y0, z0, x1, y1, z1) {\n  obox(m, [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2], [[(x1 - x0) / 2, 0, 0], [0, (y1 - y0) / 2, 0], [0, 0, (z1 - z0) / 2]])\n}\n// a square-section member of side t from point a to point b (any direction), its width axis kept horizontal\n// where it can be (so a diagonal brace in a vertical plane shows its flat side to that plane)\nfunction member(m, a, b, t) {\n  var d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]\n  var len = Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])\n  if (len < 1e-6) return\n  var u = [d[0] / len, d[1] / len, d[2] / len]\n  // side = u x up, or u x X when the member is vertical; then e2 = u x side completes a right-handed set\n  var s = Math.abs(u[1]) > 0.999 ? [0, u[2], -u[1]] : [-u[2], 0, u[0]]\n  var sl = Math.sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2])\n  s = [s[0] / sl, s[1] / sl, s[2] / sl]\n  var w = [u[1] * s[2] - u[2] * s[1], u[2] * s[0] - u[0] * s[2], u[0] * s[1] - u[1] * s[0]]\n  var h = t / 2\n  obox(m, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], [[u[0] * len / 2, u[1] * len / 2, u[2] * len / 2], [s[0] * h, s[1] * h, s[2] * h], [w[0] * h, w[1] * h, w[2] * h]])\n}\n// the in-plane axes (u, v) of a face normal to axis ax, with u x v = +ax\nvar PLANE = [[1, 2], [2, 0], [0, 1]]\n// a hex prism (bolt head, nut, thread end) standing on a face: base centre p, rising h along axis ax in\n// direction s (+1/-1), af across flats. The base sits on the face and is never seen, so it isn't emitted.\nfunction hex(m, p, ax, s, af, h) {\n  if (!room(m, 31)) return\n  var sb = m.sb, u = PLANE[ax][0], v = PLANE[ax][1], r = af / Math.sqrt(3)\n  var ring = function (t) {\n    var out = []\n    for (var k = 0; k < 6; k++) {\n      var a = (k * Math.PI) / 3, q = [p[0], p[1], p[2]]\n      q[u] += r * Math.cos(a)\n      q[v] += r * Math.sin(a)\n      q[ax] += s * t\n      out.push(q)\n    }\n    return out\n  }\n  var lo = ring(-SEAT), hi = ring(h)\n  var V = function (q) { return sb.vertex(q[0], q[1], q[2]) }\n  for (var k = 0; k < 6; k++) {\n    var k1 = (k + 1) % 6\n    var b0 = V(lo[k]), b1 = V(lo[k1]), f1 = V(hi[k1]), f0 = V(hi[k])\n    // CCW about +ax, so tangent x (+ax) points outward; a prism rising along -ax walks the other way\n    if (s > 0) sb.quad(b0, b1, f1, f0)\n    else sb.quad(b1, b0, f0, f1)\n  }\n  var cc = [p[0], p[1], p[2]]\n  cc[ax] += s * h\n  var c = V(cc), cap = []\n  for (var k2 = 0; k2 < 6; k2++) cap.push(V(hi[k2]))\n  for (var k3 = 0; k3 < 6; k3++) {\n    if (s > 0) sb.triangle(c, cap[k3], cap[(k3 + 1) % 6])\n    else sb.triangle(c, cap[(k3 + 1) % 6], cap[k3])\n  }\n}\n// a bolt through a member along axis ax: head on the face at +ax (coordinate hiFace), nut and thread end on the\n// face at -ax (loFace), both centred on the point p (whose ax coordinate is ignored). af across flats.\nfunction throughBolt(m, p, ax, loFace, hiFace, af) {\n  var a = [p[0], p[1], p[2]], b = [p[0], p[1], p[2]], c = [p[0], p[1], p[2]]\n  a[ax] = hiFace\n  b[ax] = loFace\n  c[ax] = loFace - af * 0.5\n  hex(m, a, ax, 1, af, af * 0.35)\n  hex(m, b, ax, -1, af, af * 0.5)\n  hex(m, c, ax, -1, af * 0.55, af * 0.3)\n}\n// a floor anchor on a plate whose top is at y: a square washer, a hex nut, and the stud end standing out of it\nfunction anchor(m, x, y, z, af) {\n  af = af || 0.022\n  var w = af * 1.45, wt = 0.003, nh = af * 0.55\n  abox(m, x - w / 2, y - SEAT, z - w / 2, x + w / 2, y + wt, z + w / 2)\n  hex(m, [x, y + wt, z], 1, 1, af, nh)\n  hex(m, [x, y + wt + nh, z], 1, 1, af * 0.55, af * 0.4)\n}\n// the realized submeshes: push each non-empty accumulator as a MeshPart\nfunction emitMeshes(list) {\n  var out = []\n  for (var i = 0; i < list.length; i++) {\n    var e = list[i]\n    if (!e.mesh) continue\n    var desc = e.mesh.sb.build()\n    if (!desc.positions.length) continue\n    var part = { desc: desc, material: e.material }\n    if (e.colorParam) part.colorParam = e.colorParam\n    if (e.link) part.link = e.link\n    out.push(part)\n  }\n  return out\n}\n\nvar DECK = 0.006 // deck thickness - thin plate or panel carried by the beam grid\nvar COL = 0.1 // column cross-section\nvar COL_SPAN = 2.4 // max column spacing (OSHA 8 ft)\nvar BEAM_H = 0.15 // under-deck support beam height\nvar BEAM_T = 0.006\nvar PLATE_T = 0.008\n// ANCHOR_IN: an anchor's offset from the plate centre along X and Z. TAB_*: a shear tab's run past the column\n// face, height, thickness. BOLT_AF: a hex's across-flats. KNEE: the brace's reach along the beam (it drops the\n// same amount down the column, so 45 degrees), shortened on a low deck or a short span; KNEE_T its section.\nvar ANCHOR_IN = 0.07, ANCHOR_AF = 0.022, TAB_RUN = 0.075, TAB_H = 0.11, TAB_T = 0.008, BOLT_AF = 0.018\nvar KNEE = 0.6, KNEE_T = 0.05, KNEE_MIN = 0.2\n\n// the rig's grid coordinates along one axis (core/rigPose: maxSpacing = every gap <= COL_SPAN, spread edge to\n// edge), or just the two corners without the middle supports\nfunction columnsAlong(span, supports) {\n  if (!supports) return [-span / 2, span / 2]\n  var n = Math.max(1, Math.min(63, Math.ceil(span / COL_SPAN))), out = []\n  for (var i = 0; i <= n; i++) out.push(-span / 2 + (i * span) / n)\n  return out\n}\nfunction num(v, d) { return typeof v === 'number' && isFinite(v) && v > 0 ? v : d }\n\ndefinePart({\n  params: {\n    // 'face' handles put resize dots in the viewport on that axis (clamped to the param's min/max); the host\n    // reflows the deck/frame/railing parametrically.\n    length: { type: 'number', default: 4, min: 0.5, step: 0.1, label: 'Length (m)', handle: { kind: 'face', axis: 'x' }, desc: 'Deck extent along local X. Drag the dot on either end face to resize in the viewport; the frame, railing and columns reflow to match.' },\n    width: { type: 'number', default: 4, min: 0.5, max: 20, step: 0.1, label: 'Width (m)', handle: { kind: 'face', axis: 'z' }, desc: 'Deck extent along local Z. Drag the dot on either side face to resize in the viewport.' },\n    // deck elevation above the floor — drives the column length. The origin is the deck TOP (the columns hang\n    // below it), so rest:'surfaceBelow' makes the host stand the origin `height` above whatever surface is\n    // beneath at drop/snap/translate: the columns always reach the floor, and dragging the platform up regrows\n    // them.\n    height: { type: 'number', default: 2, min: 0.3, max: 8, step: 0.05, rest: 'surfaceBelow', label: 'Height (m)', desc: 'Height of the deck top above whatever it stands on, which is also the column length. The origin is the deck top, so raising the platform regrows the columns to reach the floor rather than leaving them hanging.' },\n    // the deck link's finishParam: each option value IS a rig finish. An access platform is walked on (tread\n    // plate); one carrying conveyors or machines has a solid deck that takes the load and stops small items\n    // falling through. Only the look changes: the deck collides and seats parts the same either way.\n    deckSurface: { type: 'enum', default: 'tread', options: [{ value: 'tread', label: 'Tread plate' }, { value: 'deck', label: 'Solid deck' }], label: 'Deck surface', desc: 'What the deck is made of. Tread plate is the steel walking surface of an access platform; a solid deck is what an equipment platform carrying conveyors or machines has. Only the look changes.' },\n    color: { type: 'color', default: '#f2bd0f', label: 'Steel color', desc: 'Steel tint of the frame, columns and railing.' },\n    showRailings: { type: 'boolean', default: true, label: 'Perimeter railing', desc: 'Guard railing around the deck edge. Turning it off removes the barrier a walking pilot leans on, not just the visual.' },\n    showSupports: { type: 'boolean', default: true, label: 'Middle supports', desc: 'Interior columns under a large deck, in addition to the corner ones. Cosmetic on a small platform, which the corners already carry.' },\n  },\n  geometry(g, p) {\n    var length = num(p.length, 4), width = num(p.width, 4), height = num(p.height, 2)\n    var supports = p.showSupports !== false\n    var xs = columnsAlong(length, supports), zs = columnsAlong(width, supports)\n    var floor = -height, beamTop = -DECK, beamBot = -DECK - BEAM_H, beamMid = (beamTop + beamBot) / 2\n    var steel = mesh(g), hw = mesh(g)\n    var i, k, d\n\n    // anchors: four per base plate, one near each corner\n    for (i = 0; i < xs.length; i++) for (k = 0; k < zs.length; k++)\n      for (var ax = -1; ax <= 1; ax += 2) for (var az = -1; az <= 1; az += 2) anchor(hw, xs[i] + ax * ANCHOR_IN, floor + PLATE_T, zs[k] + az * ANCHOR_IN, ANCHOR_AF)\n\n    // knee braces on the perimeter frame: from the column face KNEE down, up to the beam's underside KNEE along\n    // it, in the beam's plane; each end runs a hair on into what it meets, and is bolted through\n    var gap = function (list) { var m = 1e9; for (var q = 0; q + 1 < list.length; q++) m = Math.min(m, list[q + 1] - list[q]); return m }\n    var knee = Math.min(KNEE, (height - DECK - BEAM_H) * 0.35, (Math.min(gap(xs), gap(zs)) - COL) / 2 - TAB_RUN)\n    if (knee >= KNEE_MIN) {\n      var brace = function (c, along, dir, plane) {\n        var n = along === 0 ? 2 : 0\n        var a = [0, beamBot - knee, 0], b = [0, beamBot, 0]\n        a[along] = c + dir * COL / 2; b[along] = c + dir * (COL / 2 + knee)\n        a[n] = plane; b[n] = plane\n        var e = KNEE_T / 2 / (Math.sqrt(2) * knee)\n        member(steel, [a[0] - (b[0] - a[0]) * e, a[1] - (b[1] - a[1]) * e, a[2] - (b[2] - a[2]) * e], [b[0] + (b[0] - a[0]) * e, b[1] + (b[1] - a[1]) * e, b[2] + (b[2] - a[2]) * e], KNEE_T)\n        for (var t = 0; t < 2; t++) {\n          var f = t === 0 ? 0.12 : 0.88\n          throughBolt(hw, [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f], n, plane - KNEE_T / 2, plane + KNEE_T / 2, BOLT_AF * 0.85)\n        }\n      }\n      var zEdge = [zs[0], zs[zs.length - 1]], xEdge = [xs[0], xs[xs.length - 1]]\n      for (i = 0; i < xs.length; i++) for (var e1 = 0; e1 < 2; e1++) for (d = -1; d <= 1; d += 2)\n        if ((d < 0 && i > 0) || (d > 0 && i < xs.length - 1)) brace(xs[i], 0, d, zEdge[e1])\n      for (k = 0; k < zs.length; k++) for (var e2 = 0; e2 < 2; e2++) for (d = -1; d <= 1; d += 2)\n        if ((d < 0 && k > 0) || (d > 0 && k < zs.length - 1)) brace(zs[k], 2, d, xEdge[e2])\n    }\n\n    // shear tabs: at every column, on each side a beam leaves from, along X (the beam at this z) and along Z (the\n    // beam at this x). The tab sits on one face of the web; two bolts go through tab and web - one, or none, if a\n    // big deck's column grid would run the hardware out of budget (these are under the deck; the braces come first).\n    //   c: the column's coordinate along the beam; along: 0 = the beam runs along X (web normal Z), 2 = along Z;\n    //   dir: which way the beam leaves; web: the web's centre on its normal axis; out: the face the tab is on\n    var tab = function (c, along, dir, web, out) {\n      var n = along === 0 ? 2 : 0\n      var f0 = web + out * (BEAM_T / 2 - SEAT), f1 = web + out * (BEAM_T / 2 + TAB_T)\n      var a0 = c + dir * (COL / 2 - SEAT), a1 = c + dir * (COL / 2 + TAB_RUN)\n      var lo = [0, beamMid - TAB_H / 2, 0], hi = [0, beamMid + TAB_H / 2, 0]\n      lo[along] = Math.min(a0, a1); hi[along] = Math.max(a0, a1)\n      lo[n] = Math.min(f0, f1); hi[n] = Math.max(f0, f1)\n      abox(steel, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2])\n      var back = web - out * BEAM_T / 2\n      for (var yy = 0; yy < tabBolts; yy++) {\n        var pt = [0, beamMid + (tabBolts === 1 ? 0 : (yy * 2 - 1) * TAB_H * 0.27), 0]\n        pt[along] = c + dir * (COL / 2 + TAB_RUN / 2)\n        throughBolt(hw, pt, n, Math.min(back, f1), Math.max(back, f1), BOLT_AF)\n      }\n    }\n    // each column has a tab per beam side: 2 per axis, less one at each end of the axis\n    var tabCount = (2 * xs.length - 2) * zs.length + (2 * zs.length - 2) * xs.length\n    var tabBolts = 2\n    while (tabBolts > 0 && tabCount * tabBolts * 3 * 31 > VERT_CAP - hw.n) tabBolts--\n    for (i = 0; i < xs.length; i++) {\n      for (k = 0; k < zs.length; k++) {\n        // a perimeter web gets its tab on the inside face, where it's seen from under the deck; a grid web on +\n        var outZ = k === zs.length - 1 ? -1 : 1\n        var outX = i === xs.length - 1 ? -1 : 1\n        for (d = -1; d <= 1; d += 2) {\n          if ((d < 0 && i > 0) || (d > 0 && i < xs.length - 1)) tab(xs[i], 0, d, zs[k], outZ)\n          if ((d < 0 && k > 0) || (d > 0 && k < zs.length - 1)) tab(zs[k], 2, d, xs[i], outX)\n        }\n      }\n    }\n\n    return emitMeshes([\n      { mesh: steel, material: 'platformSteel', colorParam: 'color' },\n      { mesh: hw, material: 'platformHardware' },\n    ])\n  },\n  react() {},\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "deck",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.006,
+            4
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.003,
+          0
+        ],
+        "finish": "tread",
+        "finishParam": "deckSurface",
+        "notchable": true
+      },
+      {
+        "name": "colLF",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.1,
+            1.994,
+            0.1
+          ],
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "height",
+              "scale": 1,
+              "add": -0.006
+            }
+          ]
+        },
+        "offset": [
+          -2,
+          -1.003,
+          -2
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5
+          },
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -0.5,
+            "add": -0.003
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color"
+      },
+      {
+        "name": "colLR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.1,
+            1.994,
+            0.1
+          ],
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "height",
+              "scale": 1,
+              "add": -0.006
+            }
+          ]
+        },
+        "offset": [
+          -2,
+          -1.003,
+          2
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5
+          },
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -0.5,
+            "add": -0.003
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color"
+      },
+      {
+        "name": "colRF",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.1,
+            1.994,
+            0.1
+          ],
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "height",
+              "scale": 1,
+              "add": -0.006
+            }
+          ]
+        },
+        "offset": [
+          2,
+          -1.003,
+          -2
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5
+          },
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -0.5,
+            "add": -0.003
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color"
+      },
+      {
+        "name": "colRR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.1,
+            1.994,
+            0.1
+          ],
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "height",
+              "scale": 1,
+              "add": -0.006
+            }
+          ]
+        },
+        "offset": [
+          2,
+          -1.003,
+          2
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5
+          },
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -0.5,
+            "add": -0.003
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color"
+      },
+      {
+        "name": "columnGrid",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.1,
+            1.994,
+            0.1
+          ],
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "height",
+              "scale": 1,
+              "add": -0.006
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -1.003,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -0.5,
+            "add": -0.003
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "array": {
+          "grid": {
+            "x": {
+              "sizeParam": "length",
+              "maxSpacing": 2.4,
+              "size": 4
+            },
+            "z": {
+              "sizeParam": "width",
+              "maxSpacing": 2.4,
+              "size": 4
+            }
+          }
+        },
+        "showParam": "showSupports"
+      },
+      {
+        "name": "plateLF",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.2,
+            0.008,
+            0.2
+          ]
+        },
+        "offset": [
+          -2,
+          -1.996,
+          -2
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5
+          },
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -1,
+            "add": 0.004
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "plateLR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.2,
+            0.008,
+            0.2
+          ]
+        },
+        "offset": [
+          -2,
+          -1.996,
+          2
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5
+          },
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -1,
+            "add": 0.004
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "plateRF",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.2,
+            0.008,
+            0.2
+          ]
+        },
+        "offset": [
+          2,
+          -1.996,
+          -2
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5
+          },
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -1,
+            "add": 0.004
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "plateRR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.2,
+            0.008,
+            0.2
+          ]
+        },
+        "offset": [
+          2,
+          -1.996,
+          2
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5
+          },
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -1,
+            "add": 0.004
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "plateGrid",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.2,
+            0.008,
+            0.2
+          ]
+        },
+        "offset": [
+          0,
+          -1.996,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "height",
+            "scale": -1,
+            "add": 0.004
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "array": {
+          "grid": {
+            "x": {
+              "sizeParam": "length",
+              "maxSpacing": 2.4,
+              "size": 4
+            },
+            "z": {
+              "sizeParam": "width",
+              "maxSpacing": 2.4,
+              "size": 4
+            }
+          }
+        },
+        "showParam": "showSupports"
+      },
+      {
+        "name": "beamXN",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.15,
+            0.006
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.081,
+          -2
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "beamXP",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.15,
+            0.006
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.081,
+          2
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "beamZN",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.006,
+            0.15,
+            4
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          -2,
+          -0.081,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "beamZP",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.006,
+            0.15,
+            4
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          2,
+          -0.081,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "beamGridX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.15,
+            0.006
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.081,
+          0
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "array": {
+          "distribute": {
+            "axis": 2,
+            "spanParam": "width",
+            "maxSpacing": 2.4
+          }
+        },
+        "showParam": "showSupports"
+      },
+      {
+        "name": "beamGridZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.006,
+            0.15,
+            4
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.081,
+          0
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "array": {
+          "distribute": {
+            "axis": 0,
+            "spanParam": "length",
+            "maxSpacing": 2.4
+          }
+        },
+        "showParam": "showSupports"
+      },
+      {
+        "name": "postXN",
+        "onEdge": "negX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.04,
+            1.091,
+            0.04
+          ]
+        },
+        "offset": [
+          -2.02,
+          0.5455,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "array": {
+          "distribute": {
+            "axis": 2,
+            "spanParam": "width",
+            "spanAdd": 0.04,
+            "maxSpacing": 2.4
+          }
+        },
+        "showParam": "showRailings"
+      },
+      {
+        "name": "railTopXN",
+        "onEdge": "negX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.032,
+            0.032,
+            4.072
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1,
+              "add": 0.072
+            }
+          ]
+        },
+        "offset": [
+          -2.02,
+          1.07,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "railMidXN",
+        "onEdge": "negX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.032,
+            0.032,
+            4.072
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1,
+              "add": 0.072
+            }
+          ]
+        },
+        "offset": [
+          -2.02,
+          0.54,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "toeXN",
+        "onEdge": "negX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.02,
+            0.1,
+            4.06
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1,
+              "add": 0.06
+            }
+          ]
+        },
+        "offset": [
+          -2.02,
+          0.05,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "wallXN",
+        "onEdge": "negX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.06,
+            1.07,
+            4.1
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1,
+              "add": 0.1
+            }
+          ]
+        },
+        "offset": [
+          -2.02,
+          0.535,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "hidden": true,
+        "showParam": "showRailings"
+      },
+      {
+        "name": "postXP",
+        "onEdge": "posX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.04,
+            1.091,
+            0.04
+          ]
+        },
+        "offset": [
+          2.02,
+          0.5455,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "array": {
+          "distribute": {
+            "axis": 2,
+            "spanParam": "width",
+            "spanAdd": 0.04,
+            "maxSpacing": 2.4
+          }
+        },
+        "showParam": "showRailings"
+      },
+      {
+        "name": "railTopXP",
+        "onEdge": "posX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.032,
+            0.032,
+            4.072
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1,
+              "add": 0.072
+            }
+          ]
+        },
+        "offset": [
+          2.02,
+          1.07,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "railMidXP",
+        "onEdge": "posX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.032,
+            0.032,
+            4.072
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1,
+              "add": 0.072
+            }
+          ]
+        },
+        "offset": [
+          2.02,
+          0.54,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "toeXP",
+        "onEdge": "posX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.02,
+            0.1,
+            4.06
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1,
+              "add": 0.06
+            }
+          ]
+        },
+        "offset": [
+          2.02,
+          0.05,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "wallXP",
+        "onEdge": "posX",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.06,
+            1.07,
+            4.1
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1,
+              "add": 0.1
+            }
+          ]
+        },
+        "offset": [
+          2.02,
+          0.535,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "hidden": true,
+        "showParam": "showRailings"
+      },
+      {
+        "name": "postZN",
+        "onEdge": "negZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.04,
+            1.091,
+            0.04
+          ]
+        },
+        "offset": [
+          0,
+          0.5455,
+          -2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "array": {
+          "distribute": {
+            "axis": 0,
+            "spanParam": "length",
+            "spanAdd": 0.04,
+            "maxSpacing": 2.4
+          }
+        },
+        "showParam": "showRailings"
+      },
+      {
+        "name": "railTopZN",
+        "onEdge": "negZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4.072,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1,
+              "add": 0.072
+            }
+          ]
+        },
+        "offset": [
+          0,
+          1.07,
+          -2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "railMidZN",
+        "onEdge": "negZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4.072,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1,
+              "add": 0.072
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.54,
+          -2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "toeZN",
+        "onEdge": "negZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4.06,
+            0.1,
+            0.02
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1,
+              "add": 0.06
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.05,
+          -2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "wallZN",
+        "onEdge": "negZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4.1,
+            1.07,
+            0.06
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1,
+              "add": 0.1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.535,
+          -2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "hidden": true,
+        "showParam": "showRailings"
+      },
+      {
+        "name": "postZP",
+        "onEdge": "posZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.04,
+            1.091,
+            0.04
+          ]
+        },
+        "offset": [
+          0,
+          0.5455,
+          2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "array": {
+          "distribute": {
+            "axis": 0,
+            "spanParam": "length",
+            "spanAdd": 0.04,
+            "maxSpacing": 2.4
+          }
+        },
+        "showParam": "showRailings"
+      },
+      {
+        "name": "railTopZP",
+        "onEdge": "posZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4.072,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1,
+              "add": 0.072
+            }
+          ]
+        },
+        "offset": [
+          0,
+          1.07,
+          2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "railMidZP",
+        "onEdge": "posZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4.072,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1,
+              "add": 0.072
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.54,
+          2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "toeZP",
+        "onEdge": "posZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4.06,
+            0.1,
+            0.02
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1,
+              "add": 0.06
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.05,
+          2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "showParam": "showRailings"
+      },
+      {
+        "name": "wallZP",
+        "onEdge": "posZ",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4.1,
+            1.07,
+            0.06
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1,
+              "add": 0.1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.535,
+          2.02
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "hidden": true,
+        "showParam": "showRailings"
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 4,
+      "width": 4,
+      "top": 1.07
+    }
+  },
+  "category": "Structure",
+  "snap": {
+    "surfaces": [
+      {
+        "kind": "deck",
+        "lengthParam": "length",
+        "widthParam": "width",
+        "heightParam": "height"
+      }
+    ],
+    "tile": {
+      "group": "platformDeck",
+      "lengthParam": "length",
+      "widthParam": "width"
+    }
+  },
+  "materials": [
+    {
+      "id": "platformSteel",
+      "color": [
+        0.949,
+        0.741,
+        0.059
+      ],
+      "metalness": 0.2,
+      "roughness": 0.5
+    },
+    {
+      "id": "platformHardware",
+      "color": [
+        0.05,
+        0.052,
+        0.058
+      ],
+      "metalness": 0.15,
+      "roughness": 0.5
+    }
+  ],
+  "sdk": {
+    "level": 16,
+    "of": "v2:28222:uvn32jm3ln"
+  }
+}

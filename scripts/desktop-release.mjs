@@ -79,8 +79,21 @@ const fail = (msg) => {
 // npm / npx are .cmd files on Windows, so they run through a shell: one command string, every argument quoted
 const quote = (a) => (/^[\w@%+=:,./\-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`)
 const run = (cmd, args, cwd = root, env = process.env) => execSync([cmd, ...args].map(quote).join(' '), { cwd, stdio: 'inherit', env })
-const put = (file, key, contentType, cacheControl) =>
-  run('npx', ['--yes', WRANGLER, 'r2', 'object', 'put', `${BUCKET}/${PREFIX}/${key}`, '--file', file, '--content-type', contentType, '--cache-control', cacheControl, '--remote'])
+// A put to the same key is safe to repeat. Cloudflare's API gateway once answered a 524 while the object still
+// landed, which failed a release whose feeds were already live; a re-run can't recover that, so retry here.
+const PUT_WAITS_MS = [5000, 15000]
+const put = (file, key, contentType, cacheControl) => {
+  const args = ['--yes', WRANGLER, 'r2', 'object', 'put', `${BUCKET}/${PREFIX}/${key}`, '--file', file, '--content-type', contentType, '--cache-control', cacheControl, '--remote']
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return run('npx', args)
+    } catch (e) {
+      if (attempt >= PUT_WAITS_MS.length) throw e
+      console.log(`  upload of ${key} failed; retrying in ${PUT_WAITS_MS[attempt] / 1000} s`)
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PUT_WAITS_MS[attempt])
+    }
+  }
+}
 
 // semver-ish compare, enough for x.y.z
 const newer = (a, b) => {

@@ -22,7 +22,7 @@ import tsWorker from 'monaco-editor/languages/features/typescript/ts.worker.js?w
 import partSdkIndexDts from '../../../packages/part-sdk/index.d.ts?raw'
 import partSdkGlobalDts from '../../../packages/part-sdk/global.d.ts?raw'
 import partSdkManifestDts from '../../../packages/part-sdk/manifest.d.ts?raw'
-import { getPackage } from '../../core/partRegistry'
+import { getPackage } from '../../core/parts/partRegistry'
 import { getRoomCodeGate, peersEditingPart, setLocalEditingPart, subscribePeers, type RemotePeer } from '../../collab/session'
 import type { PartDiagnostic } from '../../sim/validatePart'
 import type { EditorController } from '../controller'
@@ -41,7 +41,7 @@ const M = defineMessages('behaviorEditor', {
   title: 'Behavior:',
   close: 'Close',
   codeHeld:
-    "This part's code comes from someone else in this room and is blocked on your computer, so this shows the stand-in it runs instead. Allow the room's code to see and edit the real script.",
+    "This part's code comes from someone else in this shared project and is blocked on your computer, so this shows the stand-in it runs instead. Allow its part code to see and edit the real script.",
   othersEditingReadOnly: {
     one: '{names} is editing this part (opened read-only).',
     other: '{names} are editing this part (opened read-only).',

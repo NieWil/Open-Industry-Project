@@ -12,7 +12,7 @@
 // a .png path to see the result.
 //
 //   node e2e/verify-step-import.mjs
-/* global process, console, window, localStorage, requestAnimationFrame, performance */
+/* global process, console, window, localStorage, requestAnimationFrame, performance, TextDecoder */
 import { statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { startServer } from './_server.mjs'
@@ -54,7 +54,7 @@ try {
   }, pkgId)
   check('A  the kernel wasm is not fetched before a STEP import', wasmFetches.length === 0, wasmFetches.join(', '))
 
-  const input = page.locator('input[type=file][accept*=".step"]')
+  const input = page.getByTestId('model-file-input')
   // count() does not wait, and the node panel mounts a beat after the selection: wait for the input first
   await input.waitFor({ state: 'attached', timeout: 10000 }).catch(() => {})
   check('the model picker accepts STEP files', (await input.count()) === 1, `${await input.count()} input(s)`)

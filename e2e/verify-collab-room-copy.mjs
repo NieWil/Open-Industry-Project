@@ -1,4 +1,4 @@
-// Verify Make a Copy of This Room (src/editor/roomCopy.ts): the room's document becomes a project of your own.
+// Verify Make a Copy (src/editor/project/roomCopy.ts): a shared project's document becomes a project of your own.
 //
 // The alternative, export, leave, import, doesn't work: import is refused inside a room, and a room's held part
 // code exports as stand-ins. This drives the real command through the palette against a real Hocuspocus server
@@ -66,7 +66,7 @@ const library = (page) =>
           if (!db.objectStoreNames.contains('docPayload')) return resolve([])
           const all = db.transaction('docPayload').objectStore('docPayload').getAll()
           all.onsuccess = () => {
-            resolve(all.result.map((r) => ({ id: r.id, name: r.project.name, parts: (r.project.scene?.parts ?? []).map((p) => p.id) })))
+            resolve(all.result.map((r) => ({ ...r, project: r.project ?? JSON.parse(r.text) })).map((r) => ({ id: r.id, name: r.project.name, parts: (r.project.scene?.parts ?? []).map((p) => p.id) })))
             db.close()
           }
         }
@@ -121,7 +121,7 @@ try {
   await page.locator('body').click({ position: { x: 2, y: 2 } }).catch(() => {})
   await page.keyboard.press('Control+Shift+P')
   await page.locator('.palette-input').waitFor({ state: 'visible', timeout: 10000 })
-  await page.locator('.palette-input').fill('Make a Copy of This Room')
+  await page.locator('.palette-input').fill('Make a Copy')
   await page.keyboard.press('Enter')
   await page.waitForURL((u) => !u.searchParams.has('room'), { timeout: 30000 })
   await waitForApp(page)

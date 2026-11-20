@@ -1,26 +1,26 @@
-import { DoubleSide, MeshStandardMaterial } from 'three'
+import { DoubleSide, MeshStandardMaterial, Quaternion, Vector3 } from 'three'
 import type { Group, InstancedMesh, Material, Mesh } from 'three'
-import type { RollerGrid } from '../../../core/rollerGrid'
-import type { RigParams } from '../../../core/rigPose'
-import { evalPartGeometry, resolvePartParams } from '../../../core/geometryEval'
-import { beltLikeView } from '../../../core/partGeometry'
-import { beltXToS, buildBeltPath } from '../../../core/beltPath'
-import type { GuardOpenings } from '../../../core/guardOpenings'
-import { guardHoleRows } from '../../../core/guardHoles'
-import type { GuardHoles } from '../../../core/guardHoles'
-import type { GuardExtents } from '../../../core/guardExtents'
-import { guardMitreRows, withSnapExtents } from '../../../core/guardExtents'
+import type { RollerGrid } from '../../../core/conveyor/rollerGrid'
+import type { RigParams } from '../../../core/rig/rigPose'
+import { evalPartGeometry, resolvePartParams } from '../../../core/geometry/geometryEval'
+import { bedView } from '../../../core/parts/partGeometry'
+import { beltXToS, beltXToSExt, buildBeltPath } from '../../../core/conveyor/beltPath'
+import { withGuardGaps, type GuardOpenings } from '../../../core/guards/guardOpenings'
+import { guardHoleRows } from '../../../core/guards/guardHoles'
+import type { GuardHoles } from '../../../core/guards/guardHoles'
+import type { GuardExtents } from '../../../core/guards/guardExtents'
+import { guardMitreRows, withSnapExtents } from '../../../core/guards/guardExtents'
 import type { LegRestRows } from '../../../core/legRests'
 import { withLegRests } from '../../../core/legRests'
 import type { PlatformCut } from '../../../core/structureCuts'
-import type { MeshDescription, MeshPart, ParamValue } from '../../../core/partApi'
-import type { PartAsset, PartMaterial, PartPackage } from '../../../core/partPackage'
+import type { MeshDescription, MeshPart, ParamValue } from '../../../core/parts/partApi'
+import type { PartAsset, PartMaterial, PartPackage } from '../../../core/parts/partPackage'
 import type { SdkPart } from '../../../core/types'
 import { realizeInstancedTemplate, writeInstanceMatrices } from '../instancedTemplate'
 import { realizeMeshDescription, rewriteMeshDescription } from '../meshDescriptionGeometry'
 import { BELT_TEX_PERIOD, boltMaterial, createBeltSurface, gapFillMaterial, guardMaterial, legMaterial, markTickUniformsAdvanced, railMaterial, rollerMaterial, deckTriplanarMaterial, shadowMesh } from '../common'
 import type { BeltTextureVariant } from '../common'
-import { beltBankMaterial, beltClockEpoch, rebaseBeltScroll, rebaseBeltScrollForWrap, writeFabricBankAttributes, writeFabricBankScroll } from '../beltFabricBank'
+import { acquireBeltBankMaterial, beltClockEpoch, releaseBeltBankMaterial, rebaseBeltScroll, rebaseBeltScrollForWrap, writeFabricBankAttributes, writeFabricBankScroll } from '../beltFabricBank'
 import { bumpRepaintEpoch, bumpStructureVersion } from '../structureRev'
 import { retireGeometry, retireInstancedMesh } from '../../gpuRetire'
 import { markLazyColliderBVH } from '../../bvh'
@@ -30,10 +30,13 @@ import { advanceBankSpins, bankSpinSign, spinUniformOf } from './bankSpin'
 import type { BankSpin } from './bankSpin'
 import { buildMaterial } from './materials'
 
+const _spinQ = new Quaternion()
+const _spinV = new Vector3()
+
 // ---- drawn geometry (geometry.kind: 'drawn': the shape comes from the part's geometry()) -------------
 // The Tier-2 escape hatch (docs/procedural-geometry.md): a part's geometry(g, params) callback emits one or
 // more MeshPart[] (a bent multi-segment belt = a scrolling fabric bed + a steel frame + side guards + support
-// legs), realized via core/geometryEval - render's in-layer twin of the sim's embeddedBehavior.geometry
+// legs), realized via core/geometry/geometryEval - render's in-layer twin of the sim's embeddedBehavior.geometry
 // (render may not import sim). Each part is realized into its own mesh with a per-role material ('belt' = the
 // scrolling conveyor fabric, 'frame'/'guard'/'leg' = steel, else neutral; a `material` id overrides). The
 // geometry re-runs (and the meshes rebuild) only when the resolved params change, never per frame.
@@ -45,7 +48,7 @@ import { buildMaterial } from './materials'
 // the neighbour fact and injects it as ordinary params, exactly like rest:'surfaceBelow' fills standHeight.
 function withNeighborOpenings(p: SdkPart, pkg: PartPackage, params: Record<string, ParamValue>, openings?: GuardOpenings): Record<string, ParamValue> {
   if (!openings || (openings.left.length === 0 && openings.right.length === 0) || !pkg.params.guardOpenings) return params
-  const view = beltLikeView(p)
+  const view = bedView(p, 'path')
   if (!view) return params
   const path = buildBeltPath(view.segments, view.height)
   const rows: number[][] = []
@@ -58,13 +61,14 @@ function withNeighborOpenings(p: SdkPart, pkg: PartPackage, params: Record<strin
 // Fold the host-derived sensor-beam holes (guardHoles.ts) into a function conveyor's `guardHoles` param as rows
 // [x, y, side ±1], so its geometry() splits the guard sheet around each and draws the holed panel. x arrives in the
 // host's guard frame: a belt-like part's plan X becomes arc length here (the frame its guard is built in, as for
-// openings); a centre-origin bed's X and a curve's arc angle pass through. A no-op unless the part declares the
-// param (the hole convention) - a conveyor that doesn't draw holes keeps solid guards.
+// openings), extended along the end tangents, since its guards run on around each end drum and a hole there is
+// negative or past the path's length; a centre-origin bed's X and a curve's arc angle pass through. A no-op unless
+// the part declares the param (the hole convention) - a conveyor that doesn't draw holes keeps solid guards.
 function withGuardHoles(p: SdkPart, pkg: PartPackage, params: Record<string, ParamValue>, holes?: GuardHoles): Record<string, ParamValue> {
   if (!holes || !pkg.params.guardHoles) return params
-  const view = beltLikeView(p)
+  const view = bedView(p, 'path')
   const path = view ? buildBeltPath(view.segments, view.height) : null
-  const rows = guardHoleRows(holes).map(([x, y, side]) => [path ? beltXToS(path, x!) : x!, y!, side!])
+  const rows = guardHoleRows(holes).map(([x, y, side]) => [path ? beltXToSExt(path, x!) : x!, y!, side!])
   return rows.length ? { ...params, guardHoles: rows } : params
 }
 
@@ -187,6 +191,9 @@ export function buildFunctionMesh(geo: Extract<PartPackage['geometry'], { kind: 
     }
     return m
   }
+  // MeshPart.spin on a plain submesh: the mesh itself turns about the axis through `center`, as a rig's geometry()
+  // submesh does (rigProcedural.ts), so a toothed sprocket's teeth go round
+  const meshSpins: { mesh: Mesh; axis: Vector3; center: Vector3; radius: number; speed: string; angle: number }[] = []
   let lastParams: Record<string, ParamValue> = {}
   // a spin's speed: the conveyor's declared speed param is the conveyor's own (live while running, else the param -
   // the belt convention above); any other name reads that param; '' (no name on a part that is no conveyor) is 0
@@ -228,12 +235,13 @@ export function buildFunctionMesh(geo: Extract<PartPackage['geometry'], { kind: 
     materials: allMats,
     refresh(p: SdkPart, openings?: GuardOpenings, _grid?: RollerGrid, extents?: GuardExtents, _platformCut?: PlatformCut, legRests?: LegRestRows, holes?: GuardHoles): void {
       const overrides = p.params as RigParams
-      // resolve params, then fold in any neighbour-derived guard openings so a butted junction opens the
-      // guard, any snap-derived extents so a merged mover's rails/guards end on the host wall plane
+      // resolve params, then fold in any neighbour-derived guard openings so a butted junction or a diverter opens
+      // the guard (a belt takes them as arc-length guardOpenings rows, a straight or a spur as guardGaps), any
+      // snap-derived extents so a merged mover's rails/guards end on the host wall plane
       // (a spur extends to it; a flush straight/belt retracts to it), any host-derived leg-rest rows so
       // a bed crossing a platform stands each leg on the surface actually below it (legRests.ts), and the
       // sensor-beam holes through its guards (guardHoles.ts).
-      const params = withGuardMitres(pkg, withGuardHoles(p, pkg, withLegRests(p, withSnapExtents(p, withNeighborOpenings(p, pkg, resolvePartParams(pkg.params, overrides), openings), extents), legRests), holes), openings, extents)
+      const params = withGuardMitres(pkg, withGuardHoles(p, pkg, withLegRests(p, withSnapExtents(p, withGuardGaps(p, withNeighborOpenings(p, pkg, resolvePartParams(pkg.params, overrides), openings), openings), extents), legRests), holes), openings, extents)
       // drives the fabric scroll (belt convention) - read the resolved speed: a belt left at its default speed
       // carries no override, so overrides.speed is undefined and the scroll would freeze. Folded with the
       // snap-owned `reverse` flag (conveyorDirection.ts) so a snapped-reversed curve scrolls back down its own
@@ -325,8 +333,25 @@ export function buildFunctionMesh(geo: Extract<PartPackage['geometry'], { kind: 
       for (let i = 0; i < parts.length; i++) {
         const part = parts[i]!
         const fabric = part.finish === 'belt' || (!part.finish && geo.conveys)
-        if (fabric) delete meshes[i]!.mesh.userData.poolUnit
+        // a spinning submesh moves relative to its part every frame, so it never merges across parts either
+        if (fabric || part.spin) delete meshes[i]!.mesh.userData.poolUnit
         else meshes[i]!.mesh.userData.poolUnit = true
+      }
+      // the spinning submeshes, re-registered on every emit; a reused mesh keeps its angle, and one that no longer
+      // spins goes back to rest
+      const prevAngle = new Map(meshSpins.map((sp) => [sp.mesh, sp.angle] as const))
+      meshSpins.length = 0
+      for (let i = 0; i < parts.length; i++) {
+        const spin = parts[i]!.spin
+        const mesh = meshes[i]!.mesh
+        const axis = spin ? new Vector3(spin.axis[0], spin.axis[1], spin.axis[2]) : null
+        if (spin && axis && axis.lengthSq() > 0) {
+          const c = spin.center ?? [0, 0, 0]
+          meshSpins.push({ mesh, axis: axis.normalize(), center: new Vector3(c[0], c[1], c[2]), radius: spin.radius, speed: spin.speed ?? pkg.conveyor?.speedParam ?? '', angle: prevAngle.get(mesh) ?? 0 })
+        } else if (prevAngle.has(mesh)) {
+          mesh.quaternion.identity()
+          mesh.position.set(0, 0, 0)
+        }
       }
       // instanced-template banks (MeshPart.instances): one InstancedMesh per bank, reconciled by stable emit
       // index. Reuse the slot when the template desc is unchanged and the new count still fits the buffer -
@@ -343,8 +368,11 @@ export function buildFunctionMesh(geo: Extract<PartPackage['geometry'], { kind: 
         const part = instancedParts[i]!
         const insts = part.instances!
         const isFabric = part.finish === 'belt' || (!part.finish && geo.conveys)
-        const mat = isFabric ? beltBankMaterial(bankVariant, bankTint) : part.spin ? spinMatFor({ ...part, spin: part.spin }) : matFor(part)
+        // a slot holds one reference to a shared bank material: this pass's acquire replaces the one it held
+        // (released after, so an unchanged colour never drops to zero), and dropping the slot releases it
+        const mat = isFabric ? acquireBeltBankMaterial(bankVariant, bankTint) : part.spin ? spinMatFor({ ...part, spin: part.spin }) : matFor(part)
         const slot = instMeshes[i]
+        releaseBeltBankMaterial(slot?.mat)
         if (slot && descEqual(slot.desc, part.desc) && insts.length <= slot.mesh.instanceMatrix.count) {
           if (slot.mat !== mat) { slot.mesh.material = mat; slot.mat = mat; structural = true } // pipeline/bindings swap
           if (slot.mesh.count !== insts.length) structural = true // a bundle bakes the draw's instance count
@@ -364,6 +392,7 @@ export function buildFunctionMesh(geo: Extract<PartPackage['geometry'], { kind: 
         const slot = instMeshes.pop()!
         root.remove(slot.mesh)
         retireInstancedMesh(slot.mesh)
+        releaseBeltBankMaterial(slot.mat)
         structural = true
       }
       // (re)tile the fabric + pick its weave now that a 'belt' part may have created it this pass + apply any
@@ -452,13 +481,26 @@ export function buildFunctionMesh(geo: Extract<PartPackage['geometry'], { kind: 
         }
       }
       if (running && advanceBankSpins(bankSpins, spinSpeed, dt)) markTickUniformsAdvanced() // tick group: no walk
+      // a spinning submesh's own transform moves: that one needs the walk
+      if (running) {
+        for (const sp of meshSpins) {
+          const v = spinSpeed(sp.speed)
+          if (v === 0 || !(sp.radius > 0)) continue
+          sp.angle = (sp.angle + (v / sp.radius) * dt) % (Math.PI * 2)
+          _spinQ.setFromAxisAngle(sp.axis, sp.angle)
+          sp.mesh.quaternion.copy(_spinQ)
+          // turn about `center`, not the mesh origin: p' = q(p - c) + c, so the mesh sits at c - q c
+          sp.mesh.position.copy(sp.center).sub(_spinV.copy(sp.center).applyQuaternion(_spinQ))
+          mutated = true
+        }
+      }
       return mutated
     },
     dispose(): void {
       for (const m of allMats) m.dispose()
       // retired, not disposed: drawn in the bundled main pass, so a recording may still hold them (gpuRetire.ts)
       for (const m of meshes) retireGeometry(m.mesh.geometry)
-      for (const m of instMeshes) retireInstancedMesh(m.mesh)
+      for (const m of instMeshes) { retireInstancedMesh(m.mesh); releaseBeltBankMaterial(m.mat) } // a bank material is shared, so released, not in allMats
       if (belt) belt.dispose() // every weave variant the belt minted, not just the bound one
     },
   }

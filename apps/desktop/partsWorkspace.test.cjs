@@ -57,7 +57,7 @@ const examples = join(repoRoot, 'examples', 'parts')
   }
 }
 
-// 4. A part whose manifest names asset files (src/core/partAssets.ts) is handed on with them joined back into base64
+// 4. A part whose manifest names asset files (src/core/parts/partAssets.ts) is handed on with them joined back into base64
 //    `data`; a missing or altered file fails that part, naming the file.
 {
   const { createHash } = require('node:crypto')

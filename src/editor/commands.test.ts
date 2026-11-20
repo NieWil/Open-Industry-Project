@@ -7,9 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_KEYMAP } from '../core/keymap'
 import { acceleratorFor, COMMANDS, commandChord, commandDisabledReason, commandEnabled, commandEnabledOn, DESKTOP_MENU, desktopMenuModel, getCommand, menuEnablement, runCommand, runCommandOn, runMenuCommand, setCommandCtx, SIM_SPEEDS } from './commands'
 import type { CommandCtx } from './commands'
-import { parkSplitOff, readParkedSplitOff } from './projectFile'
-import { PROJECT_VERSION } from '../core/project'
-import type { ProjectJSON } from '../core/project'
+import { parkSplitOff, readParkedSplitOff } from './project/projectFile'
+import { PROJECT_VERSION } from '../core/project/project'
+import type { ProjectJSON } from '../core/project/project'
 import { SCENE_VERSION } from '../core/types'
 
 // file.exportSplitOff downloads each waiting project: the download is the browser's (a Blob and an <a>), so it is
@@ -17,8 +17,8 @@ import { SCENE_VERSION } from '../core/types'
 const downloaded: string[] = []
 // Export Project's download, recorded the same way, with what it was told to leave out
 const exportedWith: unknown[] = []
-vi.mock('./projectFile', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./projectFile')>()),
+vi.mock('./project/projectFile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./project/projectFile')>()),
   downloadProjectDocument: (p: { name: string }) => {
     downloaded.push(p.name)
     return Promise.resolve()
@@ -263,14 +263,15 @@ describe('projects list', () => {
   const projects = getCommand('file.projects')!
   const ctx = (state: Record<string, boolean>): CommandCtx => ({ state }) as unknown as CommandCtx
 
-  // The browser can hold more than one project (editor/documentStore.ts), which the projects list shows. It stays
+  // The browser can hold more than one project (editor/project/documentStore.ts), which the projects list shows. It stays
   // available while the sim runs, since it is a list and the actions inside it end the session anyway. It is
   // not offered where the document is not ours to switch: a room’s document is the collab doc, and a
   // view-only link owns nothing.
   it('is offered except where the document is not the browser’s to swap', () => {
     expect(projects.enabled?.(ctx({ collab: false, readOnly: false }))).toBe(true)
     expect(projects.enabled?.(ctx({ running: true }))).toBe(true)
-    expect(projects.enabled?.(ctx({ collab: true }))).toBe(false)
+    // a shared project is left for the one opened, as any open project is
+    expect(projects.enabled?.(ctx({ collab: true }))).toBe(true)
     expect(projects.enabled?.(ctx({ readOnly: true }))).toBe(false)
   })
 
@@ -301,16 +302,15 @@ describe('import project', () => {
     expect(importCmd.enabled?.(ctx({ running: false, collab: false, readOnly: false }))).toBe(true)
     // unlike the projects list, which is a list: this one reloads into another document, so a run must stop first
     expect(importCmd.enabled?.(ctx({ running: true }))).toBe(false)
-    expect(importCmd.enabled?.(ctx({ collab: true }))).toBe(false)
+    expect(importCmd.enabled?.(ctx({ collab: true }))).toBe(true)
     expect(importCmd.enabled?.(ctx({ readOnly: true }))).toBe(false)
   })
 
-  it('names the room, and leaves the global blocks to the surface', () => {
-    // importProjectData refuses a room anyway; saying so here greys the control before a picker opens.
-    expect(importCmd.disabledReason?.(ctx({ collab: true }))).toMatch(/room/)
-    // running / view-only are the toolbar's own message (Toolbar.fileBlockedReason) - repeating them doubles up
-    expect(importCmd.disabledReason?.(ctx({ running: true }))).toBeNull()
-    expect(importCmd.disabledReason?.(ctx({ readOnly: true }))).toBeNull()
+  it('leaves the global blocks to the surface, and has nothing to say about a shared project', () => {
+    // an import from a shared project reloads into the import, leaving the shared project (entryParams.ts)
+    // running / view-only are the toolbar's own message (Toolbar.fileBlockedReason) - repeating them doubles up, so the
+    // command has no reason of its own at all
+    expect(importCmd.disabledReason).toBeUndefined()
   })
 
   it('goes through the UI seam rather than reaching for the store itself', () => {
@@ -369,7 +369,7 @@ describe('dispatch', () => {
 
 describe('reload PLC program', () => {
   const reload = getCommand('sim.reloadProgram')!
-  // only what the rule reads: the controller answers both questions (editor/programReload.ts holds the rule itself)
+  // only what the rule reads: the controller answers both questions (editor/program/programReload.ts holds the rule itself)
   const ctxWith = (programOutOfDate: boolean, programReloadBlocker: string | null, reloads: string[] = []): CommandCtx =>
     ({ controller: { programOutOfDate, programReloadBlocker, reloadProgram: () => reloads.push('reload') } }) as unknown as CommandCtx
 

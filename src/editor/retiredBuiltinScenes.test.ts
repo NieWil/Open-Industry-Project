@@ -11,8 +11,8 @@
 import { describe, expect, it } from 'vitest'
 import { PART_DEFS, SCENE_VERSION } from '../core/types'
 import type { PartInstance, PartType, SceneJSON } from '../core/types'
-import { emptyScene } from '../core/scene'
-import { createPlcDemoScene, defaultBuilding } from './demoScenes'
+import { emptyScene } from '../core/scene/scene'
+import { createPlcDemoScene, defaultBuilding } from './demo/demoScenes'
 
 // Kept forever - no rig+behavior SDK equivalent: the pure-container Group node, the warehouse Building
 // shell, the generic `custom` wrapper (only renamed to `part` at deletion time, never removed), and the

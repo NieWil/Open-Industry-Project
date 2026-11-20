@@ -6,7 +6,6 @@
     "surface": "roller",
     "speedParam": "speed"
   },
-  "commsParam": "enableComms",
   "snap": {
     "track": {
       "lanes": {

@@ -12,7 +12,7 @@
 // The program and the step's index come from the app's own module (vite serves /src), so they cannot drift from what
 // the gate compares against. Seeding any other text would pass the gate before the edit and test nothing.
 // Run: node e2e/verify-tutorial-edit-reload.mjs [--headed]
-/* global process, console, window, localStorage, document */
+/* global process, console, window, localStorage, sessionStorage, document */
 import { startServer } from './_server.mjs'
 import { chromium } from 'playwright'
 
@@ -82,6 +82,7 @@ async function main() {
         bottomCollapsed: false,
       }))
       localStorage.setItem('oip-web/document-id', 'doc-tutorial-edit')
+      sessionStorage.setItem('oip-web/document-id', 'doc-tutorial-edit') // the tab's own pointer outlives the reload (libraryDb.ts)
       localStorage.setItem('oip-web/tutorial-progress', JSON.stringify({ sceneId: 'doc-tutorial-edit/scene-1', step }))
       return step
     }, STEPS)
@@ -106,8 +107,8 @@ async function main() {
       store.loadScene({
         version: store.getState().scene.version,
         parts: [
-          { id: 'conv1', type: 'part', packageId: 'oip.roller-conveyor', position: [0, 0.5, 0], rotationY: 0, params: { ...defaults(roller), enableComms: true, runTag: 'Conveyor' } },
-          { id: 'sens1', type: 'part', packageId: 'oip.diffuse-sensor', position: [1.8, 0.7, 0.6], rotationY: 0, params: { ...defaults(sensor), enableComms: true, tag: 'BoxAtEnd' } },
+          { id: 'conv1', type: 'part', packageId: 'oip.roller-conveyor', position: [0, 0.5, 0], rotationY: 0, params: { ...defaults(roller), runTag: 'Conveyor' } },
+          { id: 'sens1', type: 'part', packageId: 'oip.diffuse-sensor', position: [1.8, 0.7, 0.6], rotationY: 0, params: { ...defaults(sensor), tag: 'BoxAtEnd' } },
         ],
         packages: [roller, sensor],
       })

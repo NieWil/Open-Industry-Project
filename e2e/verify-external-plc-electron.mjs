@@ -2,13 +2,13 @@
 //
 // The scene is wired to I/O points: a photo eye's PLC tag is %IX100.0 and a belt's run tag %QX100.0. With
 // External PLC on (Controller Properties), Play serves those points over Modbus TCP from the shell's socket
-// (apps/desktop/plcIo.cjs -> editor/externalPlc.ts) instead of running a program here. This script is the
+// (apps/desktop/plcIo.cjs -> editor/links/externalPlc.ts) instead of running a program here. This script is the
 // PLC: a Modbus master on a real TCP connection that reads the eye (discrete input 800) and writes the
 // belt (coil 800) with the rung `Run := NOT Eye`, the way OpenPLC's master did in `npm run openplc-loop`.
 //
 // It checks what only the running app can show: Controller Properties lists the points before Play; Play opens the
-// port and reports the PLC connecting; the box rides to the eye and the PLC's coil stops it; the speed is
-// held at 1x; Stop closes the port. A browser tab cannot listen, and the last check is that it says so.
+// port and reports the PLC connecting; the box rides to the eye and the PLC's coil stops it; Play starts at 1x
+// and another speed warns on the speed button; Stop closes the port. A browser tab cannot listen, and the last check is that it says so.
 //
 //   node e2e/verify-external-plc-electron.mjs
 /* global process, console, window, document, URL, localStorage, setTimeout */
@@ -212,16 +212,18 @@ async function uaPlc(port, pkiRoot, { discovery = false } = {}) {
  * scripts/fetch-libplctag.mjs) holding the BOOL tags Eye and Run, and this script as its program: every 20 ms it reads
  * Eye and writes `Run := force OR NOT Eye`, through the desktop shell's own libplctag binding (eipIo.cjs), as a
  * second client of the controller beside the app. `kill` takes the controller away; `restart` brings a fresh one
- * up on the same port (its tags start at zero, as a re-downloaded controller's would).
+ * up on the same port (its tags start at zero, as a re-downloaded controller's would). `micro800` makes it a
+ * Micro800 instead, reached with no path.
  */
-async function logix(port) {
+async function logix(port, micro800 = false) {
   const { spawn } = await import('node:child_process')
   const eipIo = require(join(desktopDir, 'eipIo.cjs'))
   const exe = join(desktopDir, 'vendor', 'libplctag', process.platform === 'win32' ? 'ab_server.exe' : 'ab_server')
   const state = { eye: false, force: false }
   let proc = null
   const up = async () => {
-    proc = spawn(exe, ['--plc=ControlLogix', '--path=1,0', `--port=${port}`, '--tag=Eye:BOOL[1]', '--tag=Run:BOOL[1]'], { stdio: 'ignore' })
+    const plc = micro800 ? ['--plc=Micro800'] : ['--plc=ControlLogix', '--path=1,0']
+    proc = spawn(exe, [...plc, `--port=${port}`, '--tag=Eye:BOOL[1]', '--tag=Run:BOOL[1]'], { stdio: 'ignore' })
     const until = Date.now() + 5000
     for (;;) {
       const open = await new Promise((resolve) => {
@@ -237,7 +239,7 @@ async function logix(port) {
   }
   await up()
   const link = new eipIo.EipLink()
-  const opened = link.open({ gateway: `127.0.0.1:${port}`, path: '1,0' })
+  const opened = link.open(micro800 ? { gateway: `127.0.0.1:${port}`, path: '', family: 'micro800' } : { gateway: `127.0.0.1:${port}`, path: '1,0' })
   if (opened.error) throw new Error(opened.error)
   let running = true
   let bound = false
@@ -262,6 +264,13 @@ async function logix(port) {
       await gone
     },
     restart: up,
+    // stop this controller but leave libplctag up, for a second one in the same run
+    retire: async () => {
+      running = false
+      await scan
+      link.close()
+      proc?.kill()
+    },
     close: async () => {
       running = false
       await scan
@@ -275,7 +284,7 @@ async function logix(port) {
 /**
  * An S7-1200 over PUT/GET, small enough to read: COTP connect, a 240-byte PDU, and read-var / write-var jobs on its
  * I and Q bytes, written here from the protocol as `servingPlc` is for Modbus (the strict unit-test CPU is
- * src/plc/s7FakeCpu.ts; scripts/s7-loop.mjs runs against snap7). Its scan is `Q100.0 := force OR NOT I100.0` on
+ * src/plc/link/s7FakeCpu.ts; scripts/s7-loop.mjs runs against snap7). Its scan is `Q100.0 := force OR NOT I100.0` on
  * every write; `putGet` false answers every job with 0x8104, as a CPU with PUT/GET off does.
  */
 function s7Plc() {
@@ -363,9 +372,9 @@ async function loadScene(page, tags = { eye: '%IX100.0', run: '%qx100.0' }) {
       version: st.getState().scene.version,
       parts: [
         { id: 'belt', type: 'part', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0,
-          params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, enableComms: true, runTag: tags.run } },
+          params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, runTag: tags.run } },
         { id: 'box', type: 'part', packageId: 'oip.box', position: [0.6, 1.0, 0], rotationY: 0, params: { length: 0.4, width: 0.3, height: 0.3 } },
-        { id: 'eye', type: 'part', packageId: 'oip.diffuse-sensor', position: [3, 0.75, -0.6], rotationY: 0, params: { maxRange: 1.2, enableComms: true, tag: tags.eye } },
+        { id: 'eye', type: 'part', packageId: 'oip.diffuse-sensor', position: [3, 0.75, -0.6], rotationY: 0, params: { maxRange: 1.2, tag: tags.eye } },
       ],
       packages: need,
     }))
@@ -429,8 +438,13 @@ try {
   await page.evaluate(() => window.__oip.controller.run())
   await page.waitForFunction(() => window.__oip.controller.externalPlcStatus.state === 'listening', null, { timeout: 15000, polling: 100 })
   expect((await page.evaluate(() => window.__oip.store.getState().timeScale)) === 1, 'Play with an external PLC runs at 1x, whatever speed was chosen')
-  await page.evaluate(() => window.__oip.controller.setTimeScale(3))
-  expect((await page.evaluate(() => window.__oip.store.getState().timeScale)) === 1, 'and a speed change is refused while the PLC is connected')
+  await page.evaluate(() => window.__oip.controller.setTimeScale(2))
+  expect((await page.evaluate(() => window.__oip.store.getState().timeScale)) === 2, 'a speed can still be chosen while the PLC is connected')
+  const speed = page.locator('[data-testid="sim-speed"]')
+  await page.waitForFunction(() => document.querySelector('[data-testid="sim-speed"]')?.classList.contains('plc-clock'), null, { timeout: 5000, polling: 100 })
+  expect(/runs in real time/.test((await speed.getAttribute('title')) ?? ''), 'and the speed button warns that the PLC keeps real time')
+  // the box checks below time the PLC's stop against the sim, so they run at 1x
+  await page.evaluate(() => window.__oip.controller.setTimeScale(1))
   const note = await page.evaluate(() => window.__oip.controller.programStatus.warnings.join(' '))
   expect(/external PLC runs this project/.test(note), `the PLC panel says the program here is not attached (${note})`)
 
@@ -470,6 +484,59 @@ try {
   expect(typeof later === 'number' && Math.abs(later - stoppedAt) < 0.01, `the box stays stopped while the PLC holds the coil off (moved ${((later - stoppedAt) * 1000).toFixed(1)} mm)`)
   const requests = await page.evaluate(() => window.__oip.controller.externalPlcStatus.requests)
   expect(/FC2 x\d+, FC5 x\d+/.test(requests), `the link counted the PLC's requests (${requests})`)
+
+  // Watch with an external PLC (WatchPanel.tsx, controller/plcLinks.ts plcImage): the link's values are watched like a
+  // program's. The box sits at the eye, so the eye reads TRUE and the PLC holds the belt's coil FALSE.
+  const image = await page.evaluate(() => window.__oip.controller.plcWatch)
+  expect(image?.['%IX100.0'] === true && image?.['%QX100.0'] === false, `the watched values include what the link carries (${JSON.stringify(image)})`)
+  // (Controller Properties stays open over the docks for the checks after these, so the buttons are clicked in the page)
+  const press = (sel) => page.evaluate((q) => document.querySelector(q)?.click(), sel)
+  await page.evaluate(() => window.__oip.store.revealPanel('watch'))
+  await page.waitForSelector('[data-testid="plc-watch"]', { timeout: 5000 })
+  await press('[data-testid="plc-watch-clear"]')
+  await page.waitForSelector('[data-testid="plc-watch-add-wired"]', { timeout: 5000 })
+  await press('[data-testid="plc-watch-add-wired"]')
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="plc-watch-row"]').length >= 2, null, { timeout: 5000 }).catch(() => {})
+  const watched = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="plc-watch-row"]')].map((r) => ({
+      name: r.getAttribute('data-name'),
+      value: r.querySelector('[data-testid="plc-watch-value"]')?.textContent?.trim(),
+      type: r.querySelector('[data-testid="plc-watch-type"]')?.textContent?.trim(),
+      writable: r.querySelector('[data-testid="plc-watch-write"]') !== null,
+    })),
+  )
+  const eyeRow = watched.find((w) => w.name === '%IX100.0')
+  const beltRow = watched.find((w) => w.name === '%QX100.0')
+  expect(eyeRow?.value === 'TRUE' && beltRow?.value === 'FALSE', `Add all wired tags lists the PLC's tags with live values (${JSON.stringify(watched)})`)
+  expect(eyeRow?.type === 'BOOL' && beltRow?.type === 'BOOL', 'with the type the part declares')
+  expect(!eyeRow?.writable && !beltRow?.writable && (await page.locator('[data-testid="plc-watch-force"]').count()) === 0, 'and read only: a real PLC is not written from the Watch panel')
+  // Show on displays: saved in the project, listed live beside the scene in Present
+  // a Watch row's right-click Show on displays: Watch is the reader's own list, the display the project's
+  await page.evaluate(() => {
+    const row = document.querySelector('[data-testid="plc-watch-row"][data-name="%IX100.0"]')
+    const box = row.getBoundingClientRect()
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: box.left + 20, clientY: box.top + 5 }))
+  })
+  await page.waitForSelector('[data-testid="plc-watch-display"]', { timeout: 5000 })
+  await press('[data-testid="plc-watch-display"]')
+  expect(JSON.stringify(await page.evaluate(() => window.__oip.store.getState().scene.display)) === '["%IX100.0"]', 'Show on displays puts the value in the project')
+  await page.evaluate(() => window.__oip.store.setState({ presenting: true }))
+  await page.waitForSelector('[data-testid="present-value"]', { timeout: 5000 }).catch(() => {})
+  const shown = await page.locator('[data-testid="present-value"]').allInnerTexts()
+  expect(shown.length === 1 && /%IX100\.0\s*BOOL\s+TRUE/.test(shown[0] ?? ''), `Present lists it beside the scene, live, with its type (${JSON.stringify(shown)})`)
+  // the window's caption buttons stay over Present's top edge, so the list starts below their strip
+  const clear = await page.evaluate(() => {
+    const probe = document.createElement('div')
+    probe.style.cssText = 'position:fixed;top:0;height:env(titlebar-area-height, 0px)'
+    document.body.append(probe)
+    const strip = probe.getBoundingClientRect().height
+    probe.remove()
+    return { strip, top: document.querySelector('[data-testid="present-values"]').getBoundingClientRect().top }
+  })
+  expect(clear.strip > 0 && clear.top >= clear.strip, `the list clears the window's caption buttons (${JSON.stringify(clear)})`)
+  await page.evaluate(() => window.__oip.store.setState({ presenting: false }))
+  // the PLC panel back in front of Watch, where the checks below find its organizer
+  await page.evaluate(() => window.__oip.store.revealPanel('st'))
 
   // The PLC goes away. Its last coil value said run, and the image still holds it: without a watchdog the
   // belt runs forever on a value nobody is driving any more. The connection stays open here -
@@ -668,6 +735,34 @@ try {
   while (ua.sessions() > 0 && Date.now() < sessionsUntil) await sleep(100)
   expect(ua.sessions() === 0, 'Stop ends the OPC UA session')
 
+  // Browse from: the browse starts where the field says, through the preload and the shell. A start point the server
+  // does not hold is said; one it holds binds the tags under their whole paths, matched ignoring case; a field that is
+  // not a path or a NodeId snaps back
+  const browseFrom = page.locator('[data-testid="external-plc-opcua-browse-from"]')
+  const setBrowseFrom = async (text) => {
+    await browseFrom.fill(text)
+    await browseFrom.press('Enter')
+  }
+  await setBrowseFrom('Nope')
+  expect(JSON.stringify(await page.evaluate(() => window.__oip.store.getState().externalPlc.opcUaBrowseFrom)) === '["Nope"]', 'Browse from saves a start point')
+  await page.evaluate(() => window.__oip.controller.run())
+  await page.waitForFunction(() => /the PLC has no Nope to browse from/.test(window.__oip.controller.externalPlcStatus.error ?? ''), null, { timeout: 20000, polling: 100 })
+  const noStart = await page.locator('[data-testid="external-plc-status"]').innerText()
+  expect(/the PLC has no Nope to browse from/.test(noStart), `a start point the server does not hold is said (${noStart})`)
+  await page.evaluate(() => window.__oip.controller.stop())
+  await page.waitForFunction(() => window.__oip.controller.externalPlcStatus.state === 'off', null, { timeout: 5000, polling: 100 })
+  await setBrowseFrom('main')
+  await page.evaluate(() => window.__oip.controller.run())
+  await page.waitForFunction(() => window.__oip.controller.externalPlcStatus.state === 'polling', null, { timeout: 20000, polling: 100 })
+  const fromMain = await page.locator('[data-testid="external-plc-points"]').innerText()
+  expect(/Eye\s+Main\.Eye\s+Boolean/.test(fromMain) && /Main\.Run\s+Main\.Run\s+Boolean/.test(fromMain), `browsing from main finds the tags under their whole paths (${fromMain.replace(/\s+/g, ' ')})`)
+  await page.evaluate(() => window.__oip.controller.stop())
+  await page.waitForFunction(() => window.__oip.controller.externalPlcStatus.state === 'off', null, { timeout: 5000, polling: 100 })
+  await setBrowseFrom('Main..Eye')
+  expect((await browseFrom.inputValue()) === 'main', `a field that is not a path snaps back (${await browseFrom.inputValue()})`)
+  await setBrowseFrom('')
+  expect(JSON.stringify(await page.evaluate(() => window.__oip.store.getState().externalPlc.opcUaBrowseFrom)) === '[]', 'and an empty field browses Objects again')
+
   // EtherNet/IP: the same belt and eye on a Logix controller, by its tag names, through libplctag in the shell. The
   // controller is libplctag's own simulator (ab_server) holding Eye and Run, and this script runs its scan.
   console.log('--- EtherNet/IP: a Logix controller\'s tags by name ---')
@@ -720,6 +815,37 @@ try {
   await sleep(800)
   expect((await boxX(page)) > eRest + 0.05, 'and the belt runs again once the controller is back, its tags asked for anew')
 
+  await page.evaluate(() => window.__oip.controller.stop())
+  await page.waitForFunction(() => window.__oip.controller.externalPlcStatus.state === 'off', null, { timeout: 5000, polling: 100 })
+  await logixPlc.retire()
+
+  // The same link to a Micro800: the family is the only setting that changes, and the path kept from the Logix
+  // setup is neither shown nor sent (ab_server's Micro800 answers nothing to a request routed through one)
+  console.log("--- EtherNet/IP: a Micro800's tags by name ---")
+  const m800Port = await freePort()
+  logixPlc = await logix(m800Port, true)
+  const m800Named = await loadScene(page, { eye: 'Eye', run: 'Run' })
+  expect(m800Named === true, `the scene opens wired by the Micro800's variable names (${m800Named})`)
+  await page.evaluate((p) => window.__oip.store.setExternalPlc({ enabled: true, mode: 'eip', eipGateway: `127.0.0.1:${p}`, eipPath: '1,0', eipFamily: 'micro800' }), m800Port)
+  expect((await page.locator('[data-testid="external-plc-eip-family"]').inputValue()) === 'micro800', 'Controller Properties shows the family')
+  expect((await page.locator('[data-testid="external-plc-eip-path"]').count()) === 0, 'and no path field for a Micro800')
+  const m800Before = await page.locator('[data-testid="external-plc-status"]').innerText()
+  expect(/^Press Play to connect to the controller at 127\.0\.0\.1:\d+ \(Micro800\) over EtherNet\/IP/.test(m800Before), `and what Play will do (${m800Before})`)
+  await page.evaluate(() => window.__oip.controller.run())
+  await page.waitForFunction(() => window.__oip.controller.externalPlcStatus.state === 'polling', null, { timeout: 20000, polling: 100 })
+  await page.waitForFunction(() => window.__oip.controller.livePosition('box') != null, null, { timeout: 15000, polling: 100 })
+  const mx0 = await boxX(page)
+  const mStart = Date.now()
+  let mEye = null
+  while (Date.now() - mStart < 20000) {
+    if (mEye === null && logixPlc.state.eye) mEye = Date.now()
+    if (mEye !== null && Date.now() - mEye > 1500) break
+    await sleep(50)
+  }
+  const mStopped = await boxX(page)
+  expect(mEye !== null, 'the Micro800 saw the eye through its variable')
+  expect(typeof mx0 === 'number' && mStopped > mx0 + 1 && Math.abs(mStopped - 2.83) < 0.3, `its Run variable ran the belt and stopped the box at the eye (${mx0?.toFixed?.(2)} -> ${mStopped?.toFixed?.(3)} m)`)
+  expect((await page.locator('[data-testid="external-plc-problem"]').count()) === 0, 'and no variable is reported missing')
   await page.evaluate(() => window.__oip.controller.stop())
   await page.waitForFunction(() => window.__oip.controller.externalPlcStatus.state === 'off', null, { timeout: 5000, polling: 100 })
 

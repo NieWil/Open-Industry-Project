@@ -1,6 +1,6 @@
 // Smoke test for projectFolderIo.cjs - the fs half of Open/Save Project Folder. Runs with plain Node
 // (no Electron): `node apps/desktop/projectFolderIo.test.cjs`. The format (manifest refs, validation)
-// is tested in src/core/projectFolder.test.ts; here only the disk round-trip and path safety.
+// is tested in src/core/project/projectFolder.test.ts; here only the disk round-trip and path safety.
 
 const assert = require('node:assert/strict')
 const { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } = require('node:fs')
@@ -100,7 +100,7 @@ const { applyFolderWrites, folderSignature, hashBytes, hashText, hasProjectManif
   }
 }
 
-// 5. the content hash is the same function as src/core/folderSync.ts hashText, pinned to the same
+// 5. the content hash is the same function as src/core/project/folderSync.ts hashText, pinned to the same
 //    vectors there. If these ever disagree, every guarded write reads as "someone changed this file".
 {
   assert.equal(hashText(''), '0:wvjl67o803')
@@ -115,7 +115,7 @@ const { applyFolderWrites, folderSignature, hashBytes, hashText, hasProjectManif
   console.log('✓ hashBytes matches the renderer vectors')
 }
 
-// 5b. a part's asset file (src/core/partAssets.ts) is read and written as bytes, and guarded by its byte hash; a
+// 5b. a part's asset file (src/core/parts/partAssets.ts) is read and written as bytes, and guarded by its byte hash; a
 //     binary file anywhere else is still skipped
 {
   const tmp = mkdtempSync(join(tmpdir(), 'oip-project-'))

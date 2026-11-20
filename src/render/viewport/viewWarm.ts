@@ -1,7 +1,7 @@
 // Render-pipeline pre-warm for the view: the first-load staged compile, the
 // per-add (pumpWarm) and scene-load (compileSwap) warms, the bulk-reveal budget, the interaction extras.
 
-import { Vector3, WebGLRenderer } from 'three'
+import { Group, Vector3, WebGLRenderer } from 'three'
 import type { Object3D } from 'three'
 import type { WebGPURenderer } from 'three/webgpu'
 import type { PartInstance } from '../../core/types'
@@ -16,8 +16,6 @@ import {
   PREWARM_COVER_CAP_MS,
   DEFERRED_WARM_TIMEOUT_MS,
   wantsDeferredWarm,
-  wantsSerialPhase1,
-  wantsPhase1Overlap,
   revealCostOf,
 } from './viewWarmFlags'
 import { markCompilePhase, recordLiveMint, cacheSizeOf, markCompileCount, markPipelineTimes } from './viewCompileLedger'
@@ -43,7 +41,7 @@ export class ViewWarmState {
   readonly warmQueue = new Set<string>() // part ids awaiting a warm pass
   warmPumping = false // one drain loop at a time
   // Per-kind pipeline warmth (key = partKindKey). Render pipelines are program+state-keyed and
-  // shared across every part of a kind (pipelineDedup normalizes the per-object leak), so warmth
+  // shared across every part of a kind (three names a uniform buffer per shader, not per object), so warmth
   // is a property of the kind, not the part entry: once a kind has compiled - at load
   // (compileStaged), on hover (warmPart's pipeline tier), or via a first add's pumpWarm - later
   // adds of that kind skip the hidden warm-hold entirely and reveal on the next frame. This is
@@ -59,13 +57,11 @@ export class ViewWarmState {
   readonly revealQueue = new Set<string>()
   // whenPartsRevealed callers, settled by the frame loop once `warming` empties (flushRevealWaiters)
   revealWaiters: (() => void)[] = []
-  // A scene load's held parts, awaiting one concurrent compile (compileSwap) instead of pumpWarm's
+  // A scene load's held parts, awaiting one whole-scene compile (compileSwap) instead of pumpWarm's
   // kind-at-a-time drain. Each id is also in `warming` until that compile releases it.
   readonly swapQueue = new Set<string>()
   swapCompiling = false
-  // Serialises every compile that must not overlap another: withConcurrentPipelines patches three's
-  // getForRender for its whole duration and would siphon a concurrent compileAsync's pipeline promises
-  // out of that caller's own await, so the caller would reveal before its pipelines exist.
+  // Serialises every WebGPU compileAsync: two overlapping calls corrupt each other (inCompileLane).
   compileLane: Promise<void> = Promise.resolve()
   // parts whose assets have already been hover-warmed this session (see warmPart) - one build per
   // (type, packageId) is enough since the durable caches it fills are content-addressed and permanent.
@@ -171,12 +167,14 @@ export function startStagedPrewarm(view: WarmHost, gpu: WebGPURenderer): void {
         // inside the 0.4 s fade, freezing it at ~0.9 opacity and snapping it to 0
         // (e2e/probes/cover-fade.mjs). Capped in whenCoverHidden, so a surface without the cover
         // component still warms.
-        void whenCoverHidden().then(() => {
-          if (view.disposed) return
-          const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback
-          if (ric) ric(run, { timeout: DEFERRED_WARM_TIMEOUT_MS })
-          else setTimeout(run, 200)
-        })
+        void whenCoverHidden()
+          .then(() => {
+            if (view.disposed) return
+            const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback
+            if (ric) ric(run, { timeout: DEFERRED_WARM_TIMEOUT_MS })
+            else setTimeout(run, 200)
+          })
+          .catch((e: unknown) => console.warn('[oip] deferred warm failed to start', e))
       }
     })
 }
@@ -214,11 +212,14 @@ export async function pumpWarm(view: WarmHost): Promise<void> {
       // or via a hover warm that landed while this id was queued
       const kind = entry0 ? partKindKey(entry0.part) : null
       if (obj && kind !== null && !view.warm.kindWarm.has(kind)) {
-        obj.visible = true // reveal for compileAsync's synchronous projection…
-        const warm = gpu.compileAsync(obj, view.camera, view.scene) // …captured synchronously (scoped to this part)…
-        obj.visible = false // …then hidden before any live frame draws it cold
         try {
-          await warm
+          // in the compile lane: two overlapping compileAsync calls corrupt each other (inCompileLane)
+          await inCompileLane(view, () => {
+            obj.visible = true // reveal for compileAsync's synchronous projection…
+            const warm = gpu.compileAsync(obj, view.camera, view.scene) // …captured synchronously (scoped to this part)…
+            obj.visible = false // …then hidden before any live frame draws it cold
+            return warm
+          })
           view.warm.kindWarm.add(kind) // compiled clean → later adds of this kind skip the hold outright
         } catch { /* compile failed: fall through and reveal; the draw path recompiles */ }
       }
@@ -247,19 +248,19 @@ export async function pumpWarm(view: WarmHost): Promise<void> {
  * pumpWarm is for one part added live. Taking a load's ~200 adds that way would make default scene -> Demo
  * assemble for ~6 s (e2e/probes/scene-swap-popin.mjs).
  *
- * Here: one whole-scene compile through the concurrent feed, held parts revealed only for its
+ * Here: one whole-scene compile, held parts revealed only for its
  * synchronous projection, and the draw parked until it finishes. Measured (msedge, real WebGPU, three
  * rounds vs `?serialswap`): cover at 3.0-3.25 s vs 5.4-5.9 s. Open question: on another workstation
  * the serial arm read ~2.2 s, ~0.9 s faster than this path, for reasons not yet known.
  * Re-run `node e2e/probes/scene-swap-popin.mjs --rounds=3` on a real WebGPU adapter before acting.
  *
  * Why parking matters: the compile is main-thread codegen (~1.2 s over 508 items vs ~0.11 s of Dawn
- * await). With the loop drawing, three's per-item yield runs a frame in every gap and the concurrent
- * feed alone gains nothing. Item count matters too: one cargo copy per kind (below) cuts 862
+ * await). With the loop drawing, three's per-item yield runs a frame in every gap, which
+ * costs more than the compile itself. Item count matters too: one cargo copy per kind (below) cuts 862
  * items to 508.
  *
- * It runs in the compile lane because withConcurrentPipelines siphons every caller's pipeline promises
- * while installed, and the deferred interaction warm (first idle after the cover) really can overlap it.
+ * It runs in the compile lane because the deferred interaction warm (first idle after the cover) really
+ * can overlap it.
  */
 export async function compileSwap(view: WarmHost): Promise<void> {
   if (view.warm.swapCompiling || view.renderer instanceof WebGLRenderer) return
@@ -308,9 +309,9 @@ export async function compileSwap(view: WarmHost): Promise<void> {
         obj.visible = true
         shown.push(obj)
       }
-      // withConcurrentPipelinesNow calls `fn` before its first await and compileAsync projects before
+      // withCompileLedgerNow calls `fn` before its first await and compileAsync projects before
       // its first await, so the projection is captured by the time this returns...
-      const warm = withConcurrentPipelinesNow(view, gpu, () => gpu.compileAsync(view.scene, view.camera), 'swap')
+      const warm = withCompileLedgerNow(view, gpu, () => gpu.compileAsync(view.scene, view.camera), 'swap')
       for (const obj of shown) obj.visible = false // ...and hiding them again cannot un-schedule it
       try {
         await warm
@@ -348,7 +349,12 @@ export async function compileSwap(view: WarmHost): Promise<void> {
   }
 }
 
-/** run `fn` once every earlier compile in the lane has settled (see compileLane) */
+/**
+ * Run `fn` once every earlier compile in the lane has settled (see compileLane). Every WebGPU
+ * compileAsync goes through the lane: three 0.187 keeps a compile's state (`_precompilationState`, the
+ * render context and target) on the renderer while it waits on a node build, so a second call started
+ * then overwrites it and the first throws on resume ("Cannot destructure property 'useFrameBufferTarget'").
+ */
 export function inCompileLane<T>(view: WarmHost, fn: () => Promise<T>): Promise<T> {
   const run = view.warm.compileLane.then(fn, fn)
   view.warm.compileLane = run.then(
@@ -452,8 +458,10 @@ export function warmPart(view: WarmHost, part: PartInstance, opts?: { pipeline?:
       // on completion the kind's pipelines sit in the shared cache → register kind warmth, so a
       // subsequent ADD of this kind (the hovered part being placed, duplicates) skips the warm-hold
       if (warmPipeline) {
-        void view.renderer
-          .compileAsync(visual.object, view.camera, view.scene)
+        // the projection happens when the lane reaches this call; the detached visual needs no reveal
+        void inCompileLane(view, async () => {
+          await view.renderer.compileAsync(visual.object, view.camera, view.scene)
+        })
           .then(() => { view.warm.kindWarm.add(key) })
           .catch(() => {})
       }
@@ -479,12 +487,14 @@ export function scheduleWebGLInteractionWarm(view: WarmHost): void {
   }
   // same rule as the WebGPU twin: wait for the cover to be gone, not just painted, so this never
   // competes with its fade (see whenCoverHidden)
-  void whenCoverHidden().then(() => {
-    if (view.disposed) return
-    const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback
-    if (ric) ric(run, { timeout: DEFERRED_WARM_TIMEOUT_MS })
-    else setTimeout(run, 200)
-  })
+  void whenCoverHidden()
+    .then(() => {
+      if (view.disposed) return
+      const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback
+      if (ric) ric(run, { timeout: DEFERRED_WARM_TIMEOUT_MS })
+      else setTimeout(run, 200)
+    })
+    .catch((e: unknown) => console.warn('[oip] deferred warm failed to start', e))
 }
 
 /**
@@ -492,21 +502,21 @@ export function scheduleWebGLInteractionWarm(view: WarmHost): void {
  * never fades onto a black, still-compiling frame, in two phases that reach an interactive scene
  * ~2-3x sooner than one whole-scene compile:
  *
- *  1. Building first. three's _projectObject skips visible=false subtrees, so hide every non-
+ *  1. Building first. three's drawingPipeline.project skips visible=false subtrees, so hide every non-
  *     building part and compileAsync only the building shell + env: heavy shared pipelines first.
  *  2. Parts. Reveal the parts and compile them. The loop is held (stagedReveal) until they're warm
  *     so no frame draws an un-compiled pipeline, which the render path would compile synchronously
  *     (a hitch).
  *
- * Both phases feed Dawn concurrently (withConcurrentPipelines); that changes when we await, never
- * what compiles. `?serialphase1` restores phase 1's serial feed.
+ * Both phases are three's own compileAsync, which keeps up to 16 pipelines in flight (three 0.187),
+ * recorded in the compile ledger by withCompileLedger.
  *
  * Where the cover goes is measured by e2e/probes/compile-phases.mjs, and the phases have opposite
  * shapes: phase 1 is mostly waiting on Dawn for a few heavy building shaders (only fewer or cheaper
  * building materials move it); phase 2 is mostly main-thread codegen per item (only fewer items or
  * less NodeBuilderState work move it). Size codegen savings from e2e/probes/codegen-attribution.mjs,
  * not nodebuilder-census.mjs: most redundancy sits in object-level keys (`object.uuid`, `context.id`)
- * that pipelineDedup.ts collapses, and the per-instance rest is by design (rig.ts mints a material per
+ * that three keys per object, and the per-instance rest is by design (rig.ts mints a material per
  * part; see renderIdentityKey in instancePool.ts). Codegen is paid on every visit, since Dawn's
  * disk cache holds pipelines, not the JS emitting WGSL (e2e/probes/codegen-warm.mjs).
  *
@@ -519,10 +529,9 @@ export function scheduleWebGLInteractionWarm(view: WarmHost): void {
  * (schedulerYield.ts).
  *
  * The cover lifts when both phases have settled (see startStagedPrewarm). A pure optimisation over
- * three's always-correct on-draw compile: if a phase throws or a three upgrade defeats the concurrency,
- * parts compile lazily on first draw - less smooth, never broken. See e2e/webgpu-smoke.mjs
- * (correctness), perf-webgpu-load.mjs + e2e/probes/compile-phases.mjs (timing); ?serialcompile forces
- * the stock one-shot compile, ?serialphase1 only reverts phase 1's feed.
+ * three's always-correct on-draw compile: if a phase throws, parts compile lazily on first draw - less
+ * smooth, never broken. See e2e/webgpu-smoke.mjs (correctness), perf-webgpu-load.mjs +
+ * e2e/probes/compile-phases.mjs (timing); ?serialcompile forces the stock one-shot compile.
  */
 export async function compileStaged(view: WarmHost, gpu: WebGPURenderer): Promise<void> {
   // defer set = every currently-visible, non-building part (cargo/user-hidden are already invisible)
@@ -568,16 +577,10 @@ export async function compileStaged(view: WarmHost, gpu: WebGPURenderer): Promis
   // itself while its pipelines pre-warm. Count the ticks to see how much of phase 1 is racing the
   // draw path rather than feeding it - see the ledger note in this method's doc.
   const tick1 = view.tickSerial
-  // ?phase1overlap: collect phase 1's Dawn promises instead of awaiting them here, and await them
-  // inside phase 2's loop-hold - so nothing is revealed before they land, but phase 2's ~1.3 s of
-  // codegen runs while they compile instead of after.
-  const held: Promise<unknown>[] | undefined = wantsPhase1Overlap() ? [] : undefined
   try {
-    // phase 1: building shell + env only. Concurrent feed by default (?serialphase1 reverts to
-    // three's one-pipeline-in-flight loop) - the staging is what prioritises the heavy shared
-    // building pipelines, and it survives un-serialising the feed underneath it.
-    if (wantsSerialPhase1()) await gpu.compileAsync(view.scene, view.camera)
-    else await withConcurrentPipelines(view, gpu, () => gpu.compileAsync(view.scene, view.camera), 'phase1', held)
+    // phase 1: building shell + env only. The staging is what prioritises the heavy shared building
+    // pipelines.
+    await withCompileLedger(view, gpu, () => gpu.compileAsync(view.scene, view.camera), 'phase1')
   } catch (err) {
     // A phase-1 failure must never strand the deferred parts hidden: the caller's .catch only
     // signals the loading cover, so without this the scene stays building-only until the next
@@ -611,17 +614,19 @@ export async function compileStaged(view: WarmHost, gpu: WebGPURenderer): Promis
     return // nothing new to warm
   }
   for (const o of deferred) o.visible = true
+  // Merge before compiling. Every deferred part was root-invisible when the load-time rebuild ran, so the pool
+  // has merged none of their hardware yet (see the `finally` below). Compiled as they stand, each bank is an item
+  // of its own: 4,400 of the 4,843 on an 800-part line, 2 s of per-item work for meshes the merge hides a moment
+  // later, while the 11 pooled copies that draw in their place are new meshes this compile never sees and so
+  // compile on the first frame. Merged first, the compile walks what the scene draws. The hidden originals a
+  // drag brings back are warmed after the cover, with the rest of what only an interaction needs
+  // (warmInteractionExtras).
+  view.poolRebuild()
+  notifyBundleStructureChanged()
   view.warm.stagedReveal = true // hold the building frame until every part pipeline is warm
   const tPhase2 = performance.now()
   try {
-    await compileConcurrent(view, gpu) // phase 2: the parts, Dawn feed un-serialised
-    // phase 1's deferred compiles (?phase1overlap), still inside the loop-hold, so the reveal
-    // waits for them as if phase 1 had awaited them up front
-    if (held && held.length > 0) {
-      const tTail = performance.now()
-      await Promise.all(held)
-      markCompilePhase('phase1Tail', performance.now() - tTail, gpu)
-    }
+    await compileParts(view, gpu) // phase 2: the parts
     // the mobile tier warms the interaction extras inline, inside the loop-hold; see wantsDeferredWarm
     if (!wantsDeferredWarm()) await warmInteractionExtras(view, gpu)
   } finally {
@@ -703,6 +708,37 @@ export async function warmInteractionExtrasWebGL(view: WarmHost): Promise<void> 
  * re-hide in one synchronous burst. Compiled scoped (`compileAsync(root, camera, scene)`), since the
  * whole-scene form cost ~330 ms of main-thread codegen, a visible stutter on a live scene.
  */
+/** how many pooled sources one compile takes: few enough that the page answers between batches */
+const POOL_WARM_BATCH = 256
+
+/**
+ * A root that stands for `objects` in one `compileAsync`, wherever each of them is in the scene. The objects are
+ * borrowed, not moved: they keep their parents, so nothing about the scene changes. Hidden itself, and revealing it
+ * reveals them for the length of the projection (`burst` reveals a root and hides it again in one synchronous step).
+ *
+ * Relies on three's projection reading only `visible`, `children` and each object's own world matrix
+ * (docs/three-coupling.md, "A compile scoped to a root still walks the whole target scene"): the holder must not
+ * update its children's matrices, which are their real parents' to set.
+ */
+function borrowed(objects: readonly Object3D[]): Object3D {
+  const holder = new Group()
+  holder.matrixWorldAutoUpdate = false
+  holder.matrixAutoUpdate = false
+  holder.children = [...objects]
+  let shown = false
+  const was = objects.map((o) => o.visible)
+  Object.defineProperty(holder, 'visible', {
+    get: () => shown,
+    set: (on: boolean) => {
+      shown = on
+      objects.forEach((o, i) => {
+        o.visible = on ? true : was[i]!
+      })
+    },
+  })
+  return holder
+}
+
 export async function warmInteractionExtras(view: WarmHost, gpu: WebGPURenderer): Promise<void> {
   if (view.disposed || view.warm.extrasWarmed) return
   view.warm.extrasWarmed = true
@@ -716,18 +752,17 @@ export async function warmInteractionExtras(view: WarmHost, gpu: WebGPURenderer)
   // gear (unreachable without selecting) follows in tier 2.
   const poolSources = (view.instancePool?.hiddenSourceMeshes() ?? []).filter((m) => m.visible === false)
   const burst = (roots: Object3D[], label: string): Promise<void> =>
-    withConcurrentPipelines(view, gpu, () => {
-      const pending: Promise<unknown>[] = []
-      // One synchronous burst: every reveal is undone before control returns to the event loop,
-      // so no frame can draw an overlay at the origin (or a pooled source doubling its merged copy)
+    withCompileLedger(view, gpu, async () => {
+      // One root at a time: two overlapping compileAsync calls corrupt each other (inCompileLane).
+      // Each reveal is undone before control returns to the event loop, so no frame can draw an
+      // overlay at the origin (or a pooled source doubling its merged copy)
       for (const root of roots) {
         const was = root.visible
         root.visible = true
         const p = gpu.compileAsync(root, view.camera, view.scene) // projection captured synchronously…
         root.visible = was // …so re-hiding now cannot un-schedule it
-        pending.push(p)
+        await p
       }
-      return Promise.all(pending)
     }, label)
   try {
     // tier 1 - everything a first select touches: the gizmo handles, and the outline mask pass.
@@ -753,10 +788,14 @@ export async function warmInteractionExtras(view: WarmHost, gpu: WebGPURenderer)
     const markerWarmPos = new Vector3()
     view.showVertexMarkers(markerWarmPos, markerWarmPos)
     view.showVertexMarkers(null, null)
-    const tier2: Object3D[] = [view.handles.root, view.overlays.rulerGroup, view.overlays.rulerBracket, ...poolSources]
+    const tier2: Object3D[] = [view.handles.root, view.overlays.rulerGroup, view.overlays.rulerBracket]
     tier2.push(metalProbeIn(view)) // the first metal's environment (metalWarmProbe)
     if (view.vsnap.sourceMarker) tier2.push(view.vsnap.sourceMarker)
     if (view.vsnap.targetMarker) tier2.push(view.vsnap.targetMarker)
+    // The pooled sources go in batches, not one compile each. A compile scoped to a root still walks the whole
+    // live scene for its lights, so one call per source costs sources x scene: on a 420-part line that is 6,297
+    // calls over 7,196 visible objects, an 11 s freeze on the first seconds after the cover lifts.
+    for (let i = 0; i < poolSources.length; i += POOL_WARM_BATCH) tier2.push(borrowed(poolSources.slice(i, i + POOL_WARM_BATCH)))
     try {
       await burst(tier2, 'extras2')
     } finally {
@@ -820,72 +859,47 @@ export function warmSelectionOutline(view: WarmHost): void {
  * remaining piece, the per-instance colour path.)
  */
 export async function compileSerial(view: WarmHost, gpu: WebGPURenderer): Promise<void> {
-  await gpu.compileAsync(view.scene, view.camera) // caller's .finally lifts the cover either way
+  await inCompileLane(view, () => gpu.compileAsync(view.scene, view.camera)) // caller's .finally lifts the cover either way
+}
+
+/** phase 2 of compileStaged: compile the parts, recorded in the compile ledger as `phase2` */
+export async function compileParts(view: WarmHost, gpu: WebGPURenderer): Promise<void> {
+  await withCompileLedger(view, gpu, () => gpu.compileAsync(view.scene, view.camera), 'phase2')
 }
 
 /**
- * Like gpu.compileAsync(scene), but un-serialises the Dawn pipeline feed. three awaits each object's
- * createRenderPipelineAsync before the next, leaving Dawn's pool ~idle with one job in flight (the
- * bulk of cold-load cost). Intercepting Pipelines.getForRender's out-array fires the promises without
- * the per-object await and awaits them together; codegen stays sequential. Measured ~8-10x on the part
- * compile, scene byte-identical. Changes when we await, never what compiles. Unbounded is fastest (a
- * semaphore only starves the pool).
+ * Run `fn` (a compileAsync) in the compile lane, recording what it compiled in the `__oipCompilePhases`
+ * ledger under `label`: `<label>Build` (the whole compile), `<label>Items` (compilation items walked),
+ * `<label>LiveGets` / `<label>LiveMint` (draws that resolved or minted a pipeline on the live path
+ * meanwhile) and per-pipeline compile times (markPipelineTimes). Diagnostics only: every pipeline
+ * promise goes back to three, whose compileAsync awaits them itself (up to 16 in flight since three
+ * 0.187), so this changes nothing about what compiles or when. e2e/verify-webgpu-warm-completeness.mjs
+ * reads `phase2Items`.
  *
- * Coupling: three's internal Pipelines.getForRender shape (three 0.186). The feature-detect falls back
- * to the stock serial compile (slower, never broken), but re-verify on any three bump.
+ * Coupling: wraps three's internal `_pipelines.getForRender(renderObject, promises)` while `fn` runs.
+ * If a three bump moves it, `fn` runs unwrapped and the ledger keys are missing.
  */
-export async function compileConcurrent(view: WarmHost, gpu: WebGPURenderer): Promise<void> {
-  await withConcurrentPipelines(view, gpu, () => gpu.compileAsync(view.scene, view.camera), 'phase2')
+export function withCompileLedger(view: WarmHost, gpu: WebGPURenderer, fn: () => Promise<unknown>, label?: string): Promise<void> {
+  return inCompileLane(view, () => withCompileLedgerNow(view, gpu, fn, label))
 }
 
-/**
- * Run `fn` with three's per-object pipeline await un-serialised, so Dawn finishes the whole batch
- * in parallel instead of one-at-a-time. Patches `_pipelines.getForRender` to siphon off the
- * per-object promises and awaits them together afterwards; restores the original in `finally`, and
- * no-ops to a stock compile if a three bump changes the shape.
- *
- * `label` splits the phase in the `__oipCompilePhases` ledger into main-thread work (`<label>Build`:
- * three's compile loop) and waiting on Dawn (`<label>Await`), plus `<label>Items`. Only the Await half
- * can shrink with more concurrency.
- *
- * Runs in the compile lane: the patch is global, so it must never be live while another compile
- * (a scene load's compileSwap, or a second patched phase) is walking its items.
- */
-export function withConcurrentPipelines(
-  view: WarmHost,
-  gpu: WebGPURenderer,
-  fn: () => Promise<unknown>,
-  label?: string,
-  hold?: Promise<unknown>[],
-): Promise<void> {
-  return inCompileLane(view, () => withConcurrentPipelinesNow(view, gpu, fn, label, hold))
-}
-
-export async function withConcurrentPipelinesNow(
-  view: WarmHost,
-  gpu: WebGPURenderer,
-  fn: () => Promise<unknown>,
-  label?: string,
-  hold?: Promise<unknown>[],
-): Promise<void> {
+export async function withCompileLedgerNow(view: WarmHost, gpu: WebGPURenderer, fn: () => Promise<unknown>, label?: string): Promise<void> {
   const pipelines = (gpu as unknown as { _pipelines?: { getForRender?: (ro: unknown, out: unknown[] | null) => unknown } })._pipelines
-  if (!pipelines || typeof pipelines.getForRender !== 'function') {
-    await fn() // internals changed → stock serial compile
+  if (!label || !pipelines || typeof pipelines.getForRender !== 'function') {
+    await fn() // nothing to record, or three moved it
     return
   }
   const original = pipelines.getForRender.bind(pipelines)
-  const all: Promise<unknown>[] = []
   const rows: { at: number; ms: number }[] = []
   let items = 0
   let liveGets = 0 // draws that resolved a pipeline through the live path while this phase ran
   let liveMintMs = 0 // ...of which the ones that actually minted, and what that cost synchronously
-  if (label) markCompileCount(`${label}PipesStart`, cacheSizeOf(gpu))
+  markCompileCount(`${label}PipesStart`, cacheSizeOf(gpu))
   pipelines.getForRender = (ro, out) => {
     if (out == null) {
       liveGets++
-      if (!label) return original(ro, null) // normal-render path: untouched
-      // ...and when labelled, note which live draws mint a pipeline (cache grew) - see
-      // recordLiveMint. The size read is a Map.size; the descriptor is built only on a real mint.
+      // note which live draws mint a pipeline (cache grew) - see recordLiveMint. The size read is a
+      // Map.size; the descriptor is built only on a real mint.
       const before = cacheSizeOf(gpu)
       const t = performance.now()
       const res = original(ro, null)
@@ -896,40 +910,25 @@ export async function withConcurrentPipelinesNow(
       return res
     }
     items++
-    const captured: unknown[] = []
-    const result = original(ro, captured)
-    for (const pm of captured) {
-      const p = pm as Promise<unknown>
-      all.push(p) // fire, don't await per-object
-      if (!label) continue
-      // diagnostics only (markPipelineTimes). Settled-or-rejected both record: the timing chain
-      // must never itself reject, and `all` still holds the original for the real await.
+    const before = out.length
+    const result = original(ro, out)
+    for (let i = before; i < out.length; i++) {
+      // timing only: settled-or-rejected both record, and the chain never itself rejects
       const at = performance.now() - tBuild
       const t0 = performance.now()
       const done = (): void => void rows.push({ at, ms: performance.now() - t0 })
-      void p.then(done, done)
+      void (out[i] as Promise<unknown>).then(done, done)
     }
     return result
   }
   const tBuild = performance.now()
   try {
     await fn()
-    const tAwait = performance.now()
-    // `hold`: the caller takes the promises and awaits them later, so this phase's Dawn compiles
-    // overlap the next phase's main-thread work (?phase1overlap). Submission already happened -
-    // only the await moves.
-    if (all.length > 0) {
-      if (hold) hold.push(...all)
-      else await Promise.all(all) // Dawn finishes them in parallel
-    }
-    if (label) {
-      markCompilePhase(`${label}Build`, tAwait - tBuild)
-      markCompilePhase(`${label}Await`, performance.now() - tAwait)
-      markCompileCount(`${label}Items`, items)
-      markCompileCount(`${label}LiveGets`, liveGets)
-      markCompilePhase(`${label}LiveMint`, liveMintMs)
-      markPipelineTimes(label, rows)
-    }
+    markCompilePhase(`${label}Build`, performance.now() - tBuild)
+    markCompileCount(`${label}Items`, items)
+    markCompileCount(`${label}LiveGets`, liveGets)
+    markCompilePhase(`${label}LiveMint`, liveMintMs)
+    markPipelineTimes(label, rows)
   } finally {
     pipelines.getForRender = original
   }

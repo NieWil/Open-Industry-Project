@@ -1,5 +1,5 @@
 import type { BufferGeometry, Group } from 'three'
-import type { PartPackage } from '../../../core/partPackage'
+import type { PartPackage } from '../../../core/parts/partPackage'
 import type { SdkPart } from '../../../core/types'
 import { PALLET_SIZE } from '../../../core/types'
 import { cargoView } from '../../../core/frame'

@@ -83,7 +83,6 @@ definePart({
         { value: 'off', label: 'Unlit' },
       ],
     },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
     tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Button output tag', group: 'Comms', desc: 'Where the button publishes its press for the program to read. Whether true means pressed or at-rest is set by Normally closed above.' },
     lampTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Lamp tag (PLC lights the cap)', group: 'Comms', desc: 'Which PLC bool lights the cap, so the program can acknowledge a press rather than just echo it. Read only when Lamp source above is set to PLC tag; left unbound there, the lamp stays dark like an unwired light block.' },
   },
@@ -220,15 +219,16 @@ definePart({
       pulseTicks = twistTicks = springTicks = 0
     }
     // The lamp runs off its DECLARED source (see the header) - the press is only one of the four wirings,
-    // not the fallback. A 'tag' source still passes the comms gate: unbound, or with comms off, it reads
-    // dark, exactly like a light block nobody wired. The cap depress follows pressed under every source.
-    const comms = ctx.params.enableComms
+    // not the fallback. A 'tag' source with no Lamp tag named reads dark, like a light block nobody wired.
+    // The cap depress follows pressed under every source.
     const src = ctx.params.lampSource
-    const litByTag = comms && !!ctx.params.lampTag && ctx.readTag(ctx.params.lampTag)
-    ctx.lamps.cap = src === 'on' ? true : src === 'off' ? false : src === 'tag' ? litByTag : pressed
-    let depth = pressed ? -PRESS_DEPTH : 0
+    const litByTag = !!ctx.params.lampTag && ctx.readTag(ctx.params.lampTag)
+    // a PLC that drives this tag is watching a real button (Watch only): show it as that button reads
+    const shown = ctx.params.tag && ctx.tagDriven(ctx.params.tag) ? ctx.readTag(ctx.params.tag) !== (estop || ctx.params.normallyClosed) : pressed
+    ctx.lamps.cap = src === 'on' ? true : src === 'off' ? false : src === 'tag' ? litByTag : shown
+    let depth = shown ? -PRESS_DEPTH : 0
     if (estop) {
-      const target = pressed ? -ESTOP_PRESS_DEPTH : 0
+      const target = shown ? -ESTOP_PRESS_DEPTH : 0
       const stepM = (ESTOP_PRESS_DEPTH * ctx.dt) / ESTOP_MOVE_S
       headDepth = Math.abs(target - headDepth) <= stepM ? target : headDepth + Math.sign(target - headDepth) * stepM
       depth = headDepth
@@ -236,6 +236,6 @@ definePart({
     ctx.setSubPose('cap', turn === 0
       ? { position: [0, 0, depth] }
       : { position: [HEAD_AXIS_Y * Math.sin(turn), HEAD_AXIS_Y * (1 - Math.cos(turn)), depth], rotation: [0, 0, turn] })
-    if (comms && ctx.params.tag) ctx.writeTag(ctx.params.tag, pressed !== (estop || ctx.params.normallyClosed))
+    if (ctx.params.tag) ctx.writeTag(ctx.params.tag, pressed !== (estop || ctx.params.normallyClosed))
   },
 })

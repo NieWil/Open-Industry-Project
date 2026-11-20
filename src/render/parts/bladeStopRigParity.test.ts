@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { linkHalfExtents, rigWorldPoses } from '../../core/rigPose'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { evalPartGeometry } from '../../core/geometryEval'
-import { instantiatePartScript } from '../../core/partScript'
-import type { MeshPart } from '../../core/partApi'
+import { linkHalfExtents, rigWorldPoses } from '../../core/rig/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import { instantiatePartScript } from '../../core/parts/partScript'
+import type { MeshPart } from '../../core/parts/partApi'
 import { examplePart, type RigGeo } from './examplePart'
 const { assets: BLADE_STOP_ASSETS, behavior: BLADE_STOP_BEHAVIOR, geometry: BLADE_STOP_RIG, materials: BLADE_STOP_MATS, head: BLADE_STOP_HEAD } = examplePart<RigGeo>('oip.blade-stop')
 

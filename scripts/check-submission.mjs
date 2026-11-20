@@ -7,7 +7,7 @@
 // <parts-dir> holds one folder per part, named by its id (the parts repository's parts/). --part limits the check to
 // the parts a pull request changes; without it every folder is checked. --orgs are the GitHub organizations the
 // author is a public member of, which the workflow reads from GitHub. --pr-body checks the pull request's text: the
-// rights line (core/partSubmission.ts RIGHTS_LINE) must be ticked.
+// rights line (core/parts/partSubmission.ts RIGHTS_LINE) must be ticked.
 //
 // Each part is checked in a child process of its own (scripts/lib/submission-run.mjs, which lists the checks), capped
 // at 1.5 GB of memory and 120 s. This process never runs part code, so a part that hangs or exhausts memory is
@@ -42,7 +42,7 @@ const RUN_MEMORY_MB = 1536
 const RUN_SECONDS = 120
 
 // the rights line, read from the one copy of the rules (a TypeScript module, read as text: this process loads no app code)
-const RIGHTS_LINE = /export const RIGHTS_LINE = '([^']+)'/.exec(readFileSync(join(repo, 'src', 'core', 'partSubmission.ts'), 'utf8'))?.[1]
+const RIGHTS_LINE = /export const RIGHTS_LINE = '([^']+)'/.exec(readFileSync(join(repo, 'src', 'core', 'parts', 'partSubmission.ts'), 'utf8'))?.[1]
 
 let failed = 0
 const fail = (name, message) => {

@@ -41,7 +41,7 @@ async function main() {
         version: window.__oip.store.getState().scene.version,
         parts: [{
           id: 'rc_1', type: 'part', packageId: 'oip.roller-conveyor', name: 'Infeed', position: [0, 1.0, 0], rotationY: 0,
-          params: { length: 4, width: 1.524, speed: 1, tiltDeg: 0, skew: 0, standHeight: 1.0, enableComms: false, leftGuard: true, rightGuard: true },
+          params: { length: 4, width: 1.524, speed: 1, tiltDeg: 0, skew: 0, standHeight: 1.0, leftGuard: true, rightGuard: true },
         }],
         packages: [window.__oip.getPackage('oip.roller-conveyor')],
       }, { persist: false })

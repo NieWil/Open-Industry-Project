@@ -4,13 +4,15 @@
 // a freshly placed part's params.
 //
 //   const lib = await projectLibrary(vite, folder, { create: true, log })
-//   lib.addPart(arg)            // built-in id or part folder -> { pkg } or { error, exit }
+//   lib.resolvePart(arg)        // built-in id, the project's own part id, or part folder -> { pkg } or { error, exit }
+//   lib.addPart(arg)            // the same, then copied into or listed in the library
 //   lib.place(packageId, id?)   // a fresh scene part at the origin (not yet pushed)
 //   lib.save()                  // scene.json + project.json, in the current format
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildPart, hasPartSource } from './buildPart.mjs'
 import { readProjectFolder } from './projectFolderFiles.mjs'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -25,17 +27,18 @@ const pick = (dir, names) => names.map((n) => join(dir, n)).find((p) => existsSy
 /** The built-in catalog, baked the way catalog.mjs and the app's bundledPackageData bake it: id -> package. */
 export async function bakeBundled(vite) {
   const { validatePart } = await vite.ssrLoadModule('/src/sim/validatePart.ts')
+  const { joinAssetFiles, isPartAssetPath } = await vite.ssrLoadModule('/src/core/parts/partAssets.ts')
   const bundled = new Map()
   const partsRoot = join(repo, 'examples', 'parts')
   for (const dir of readdirSync(partsRoot, { withFileTypes: true }).filter((e) => e.isDirectory())) {
-    const m = pick(join(partsRoot, dir.name), ['rig.json', 'manifest.json'])
-    const b = pick(join(partsRoot, dir.name), ['behavior.ts', 'behavior.js'])
+    const at = join(partsRoot, dir.name)
+    const m = pick(at, ['rig.json', 'manifest.json'])
+    const b = pick(at, ['behavior.ts', 'behavior.js'])
     if (!m || !b) continue
-    // a folder keeps its models and textures as assets/<sha256>.<ext> files the manifest names (core/partAssets.ts)
-  const { joinAssetFiles, isPartAssetPath } = await vite.ssrLoadModule('/src/core/partAssets.ts')
-  const joined = joinAssetFiles(readFileSync(m, 'utf8'), (p) => (isPartAssetPath(p) && existsSync(join(arg, p)) ? new Uint8Array(readFileSync(join(arg, p))) : undefined))
-  if (joined.error !== undefined) return { error: `${arg}: ${joined.error}`, exit: 1 }
-  const r = validatePart(JSON.parse(joined.manifestJson), readFileSync(b, 'utf8'))
+    // a folder keeps its models and textures as assets/<sha256>.<ext> files the manifest names (core/parts/partAssets.ts)
+    const joined = joinAssetFiles(readFileSync(m, 'utf8'), (p) => (isPartAssetPath(p) && existsSync(join(at, p)) ? new Uint8Array(readFileSync(join(at, p))) : undefined))
+    if (joined.error !== undefined) continue // like a part that does not bake: left out of the catalog
+    const r = validatePart(JSON.parse(joined.manifestJson), readFileSync(b, 'utf8'))
     if (r.ok && r.package) bundled.set(r.package.id, r.package)
   }
   return bundled
@@ -47,8 +50,23 @@ export async function bakeFolder(vite, arg) {
   const m = pick(arg, ['manifest.json', 'rig.json'])
   const b = pick(arg, ['behavior.js', 'behavior.ts'])
   if (!m || !b) return { error: `${arg}: needs manifest.json (or rig.json) + behavior.js (or behavior.ts)`, exit: 2 }
-  // a folder keeps its models and textures as assets/<sha256>.<ext> files the manifest names (core/partAssets.ts)
-  const { joinAssetFiles, isPartAssetPath } = await vite.ssrLoadModule('/src/core/partAssets.ts')
+  // a part written as one part.js: what gets copied is its built files, so they must be what it builds now, or an
+  // edit to part.js that was never built goes nowhere with no word why
+  if (hasPartSource(arg)) {
+    const { instantiatePartScript } = await vite.ssrLoadModule('/src/core/parts/partScript.ts')
+    const { compileRig } = await vite.ssrLoadModule('/src/core/rig/rigCompile.ts')
+    const built = buildPart(arg, repo, { instantiatePartScript, compileRig })
+    if (!built.files) return { error: `${arg}: its part.js does not build - fix it first (npm run check-part -- ${arg}):\n  ${built.problems.join('\n  ')}`, exit: 1 }
+    const stale = built.files.filter((f) => !existsSync(join(arg, f.name)) || readFileSync(join(arg, f.name), 'utf8').replace(/\r\n/g, '\n') !== f.text).map((f) => f.name)
+    if (stale.length > 0) {
+      return {
+        error: `${arg}: ${stale.join(' and ')} ${stale.length > 1 ? 'are' : 'is'} not what its part.js builds. If part.js changed, build it first (npm run build-parts -- ${arg}). If ${stale.length > 1 ? 'they were' : 'it was'} edited (by hand, the Part Editor or an agent tool), move that change into part.js, or the next build undoes it`,
+        exit: 1,
+      }
+    }
+  }
+  // a folder keeps its models and textures as assets/<sha256>.<ext> files the manifest names (core/parts/partAssets.ts)
+  const { joinAssetFiles, isPartAssetPath } = await vite.ssrLoadModule('/src/core/parts/partAssets.ts')
   const joined = joinAssetFiles(readFileSync(m, 'utf8'), (p) => (isPartAssetPath(p) && existsSync(join(arg, p)) ? new Uint8Array(readFileSync(join(arg, p))) : undefined))
   if (joined.error !== undefined) return { error: `${arg}: ${joined.error}`, exit: 1 }
   const r = validatePart(JSON.parse(joined.manifestJson), readFileSync(b, 'utf8'))
@@ -76,10 +94,11 @@ export function freshParams(pkg, units) {
 /** Open the project in `folder` (creating a minimal one when `create`), with its library writers. Throws an Error
  *  with `exit: 2` for a folder it cannot write into. */
 export async function projectLibrary(vite, folder, { create = true, log = console.log } = {}) {
-  const { emptyScene } = await vite.ssrLoadModule('/src/core/scene.ts')
-  const { PROJECT_VERSION } = await vite.ssrLoadModule('/src/core/project.ts')
-  const { manifestOfPackage, packageDependencies, productRefsOf } = await vite.ssrLoadModule('/src/core/partPackage.ts')
-  const { partFingerprint, withOrigin } = await vite.ssrLoadModule('/src/core/partOrigin.ts')
+  const { emptyScene } = await vite.ssrLoadModule('/src/core/scene/scene.ts')
+  const { PROJECT_VERSION } = await vite.ssrLoadModule('/src/core/project/project.ts')
+  const { manifestOfPackage, packageDependencies, productRefsOf } = await vite.ssrLoadModule('/src/core/parts/partPackage.ts')
+  const { partFingerprint, withOrigin } = await vite.ssrLoadModule('/src/core/parts/partOrigin.ts')
+  const { partFolderPaths } = await vite.ssrLoadModule('/src/core/project/projectFolder.ts')
 
   const manifestPath = join(folder, 'project.json')
   let project
@@ -135,35 +154,90 @@ export async function projectLibrary(vite, folder, { create = true, log = consol
     }
   }
 
-  /** Add a built-in id or an authored part folder to the library: { pkg } or { error, exit }. */
+  // The folder the app keeps a part in (core/project/projectFolder.ts partFolderPaths), project-relative, `/`-separated.
+  const homeOf = (id) => partFolderPaths([{ id }]).get(id)
+  const partsRoot = resolve(folder, 'parts')
+  const inParts = (dir) => {
+    const rel = relative(partsRoot, resolve(dir))
+    return rel !== '' && !rel.startsWith('..') && !rel.includes(sep) && !rel.includes('/')
+  }
+  const refOf = (dir) => relative(resolve(folder), resolve(dir)).split(sep).join('/')
+
+  // A part folder under parts/ whose manifest has the id `id`, listed or not: a part authored in the project is found
+  // by its id, as a built-in is.
+  const ownFolder = (id) => {
+    if (!existsSync(partsRoot)) return undefined
+    for (const e of readdirSync(partsRoot, { withFileTypes: true })) {
+      if (!e.isDirectory() || e.name.startsWith('_')) continue
+      const m = pick(join(partsRoot, e.name), ['manifest.json', 'rig.json'])
+      try {
+        if (m && readJson(m).id === id) return join(partsRoot, e.name)
+      } catch {
+        // a manifest that does not parse names no id; bakeFolder says why if the folder is named directly
+      }
+    }
+    return undefined
+  }
+
+  /**
+   * What `arg` adds, checked and nothing written: { pkg, from? } or { error, exit }. `from` is the authored folder
+   * it comes from. A folder already under parts/ is the project's own part: it is listed where the app keeps it,
+   * never copied beside itself.
+   */
+  const resolvePart = async (arg) => {
+    const dir = isFolder(arg) ? arg : bundled.has(arg) ? undefined : ownFolder(arg)
+    if (dir === undefined) {
+      const pkg = bundled.get(arg)
+      if (pkg) return { pkg }
+      const near = [...bundled.keys()].filter((id) => id.includes(arg.replace(/^oip\./, '')))
+      return { error: `"${arg}" is neither a folder, a built-in part id, nor the id of a part in ${join(folder, 'parts')}${near.length ? ` - did you mean ${near.join(', ')}?` : ' (npm run catalog lists the built-ins)'}`, exit: 1 }
+    }
+    const baked = await bakeFolder(vite, dir)
+    if (baked.error) return baked
+    const pkg = baked.pkg
+    if (bundled.has(pkg.id)) {
+      return { error: `${dir}: id "${pkg.id}" is a BUILT-IN id - an authored part under it would shadow the bundled part. Give your part its own id (e.g. "acme.${pkg.id.replace(/^oip\./, '')}").`, exit: 1 }
+    }
+    const home = join(folder, homeOf(pkg.id))
+    if (inParts(dir) && resolve(dir) !== resolve(home) && existsSync(home)) {
+      return { error: `${refOf(dir)}/ and ${homeOf(pkg.id)}/ both hold "${pkg.id}". Keep one: the app reads ${homeOf(pkg.id)}/.`, exit: 1 }
+    }
+    return { pkg, from: { dir, baked } }
+  }
+
+  /** Add a built-in id, the project's own part id, or an authored part folder to the library: { pkg } or { error, exit }. */
   const addPart = async (arg) => {
-    if (isFolder(arg)) {
-      const baked = await bakeFolder(vite, arg)
-      if (baked.error) return baked
-      const pkg = baked.pkg
-      if (bundled.has(pkg.id)) {
-        return { error: `${arg}: id "${pkg.id}" is a BUILT-IN id - an authored part under it would shadow the bundled part. Give your part its own id (e.g. "acme.${pkg.id.replace(/^oip\./, '')}").`, exit: 1 }
-      }
-      const dest = join(folder, 'parts', pkg.id)
-      if (resolve(dest) !== resolve(arg)) {
-        mkdirSync(dest, { recursive: true })
-        copyFileSync(baked.manifestPath, join(dest, 'manifest.json'))
-        copyFileSync(baked.behaviorPath, join(dest, 'behavior.js'))
-      }
-      const ref = `parts/${pkg.id}`
-      if (!project.packages.includes(ref)) project.packages.push(ref)
-      log(`+ ${pkg.id}: authored part → ${ref}/ (listed in project.json "packages")`)
-      copyNamed(pkg)
+    const r = await resolvePart(arg)
+    if (r.error) return r
+    const { pkg, from } = r
+    if (!from) {
+      // a stale copy an older save left in the scene is dropped: the project's copy is the one in parts/
+      if (Array.isArray(scene.packages)) scene.packages = scene.packages.filter((p) => p?.id !== pkg.id)
+      copyBuiltIn(pkg, '')
       return { pkg }
     }
-    const pkg = bundled.get(arg)
-    if (!pkg) {
-      const near = [...bundled.keys()].filter((id) => id.includes(arg.replace(/^oip\./, '')))
-      return { error: `"${arg}" is neither a folder nor a built-in part id${near.length ? ` - did you mean ${near.join(', ')}?` : ' (npm run catalog lists them)'}`, exit: 1 }
+    const ref = homeOf(pkg.id)
+    const dest = join(folder, ref)
+    if (resolve(dest) !== resolve(from.dir)) {
+      if (inParts(from.dir)) {
+        // the project's own part under another folder name: moved, with its part.js and assets, to where the app
+        // reads it, so no unlisted copy stays behind
+        const old = refOf(from.dir)
+        renameSync(from.dir, dest)
+        project.packages = project.packages.filter((p) => p !== old)
+        log(`  ${pkg.id}: moved ${old}/ to ${ref}/, the folder the app keeps it in`)
+      } else {
+        mkdirSync(dest, { recursive: true })
+        copyFileSync(from.baked.manifestPath, join(dest, 'manifest.json'))
+        copyFileSync(from.baked.behaviorPath, join(dest, 'behavior.js'))
+        // the models and textures its manifest names as assets/<sha256>.<ext>
+        if (existsSync(join(from.dir, 'assets'))) cpSync(join(from.dir, 'assets'), join(dest, 'assets'), { recursive: true })
+      }
     }
-    // a stale copy an older save left in the scene is dropped: the project's copy is the one in parts/
-    if (Array.isArray(scene.packages)) scene.packages = scene.packages.filter((p) => p?.id !== pkg.id)
-    copyBuiltIn(pkg, '')
+    const listedBefore = project.packages.includes(ref)
+    if (!listedBefore) project.packages.push(ref)
+    log(`${listedBefore ? '=' : '+'} ${pkg.id}: authored part → ${ref}/ (${listedBefore ? 'already listed' : 'listed'} in project.json "packages")`)
+    copyNamed(pkg)
     return { pkg }
   }
 
@@ -197,18 +271,18 @@ export async function projectLibrary(vite, folder, { create = true, log = consol
     writeJson(manifestPath, out)
   }
 
-  return { project, scene, scenePath, manifestPath, bundled, addPart, place, save }
+  return { project, scene, scenePath, manifestPath, bundled, resolvePart, addPart, place, save }
 }
 
 /**
- * Load a project folder the way the app does (core/projectFolder.ts folderFilesToProject) and register its part
+ * Load a project folder the way the app does (core/project/projectFolder.ts folderFilesToProject) and register its part
  * library over the built-ins, so the registry resolves each package to the PROJECT's copy. Call declareBuiltIns
  * (scripts/lib/builtIns.mjs) first. Returns { project } (core ProjectJSON) or { errors }.
  */
 export async function loadProject(vite, folder) {
-  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/projectFolder.ts')
+  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/project/projectFolder.ts')
   const { validatePart, formatPartDiagnostics } = await vite.ssrLoadModule('/src/sim/validatePart.ts')
-  const { registerPackage } = await vite.ssrLoadModule('/src/core/partRegistry.ts')
+  const { registerPackage } = await vite.ssrLoadModule('/src/core/parts/partRegistry.ts')
   const bakePart = (manifestJson, behaviorJs) => {
     let manifest
     try {

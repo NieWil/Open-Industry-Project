@@ -20,6 +20,8 @@
  * KeyboardEvent satisfies structurally.
  */
 
+import { defineMessage, t, type MessageId } from './i18n'
+
 /** the modal context a binding belongs to. Chords only conflict within a mode (W is both the
  *  Move tool and fly-forward, which is fine: the modes are never live at the same time) */
 export type KeyMode = 'editor' | 'fly' | 'pilot' | 'ladder'
@@ -29,7 +31,8 @@ export type KeyMode = 'editor' | 'fly' | 'pilot' | 'ladder'
  * - `physical` (default): against `e.code`, the key's position. Right for spatial keys: tools,
  *   movement, view toggles. A French user's Move tool stays under their left ring finger.
  * - `logical`: against `e.key`, the key's legend. Right for the clipboard/undo family, which
- *   users expect on the printed letter, and for modifier keys.
+ *   users expect on the printed letter, and for modifier keys. A chord with Alt is matched by
+ *   position all the same, because Alt changes the character the key reports (`matchesChord`).
  */
 export type KeyMatch = 'physical' | 'logical'
 
@@ -101,16 +104,22 @@ export const KEY_BINDINGS = [
   { id: 'edit.delete', mode: 'editor', group: 'Edit', label: 'Delete', keys: ['Delete', 'Backspace'] },
   { id: 'edit.sideGuards', mode: 'editor', group: 'Edit', label: 'Edit guard openings', keys: ['KeyG'], hint: 'with a conveyor selected: drag along a guard to cut an opening, Delete removes the clicked one, Esc exits' },
   { id: 'edit.rename', mode: 'editor', group: 'Edit', label: 'Rename', keys: ['F2'], hint: 'the selected part in the scene tree, or the declaration under the caret in the PLC text' },
+  { id: 'edit.goToDefinition', mode: 'editor', group: 'Edit', label: 'Go to definition', keys: ['F12'], hint: 'where the name under the caret in the PLC text is declared' },
+  // In the PLC text only. On a Mac Option+arrow moves the caret by a word, so the text keeps these two chords
+  // there (StEditor.tsx) and the editor's right-click menu is the way in until they are rebound.
+  { id: 'edit.jumpBack', mode: 'editor', group: 'Edit', label: 'Go back', keys: ['alt+ArrowLeft'], hint: 'to where the caret was before Go to definition' },
+  { id: 'edit.jumpForward', mode: 'editor', group: 'Edit', label: 'Go forward', keys: ['alt+ArrowRight'], hint: 'after Go back' },
   { id: 'edit.moveUp', mode: 'editor', group: 'Edit', label: 'Move up one slot', keys: ['ctrl+ArrowUp'], match: 'logical' },
   { id: 'edit.moveDown', mode: 'editor', group: 'Edit', label: 'Move down one slot', keys: ['ctrl+ArrowDown'], match: 'logical' },
   { id: 'edit.lock', mode: 'editor', group: 'Edit', label: 'Lock', keys: ['ctrl+KeyL'], match: 'logical' },
   { id: 'edit.unlock', mode: 'editor', group: 'Edit', label: 'Unlock', keys: ['ctrl+shift+KeyL'], match: 'logical' },
+  { id: 'edit.toggleVisible', mode: 'editor', group: 'Edit', label: 'Hide / show', keys: ['KeyH'], hint: 'hides the selection, or shows it all when any of it is hidden' },
   // The ids say 'group' although the label is 'Select as one' ('Group' names the container Ctrl+J makes).
   // A user's rebinding is stored under the id, so the ids don't change.
   { id: 'edit.group', mode: 'editor', group: 'Edit', label: 'Select as one', keys: ['ctrl+KeyG'], match: 'logical', hint: 'a viewport click on any part inside selects the whole' },
   { id: 'edit.ungroup', mode: 'editor', group: 'Edit', label: 'Select parts individually', keys: ['ctrl+shift+KeyG'], match: 'logical' },
   { id: 'edit.reparent', mode: 'editor', group: 'Edit', label: 'Reparent to new node', keys: ['ctrl+KeyJ'], match: 'logical', hint: 'wraps the selection in a fresh Group' },
-  { id: 'ui.cancel', mode: 'editor', group: 'Edit', label: 'Cancel / deselect', keys: ['Escape'], fixed: true, hint: 'also backs out of placing, a drag, or the ruler' },
+  { id: 'ui.cancel', mode: 'editor', group: 'Edit', label: 'Cancel / deselect', keys: ['Escape'], fixed: true, hint: 'also backs out of Present, placing, a drag, or the ruler' },
 
   // --- placement & snapping ------------------------------------------------
   { id: 'snap.grid', mode: 'editor', group: 'Snapping', label: 'Grid snap', keys: ['KeyY'] },
@@ -125,6 +134,13 @@ export const KEY_BINDINGS = [
   { id: 'view.space', mode: 'editor', group: 'View', label: 'Local / global space', keys: ['KeyT'] },
   { id: 'view.trackball', mode: 'editor', group: 'View', label: 'Trackball rotate', keys: ['KeyU'] },
   { id: 'view.projection', mode: 'editor', group: 'View', label: 'Perspective / orthographic', keys: ['KeyO', 'Numpad5'] },
+  // The orbit gizmo's axis balls from the keyboard: an orthographic view down a world axis, Ctrl for the opposite side
+  { id: 'view.front', mode: 'editor', group: 'View', label: 'Front view', keys: ['Numpad1'], hint: 'Ctrl for the rear' },
+  { id: 'view.rear', mode: 'editor', group: 'View', label: 'Rear view', keys: ['ctrl+Numpad1'] },
+  { id: 'view.right', mode: 'editor', group: 'View', label: 'Right view', keys: ['Numpad3'], hint: 'Ctrl for the left' },
+  { id: 'view.left', mode: 'editor', group: 'View', label: 'Left view', keys: ['ctrl+Numpad3'] },
+  { id: 'view.top', mode: 'editor', group: 'View', label: 'Top view', keys: ['Numpad7'], hint: 'Ctrl for the bottom' },
+  { id: 'view.bottom', mode: 'editor', group: 'View', label: 'Bottom view', keys: ['ctrl+Numpad7'] },
   { id: 'view.flowArrows', mode: 'editor', group: 'View', label: 'Flow arrows', keys: ['Period'] },
   { id: 'camera.freelook', mode: 'editor', group: 'View', label: 'Free fly', keys: ['shift+KeyF'], hint: 'or hold the right mouse button' },
   { id: 'view.distractionFree', mode: 'editor', group: 'View', label: 'Distraction-free mode', keys: ['ctrl+shift+F11', 'meta+shift+KeyD'], match: 'logical' },
@@ -141,6 +157,8 @@ export const KEY_BINDINGS = [
   // in text, dialogs, menus and free fly, whose boost is Space too (see App.tsx).
   { id: 'sim.playPause', mode: 'editor', group: 'Simulation', label: 'Play / pause', keys: ['Space'], hint: 'starts a stopped simulation; F5 / F6 in the desktop app' },
   { id: 'sim.stop', mode: 'editor', group: 'Simulation', label: 'Stop', keys: ['shift+Space'], hint: 'Shift+F5 in the desktop app' },
+  // Shift+Period types '>', which reads as "next". Auto-repeat steps again, so holding it plays the run slowly.
+  { id: 'sim.step', mode: 'editor', group: 'Simulation', label: 'Step one physics step', keys: ['shift+Period'], hint: 'while paused; F7 in the desktop app' },
 
   // --- help ----------------------------------------------------------------
   { id: 'ui.shortcuts', mode: 'editor', group: 'Help', label: 'Keyboard shortcuts', keys: ['shift+Slash'] },
@@ -148,7 +166,7 @@ export const KEY_BINDINGS = [
   // the way to reach every app-level command (see editor/commands.ts)
   { id: 'ui.commands', mode: 'editor', group: 'Help', label: 'Command palette', keys: ['ctrl+shift+KeyP'], match: 'logical', hint: 'search every menu command' },
 
-  // --- the ladder view (editor/components/LadderView.tsx), while it has the keyboard ---------------------
+  // --- the ladder view (editor/components/plc/LadderView.tsx), while it has the keyboard ---------------------
   // Its Delete, Ctrl+C/X/V and Ctrl+Z/Y are the Edit group's: the same chords, acting on the rungs.
   { id: 'ladder.prev', mode: 'ladder', group: 'Ladder', label: 'Previous element', keys: ['ArrowLeft'], hint: 'through branches, and on to the rung above' },
   { id: 'ladder.next', mode: 'ladder', group: 'Ladder', label: 'Next element', keys: ['ArrowRight'], hint: 'through branches, and on to the rung below' },
@@ -171,7 +189,7 @@ export const KEY_BINDINGS = [
   { id: 'ladder.zoomOut', mode: 'ladder', group: 'Ladder', label: 'Zoom out', keys: ['ctrl+Minus'], match: 'logical' },
   { id: 'ladder.zoomReset', mode: 'ladder', group: 'Ladder', label: 'Zoom to 100%', keys: ['ctrl+Digit0'], match: 'logical' },
   { id: 'ladder.find', mode: 'ladder', group: 'Ladder', label: 'Find', keys: ['ctrl+KeyF'], match: 'logical' },
-  { id: 'ladder.replace', mode: 'ladder', group: 'Ladder', label: 'Replace', keys: ['ctrl+KeyH'], match: 'logical' },
+  { id: 'ladder.replace', mode: 'ladder', group: 'Ladder', label: 'Replace', keys: ['ctrl+KeyH', 'meta+alt+KeyF'], match: 'logical', hint: 'on a Mac ⌘H hides the app, so ⌘⌥F is the one to use there' },
   { id: 'ladder.findNext', mode: 'ladder', group: 'Ladder', label: 'Next match', keys: ['F3'], hint: 'Enter in the Find field does the same' },
   { id: 'ladder.findPrev', mode: 'ladder', group: 'Ladder', label: 'Previous match', keys: ['shift+F3'] },
   { id: 'ladder.toggleBit', mode: 'ladder', group: 'Ladder', label: 'Toggle the bit', keys: ['ctrl+KeyT'], match: 'logical', hint: 'the BOOL under the selection, once, while the program runs (a browser tab keeps Ctrl+T for itself: the right-click menu has it too, and the strip while the program runs)' },
@@ -208,6 +226,37 @@ export const DEFAULT_KEYMAP: readonly KeyBinding[] = KEY_BINDINGS
 
 /** the groups in the order the shortcuts panel should show them */
 export const KEY_GROUPS = ['File', 'Tools', 'Edit', 'Snapping', 'View', 'Simulation', 'Ladder', 'Free fly', 'Pilot mode', 'Help'] as const
+
+// ---------------------------------------------------------------------------
+// display text
+//
+// The table's labels, hints and group names are the English source. Each gets a message id derived from the binding
+// id (`keymap.<id>.label`), like commands.ts does for command labels, so rewording English never orphans a
+// translation. Read through keyLabel / keyHintText / keyGroupLabel while rendering, never at module scope: a locale
+// installs at boot, after modules load.
+const LABEL_IDS = new Map<string, MessageId>(DEFAULT_KEYMAP.map((b) => [b.id, defineMessage(`keymap.${b.id}.label`, b.label)]))
+const HINT_IDS = new Map<string, MessageId>(
+  DEFAULT_KEYMAP.flatMap((b) => (b.hint ? [[b.id, defineMessage(`keymap.${b.id}.hint`, b.hint)] as const] : [])),
+)
+const GROUP_IDS = new Map<string, MessageId>(KEY_GROUPS.map((g) => [g, defineMessage(`keymap.group.${g}`, g)]))
+
+/** a binding's label as the user's locale reads it */
+export function keyLabel(b: Pick<KeyBinding, 'id' | 'label'>): string {
+  const id = LABEL_IDS.get(b.id)
+  return id ? t(id) : b.label
+}
+
+/** a binding's hint as the user's locale reads it, or undefined when it has none */
+export function keyHintText(b: Pick<KeyBinding, 'id' | 'hint'>): string | undefined {
+  const id = HINT_IDS.get(b.id)
+  return id ? t(id) : b.hint
+}
+
+/** a group's heading as the user's locale reads it */
+export function keyGroupLabel(group: string): string {
+  const id = GROUP_IDS.get(group)
+  return id ? t(id) : group
+}
 
 // ---------------------------------------------------------------------------
 // matching
@@ -271,7 +320,9 @@ export function matchesChord(
     }
     if (c.shift !== e.shiftKey || c.alt !== e.altKey) return false
   }
-  if ((opts.match ?? 'physical') === 'physical' && e.code) return e.code === c.token
+  // Alt changes the legend a key reports: Option+F on macOS is 'ƒ', and AltGr types a third character elsewhere.
+  // So an Alt chord is matched by position, whichever way its binding matches.
+  if (((opts.match ?? 'physical') === 'physical' || c.alt) && e.code) return e.code === c.token
   return e.key.toLowerCase() === logicalKeyOf(c.token)
 }
 
@@ -291,6 +342,52 @@ export function resolveKeyAction(
     }
   }
   return null
+}
+
+// ---------------------------------------------------------------------------
+// the keys a focused control keeps
+// ---------------------------------------------------------------------------
+
+/** the part of a focused element the ownership rule reads. A DOM element satisfies it structurally. */
+export interface KeyTargetLike {
+  readonly tagName: string
+  readonly type?: string
+  readonly isContentEditable?: boolean
+}
+
+/** input types that take typed text, so every key belongs to them */
+const TEXT_INPUT = new Set(['', 'text', 'search', 'email', 'url', 'tel', 'password', 'number', 'date', 'datetime-local', 'month', 'time', 'week'])
+const ARROWS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'])
+
+/**
+ * Does this key belong to the control it was pressed on, rather than to an app shortcut? Text entry owns every key.
+ * A checkbox, slider, select or button owns only the keys it uses itself: the browser leaves focus on a control
+ * after a click, so treating every INPUT and SELECT as text made each shortcut (Ctrl+Z, Delete, W) dead after
+ * clicking an Inspector checkbox, until the viewport was clicked. Every listener asks this one rule: the editor's
+ * (editor/dialogHost.ts `keyBelongsToTarget`, which adds the regions that own all their keys) and free fly's.
+ */
+export function keyBelongsToControl(
+  e: Pick<KeyEventLike, 'key' | 'ctrlKey' | 'metaKey' | 'altKey'>,
+  t: KeyTargetLike,
+  opts: { spaceOnButton?: boolean } = {},
+): boolean {
+  if (t.isContentEditable || t.tagName === 'TEXTAREA') return true
+  const chord = e.ctrlKey || e.metaKey || e.altKey
+  if (t.tagName === 'INPUT') {
+    const type = t.type ?? ''
+    if (TEXT_INPUT.has(type)) return true
+    if (chord) return false
+    if (type === 'range') return ARROWS.has(e.key)
+    if (type === 'radio') return e.key === ' ' || ARROWS.has(e.key)
+    // checkbox, color, file and the button types: Space toggles or presses, Enter presses
+    return e.key === ' ' || e.key === 'Enter'
+  }
+  // a select also jumps to an option by typed letter, so it keeps every unmodified key
+  if (t.tagName === 'SELECT') return !chord
+  // `spaceOnButton: false` leaves Space on a focused button to the caller (the transport plays and pauses over the
+  // button a click left focused); Enter still presses it
+  if (t.tagName === 'BUTTON') return !chord && ((e.key === ' ' && opts.spaceOnButton !== false) || e.key === 'Enter')
+  return false
 }
 
 // ---------------------------------------------------------------------------
@@ -319,7 +416,7 @@ export function resolveKeymap(overrides?: KeymapOverrides): readonly KeyBinding[
  * Module state, on purpose. `resolveKeymap` alone produces a table, but the six listeners that resolve
  * a press (editor controller, freelook, pilot, the palette/menu chord labels) live in three different
  * layers. `render/` cannot import `editor/`, so core is the only place a rebinding can become visible
- * to all of them at once. Same shape as core/partRegistry and core/partDiagnostics: a process-wide
+ * to all of them at once. Same shape as core/parts/partRegistry and core/parts/partDiagnostics: a process-wide
  * table with a revision and subscribers, no DOM, no store.
  *
  * Persistence is not here. core is DOM-free, so localStorage is handled in editor/keymapPrefs.ts,
@@ -435,7 +532,10 @@ const TOKEN_LABEL: Record<string, string> = {
   ArrowDown: '↓',
   ArrowLeft: '←',
   ArrowRight: '→',
+  Numpad1: 'Numpad 1',
+  Numpad3: 'Numpad 3',
   Numpad5: 'Numpad 5',
+  Numpad7: 'Numpad 7',
 }
 
 /** the chord as a human reads it: `ctrl+shift+KeyZ` → `Ctrl+Shift+Z` (`⌘⇧Z` on a Mac) */
@@ -448,4 +548,18 @@ export function formatChord(chord: string, mac = false): string {
   if (c.shift) out.push(mac ? '⇧' : 'Shift')
   out.push(TOKEN_LABEL[c.token] ?? c.token.replace(/^(Key|Digit)/, ''))
   return out.join(mac ? '' : '+')
+}
+
+/**
+ * Whether a binding answers the shortcuts panel's search. Every word of the query must appear,
+ * in any order, in the label, the hint, the group (as shown, or in English) or a chord as the panel prints it, so "ctrl+z",
+ * "snap" and "fly w" all find their rows. Case-insensitive; an empty query matches everything.
+ */
+export function bindingMatches(b: KeyBinding, query: string, mac = false): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return true
+  // the text the panel shows, and the English source too, so a name read in either finds the row
+  const shown = [keyLabel(b), keyHintText(b) ?? '', keyGroupLabel(b.group)]
+  const text = [...shown, b.label, b.hint ?? '', b.group, ...b.keys.map((c) => formatChord(c, mac))].join('\n').toLowerCase()
+  return words.every((w) => text.includes(w))
 }

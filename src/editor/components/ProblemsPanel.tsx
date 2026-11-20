@@ -24,12 +24,11 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { HeldPackage } from '../../collab/codeTrust'
 import { getRoomCodeGate } from '../../collab/session'
-import { allPartDiagnostics, partDiagnosticsOverflowed, partDiagnosticsRev, subscribePartDiagnostics } from '../../core/partDiagnostics'
-import { isKnownDialect } from '../../core/dialect'
-import { controllerFor } from '../../plc'
+import { allPartDiagnostics, partDiagnosticsOverflowed, partDiagnosticsRev, subscribePartDiagnostics } from '../../core/parts/partDiagnostics'
 import type { EditorController } from '../controller'
-import type { EditorState, EditorStore } from '../store'
-import { collectProblems, type Problem } from '../problems'
+import type { EditorState, EditorStore } from '../store/store'
+import { collectProblems, factsAskOf, type Problem, type ProblemsInput, type ProblemsReport } from '../problems'
+import { factsFor } from '../program/programWorkerClient'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('problems', {
@@ -43,6 +42,7 @@ const M = defineMessages('problems', {
   none: 'No problems found.',
   warningsHidden: { one: 'No errors. {count} warning hidden.', other: 'No errors. {count} warnings hidden.' },
   repeated: { one: 'repeated {count} time', other: 'repeated {count} times' },
+  checking: 'Checking the program...',
 })
 
 interface ProblemsPanelProps {
@@ -102,16 +102,20 @@ export function ProblemsPanel({ store, state, controller }: ProblemsPanelProps) 
   const plcFault = fault && fault.source === program ? fault : null
   // Play hands the logic to an external PLC only where one can be served (the desktop app), and only when it is on
   const externalPlc = (controller?.externalPlcAvailable ?? false) && state.externalPlc.enabled
+  // the named controllers this computer connects, where it can connect any
+  const namedPlcs = state.externalPlc.controllers
+  // a tag only a kept test reads or drives is covered, as check-wiring counts it. A save or delete sets testCount, so
+  // this render reads the new array
+  const tests = store.projectTests()
 
-  const report = useMemo(
+  // Everything the checks read but the program's own table, which the worker hands back with the facts.
+  const input = useMemo(
     () =>
-      collectProblems({
+      ({
         parts: state.scene.parts,
         stProgram: program,
         // a program written for a dialect this build does not have is one row, and none of the IEC checks
         stDialect: state.stDialect,
-        // the table the program runs from: its own, or the default one (plc/controller.ts)
-        controller: isKnownDialect(state.stDialect) ? controllerFor(program, state.controller, state.stScanMs) : null,
         runtime: allPartDiagnostics(),
         buildErrors: state.packageBuildErrors,
         packageNames: Object.fromEntries([...state.userPackages, ...state.bundledPackages].map((p) => [p.id, p.name])),
@@ -119,10 +123,40 @@ export function ProblemsPanel({ store, state, controller }: ProblemsPanelProps) 
         runtimeOverflowed: partDiagnosticsOverflowed(),
         heldCode: held.length,
         externalPlc,
+        namedPlcs,
+        mainPlcName: state.externalPlc.mainName,
         plcFault,
-      }),
-    [state.scene, program, state.stDialect, state.controller, state.stScanMs, state.packageBuildErrors, state.userPackages, state.bundledPackages, state.simHz, diagnosticsRev, held, externalPlc, plcFault],
+        tests,
+      }) satisfies Omit<ProblemsInput, 'controller'>,
+    [state.scene, program, state.stDialect, state.packageBuildErrors, state.userPackages, state.bundledPackages, state.simHz, diagnosticsRev, held, externalPlc, namedPlcs, state.externalPlc.mainName, plcFault, tests],
   )
+  // What the program says is worked out in a worker (program/programWorkerClient.ts): checking and compiling it reads
+  // all of it, and this runs at every pause in typing and every scene edit. The last report stays up until the next
+  // one is ready, so the rows do not blink while someone types.
+  const [report, setReport] = useState<ProblemsReport | null>(null)
+  useEffect(() => {
+    let live = true
+    const ask = factsAskOf({ ...input, controller: state.controller, scanMs: state.stScanMs })
+    void factsFor(ask).then(
+      (known) => {
+        // (an ask that went stale resolves empty: by then this effect has been replaced, and `live` says so)
+        // the table the program runs from: its own, or the default one (plc/controller.ts)
+        if (live) setReport(collectProblems({ ...input, controller: known.table }, known.facts))
+      },
+      (e: unknown) => console.warn('[oip] checking the program failed', e),
+    )
+    return () => {
+      live = false
+    }
+  }, [input, state.controller, state.stScanMs])
+  if (!report) {
+    // (not yet `.problems-panel`: that is the panel with its counts and rows, which a reader may wait for)
+    return (
+      <div className="problems-notes" data-testid="problems-checking">
+        <div className="problems-note">{t(M.checking)}</div>
+      </div>
+    )
+  }
 
   const problemRows = showWarnings ? report.problems : report.problems.filter((p) => p.severity === 'error')
 

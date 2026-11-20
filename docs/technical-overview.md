@@ -52,7 +52,7 @@ What a script or an agent writing `position` / `rotationY` directly needs to kno
 - **`rotationY`** is radians about world +Y, and 0 aligns the part's local +X with world +X.
   Positive turns **counter-clockwise seen from above**: local +X goes toward world **-Z**, so
   `rotationY = π/2` points it at -Z, `-π/2` at +Z and `π` at -X (`qFromAxisAngle([0, 1, 0], rotationY)`
-  in [rigPose.ts](../src/core/rigPose.ts), and `toWorldXZ` in [partGeometry.ts](../src/core/partGeometry.ts),
+  in [rigPose.ts](../src/core/rig/rigPose.ts), and `toWorldXZ` in [partGeometry.ts](../src/core/parts/partGeometry.ts),
   which snapping and footprints use). `rotationX` / `rotationZ` (pitch / roll, optional) are for the
   rare tilted part; planar tools read `rotationY` only.
 - **Downstream is local +X.** A conveyor carries product toward its local +X while its speed is
@@ -61,7 +61,7 @@ What a script or an agent writing `position` / `rotationY` directly needs to kno
   So a line running along world +X uses `rotationY = 0` for every conveyor; one turning toward
   world -Z continues at `π/2`.
 
-A **project** ([src/core/project.ts](../src/core/project.ts)) is the thin container above that:
+A **project** ([src/core/project/project.ts](../src/core/project/project.ts)) is the thin container above that:
 one scene, the ST program that runs it, the project's part library (its own copy of every part the scene uses,
 built-ins included), and JSON control-logic tests. It
 saves as one document or as a linked folder on disk (File System Access in the browser, the real

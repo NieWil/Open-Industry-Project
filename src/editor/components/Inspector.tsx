@@ -3,31 +3,33 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { versionedAssetUrl } from '../../core/assetVersions'
 import { sameAsBuiltIn } from '../../core/builtInVersion'
+import { controllersUsed } from '../../core/io/controllerTag'
+import { ControllerScope } from './inspector/controllerRow'
 import { PART_DEFS } from '../../core/types'
 import type { ParamSpec, PartInstance, PartType, SdkPart } from '../../core/types'
 import { partParamSpecs, switchValue, visibleWhenHolds } from '../../core/packageParams'
-import { partDisplayName } from '../../core/partDisplayName'
-import { packageThumbFile } from '../../core/partPackage'
-import type { PartPackage } from '../../core/partPackage'
-import { getPackage } from '../../core/partRegistry'
+import { partDisplayName } from '../../core/parts/partDisplayName'
+import { packageThumbFile } from '../../core/parts/partPackage'
+import type { PartPackage } from '../../core/parts/partPackage'
+import { getPackage } from '../../core/parts/partRegistry'
 import { rigGeometryOf } from '../rigTree'
 import { paramDesc } from './paramDescriptions'
-import type { EditorState, EditorStore } from '../store'
+import type { EditorState, EditorStore } from '../store/store'
 import type { EditorController } from '../controller'
 import type { LiveSetpoints } from '../controller/setpoints'
 import { BoolRow, DisplayUnitsContext, GuardOpeningsModeContext, LiveEditContext, RevertSlot, TextField } from './inspector/fields'
-import { sceneUnits } from '../../core/sceneUnits'
+import { sceneDisplayUnits } from '../../core/scene/sceneUnits'
 import type { LiveEditGate } from './inspector/fields'
 import { ContextMenu, menuItemsFor } from './inspector/menu'
 import type { OpenCtx, PropMenuState } from './inspector/menu'
 import { GroupSection, ParamField, buildGroupTree } from './inspector/paramField'
-import { buildSceneTagIndex } from './inspector/paramLogic'
+import { buildSceneTagIndex, firstTagKey } from './inspector/paramLogic'
 import type { SceneTagIndex } from './inspector/paramLogic'
 import { HoldsSection } from './inspector/holds'
 import { PartActions, PartInfoFields, PartStatus } from './inspector/rig'
 import { importRigNodePanel, preloadRigNodePanel } from './inspector/rigNodeChunk'
 import { InspectorHeader } from './inspector/header'
-import { partCreditLine } from '../partCredit'
+import { partCreditLine } from '../parts/partCredit'
 import { placedCopiesOf } from '../treeNode'
 import { titleCase } from './inspector/shared'
 import type { Update } from './inspector/shared'
@@ -35,9 +37,11 @@ import { TransformSection } from './inspector/transform'
 import { PartSceneProperties, SceneProperties } from './inspector/scene'
 import { TagSourcesContext } from './inspector/tagField'
 import type { TagSources } from './inspector/tagField'
-import type { PlcTagList } from '../externalPlc'
+import type { PlcTagList } from '../links/externalPlc'
+import { adsEndpoint, eipEndpoint, eipTarget } from '../links/externalPlcStatus'
 import { defineMessages, t } from '../../core/i18n'
 import { tNodes } from '../i18nNodes'
+import { selectionSet } from '../store/selectionSet'
 
 const M = defineMessages('inspector', {
   partsSelected: { one: '{count} part selected', other: '{count} parts selected' },
@@ -172,7 +176,7 @@ export function Inspector(props: InspectorProps) {
   const tagSources = useTagSources(props.controller, props.state)
   return (
     <LiveEditContext.Provider value={liveGate}>
-      <DisplayUnitsContext.Provider value={sceneUnits(props.state.scene)}>
+      <DisplayUnitsContext.Provider value={sceneDisplayUnits(props.state.scene)}>
         <GuardOpeningsModeContext.Provider value={props.state.sideGuardMode}>
           <TagSourcesContext.Provider value={tagSources}>
             <InspectorBody {...props} />
@@ -185,8 +189,8 @@ export function Inspector(props: InspectorProps) {
 
 /**
  * What a tag field suggests beyond the scene (inspector/tagField.tsx): the program, and the PLC's tags when the
- * external link is OPC UA. The PLC's list is shown only while it is of the PLC the settings name: change the address
- * and the old list is not offered as the new PLC's.
+ * external link is OPC UA, ADS or EtherNet/IP. The PLC's list is shown only while it is of the PLC the settings name:
+ * change the address and the old list is not offered as the new PLC's.
  */
 function useTagSources(controller: EditorController | null, state: EditorState): TagSources {
   const [plcList, setPlcList] = useState<Readonly<PlcTagList> | null>(() => controller?.plcTagList ?? null)
@@ -197,13 +201,27 @@ function useTagSources(controller: EditorController | null, state: EditorState):
     return controller.onExternalPlcStatus(read)
   }, [controller])
   const settings = state.externalPlc
-  const linked = !!controller?.plcTagsAvailable && settings.mode === 'opcua'
-  const plc = linked && plcList?.endpoint === settings.opcUaEndpoint ? plcList : null
-  const canReadPlc = linked && !state.running && settings.opcUaEndpoint.trim() !== ''
+  const protocol = settings.mode === 'opcua' || settings.mode === 'ads' || settings.mode === 'eip' ? settings.mode : null
+  const linked = !!controller?.plcTagsAvailable && protocol !== null
+  // a list read from another server, or from other start points, is not this link's
+  const from = protocol === 'opcua' ? settings.opcUaBrowseFrom.join(',') : ''
+  const endpoint = protocol === 'ads' ? adsEndpoint(settings.adsNetId, settings.adsPort) : protocol === 'eip' ? eipEndpoint(eipTarget(settings)) : settings.opcUaEndpoint
+  const plc = linked && plcList?.protocol === protocol && plcList.endpoint === endpoint && plcList.from.join(',') === from ? plcList : null
+  // an empty AMS Net ID is this PC's runtime, so ADS can always be read
+  const canReadPlc = linked && !state.running && (protocol === 'ads' || (protocol === 'eip' ? settings.eipGateway : settings.opcUaEndpoint).trim() !== '')
   const program = state.stProgram
+  const { stDialect: dialect, controller: table, stScanMs: scanMs } = state
+  const check = useMemo(() => ({ source: program, dialect, controller: table, scanMs }), [program, dialect, table, scanMs])
+  // the named controllers a tag field offers: the ones the project lists, then any other the scene's tags name
+  const setUp = settings.controllers
+  const parts = state.scene.parts
+  const controllers = useMemo(() => {
+    const names = setUp.map((c) => c.name)
+    return [...names, ...controllersUsed(parts).filter((n) => !names.includes(n))]
+  }, [setUp, parts])
   return useMemo(
-    () => ({ program, plc, plcLinked: linked, canReadPlc, readPlc: () => controller?.readPlcTags() }),
-    [program, plc, linked, canReadPlc, controller],
+    () => ({ check, plc, plcLinked: linked, plcProtocol: protocol ?? undefined, external: settings.enabled, canReadPlc, readPlc: () => controller?.readPlcTags(), controllers, defaultName: settings.mainName }),
+    [check, plc, linked, protocol, settings.enabled, canReadPlc, controller, controllers, settings.mainName],
   )
 }
 
@@ -302,13 +320,15 @@ function InspectorBody({ store, state, controller, packageThumbnails }: Inspecto
             placedCopies={placedCopiesOf(state, (rigPart as SdkPart).packageId)}
             definitionSession={state.packageEdit?.partId === rigPart.id}
             focused={state.focusedPartId === rigPart.id}
+            running={state.running}
           />
         </Suspense>
       )
     }
   }
 
-  const selected = state.scene.parts.filter((p) => state.selectedIds.includes(p.id))
+  const selectedSet = selectionSet(state.selectedIds)
+  const selected = state.scene.parts.filter((p) => selectedSet.has(p.id))
 
   // nothing selected: the scene itself is what is in front of you, so its own properties - or, inside a part's own
   // scene, that part's, since the document's rate and units are not what is on screen
@@ -318,28 +338,11 @@ function InspectorBody({ store, state, controller, packageThumbnails }: Inspecto
 
   // Every SDK part is type 'part', so the type can't tell a conveyor from a sensor; the package can. The
   // fields come from the first part's package, and writing them into another package's part is junk at best.
-  const kindOf = (p: PartInstance): string => (p.type === 'part' ? `part:${(p as SdkPart).packageId}` : p.type)
-  if (new Set(selected.map(kindOf)).size > 1) {
-    return (
-      <div className="inspector">
-        <InspectorHeader title={t(M.partsSelected, { count: selected.length })} />
-        <p className="inspector-hint">{t(M.mixedTypes)}</p>
-      </div>
-    )
-  }
-
   // one type (1+ parts): edit the representative, fan edits out to the whole selection
   const targets = selected
   const part = targets[0]!
   const type: PartType = part.type
   const multi = targets.length > 1
-  const def = PART_DEFS[type]
-  // the header names what the part is: every SDK part shares the generic 'part' type, so its package says it
-  const pkg = type === 'part' ? packageOf(state, (part as SdkPart).packageId) : undefined
-  const kindLabel = pkg?.name ?? def.label
-  // the Part Editor session's throwaway: its Name field names the part itself (PartInfoFields)
-  const definitionCopy = !multi && type === 'part' && state.packageEdit?.partId === part.id
-  const thumb = headerThumb(state, part, pkg, packageThumbnails)
   const ids = targets.map((t) => t.id)
   const idSet = new Set(ids)
   const update: Update = (label, key, mutate) => {
@@ -353,6 +356,36 @@ function InspectorBody({ store, state, controller, packageThumbnails }: Inspecto
       { coalesceKey: `param:${ids.join(',')}:${key}` },
     )
   }
+
+  const kindOf = (p: PartInstance): string => (p.type === 'part' ? `part:${(p as SdkPart).packageId}` : p.type)
+  if (new Set(selected.map(kindOf)).size > 1) {
+    // the params differ by kind, but every part has a pose: the Transform still edits them together
+    return (
+      <div className="inspector">
+        <InspectorHeader title={t(M.partsSelected, { count: selected.length })} />
+        <TransformSection
+          store={store}
+          committed={part}
+          ids={ids}
+          type={type}
+          disabled={false}
+          effCollapsed={collapsed}
+          toggle={toggle}
+          openCtx={openCtx}
+          update={update}
+        />
+        <p className="inspector-hint">{t(M.mixedTypes)}</p>
+        {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItemsFor(menu)} onClose={() => setMenu(null)} />}
+      </div>
+    )
+  }
+  const def = PART_DEFS[type]
+  // the header names what the part is: every SDK part shares the generic 'part' type, so its package says it
+  const pkg = type === 'part' ? packageOf(state, (part as SdkPart).packageId) : undefined
+  const kindLabel = pkg?.name ?? def.label
+  // the Part Editor session's throwaway: its Name field names the part itself (PartInfoFields)
+  const definitionCopy = !multi && type === 'part' && state.packageEdit?.partId === part.id
+  const thumb = headerThumb(state, part, pkg, packageThumbnails)
   const f = filter.trim().toLowerCase()
   // partParamSpecs resolves a part's fields from its package schema (def.params is empty for the generic
   // 'part' type); the structural types (building/group) fall through to their static PART_DEFS list.
@@ -378,7 +411,7 @@ function InspectorBody({ store, state, controller, packageThumbnails }: Inspecto
   const inCommsSection = (s: ParamSpec): boolean =>
     s.kind === 'tagRef' || (!!commsSpec?.group && !!s.group && (s.group === commsSpec.group || s.group.startsWith(`${commsSpec.group}/`)))
   // ...and a units switch (ParamSpec.imperialUnits) is the scene's to set: its Units (Scene Properties,
-  // core/sceneUnits.ts) write it on every part, so a per-part copy of that choice is never a field.
+  // core/scene/sceneUnits.ts) write it on every part, so a per-part copy of that choice is never a field.
   const editableSpecs = allSpecs.filter(
     (s) =>
       !s.hidden &&
@@ -397,7 +430,7 @@ function InspectorBody({ store, state, controller, packageThumbnails }: Inspecto
   const effCollapsed: Record<string, boolean> = f ? {} : { ...Object.fromEntries(sectionPaths(editableSpecs).map((p) => [p, startsCollapsed(p)])), ...collapsed }
 
   // every collapsible section path (Expand/Collapse All targets), incl. the Transform fold
-  const allSectionPaths = (): string[] => (multi ? sectionPaths(editableSpecs) : ['Transform', ...sectionPaths(editableSpecs)])
+  const allSectionPaths = (): string[] => ['Transform', ...sectionPaths(editableSpecs)]
   const collapseAll = () => setCollapsed(Object.fromEntries(allSectionPaths().map((p) => [p, true])))
   // explicit, since a nested section's default is folded
   const expandAll = () => setCollapsed(Object.fromEntries(allSectionPaths().map((p) => [p, false])))
@@ -409,6 +442,8 @@ function InspectorBody({ store, state, controller, packageThumbnails }: Inspecto
   const capturePose = !multi && part.type === 'part' && controller ? () => controller.captureRigPose(part.id) : undefined
   // ...and the way back: show a waypoint's (or a Move step's) joint row on the arm, while the scene is stopped
   const previewPose = !multi && part.type === 'part' && controller && !state.running ? (row: readonly number[]) => controller.previewRigPose(part.id, row) : undefined
+  // a tag field forces the program variable its tag names, only while the scene runs (inspector/tagForce.tsx)
+  const forcing = state.running ? controller : null
 
   return (
     <div className="inspector">
@@ -425,7 +460,7 @@ function InspectorBody({ store, state, controller, packageThumbnails }: Inspecto
           ) : undefined
         }
       />
-      {/* who made it: a part from a part library credits its publisher, wherever it is used (editor/partCredit.ts) */}
+      {/* who made it: a part from a part library credits its publisher, wherever it is used (editor/parts/partCredit.ts) */}
       {pkg?.credit &&
         (() => {
           const credit = partCreditLine(pkg)!
@@ -504,18 +539,17 @@ function InspectorBody({ store, state, controller, packageThumbnails }: Inspecto
         extra={<RevertSlot />}
         onChange={(v) => store.setVisible(ids, v)}
       />
-      {!multi && (
-        <TransformSection
-          store={store}
-          committed={part}
-          type={type}
-          disabled={false}
-          effCollapsed={effCollapsed}
-          toggle={toggle}
-          openCtx={openCtx}
-          update={update}
-        />
-      )}
+      <TransformSection
+        store={store}
+        committed={part}
+        ids={ids}
+        type={type}
+        disabled={false}
+        effCollapsed={effCollapsed}
+        toggle={toggle}
+        openCtx={openCtx}
+        update={update}
+      />
       {/* the filter searches the params below it, so a part with none (a group) has no filter */}
       {editableSpecs.length > 0 && (
         <div className="inspector-filter-row">
@@ -535,27 +569,32 @@ function InspectorBody({ store, state, controller, packageThumbnails }: Inspecto
           </button>
         </div>
       )}
-      {ungrouped.map((spec) => (
-        <ParamField key={spec.key} spec={spec} parts={targets} allParts={allParts} tagIndex={tagIndex} liveSetpoints={liveSetpoints ?? undefined} disabled={false} update={update} onContext={openCtx} capturePose={capturePose} previewPose={previewPose} />
-      ))}
-      {groups.map((group) => (
-        <GroupSection
-          key={group.path}
-          node={group}
-          depth={0}
-          collapsed={effCollapsed}
-          toggle={toggle}
-          parts={targets}
-          allParts={allParts}
-          tagIndex={tagIndex}
-          liveSetpoints={liveSetpoints ?? undefined}
-          disabled={false}
-          update={update}
-          onContext={openCtx}
-          capturePose={capturePose}
-          previewPose={previewPose}
-        />
-      ))}
+      {/* one Controller row for every tag of the part, above its first tag field (inspector/controllerRow.tsx) */}
+      <ControllerScope store={store} parts={targets} firstTag={firstTagKey(ungrouped, groups)}>
+        {ungrouped.map((spec) => (
+          <ParamField key={spec.key} store={store} spec={spec} parts={targets} allParts={allParts} tagIndex={tagIndex} liveSetpoints={liveSetpoints ?? undefined} disabled={false} update={update} onContext={openCtx} capturePose={capturePose} previewPose={previewPose} forcing={forcing} />
+        ))}
+        {groups.map((group) => (
+          <GroupSection
+            key={group.path}
+            store={store}
+            node={group}
+            depth={0}
+            collapsed={effCollapsed}
+            toggle={toggle}
+            parts={targets}
+            allParts={allParts}
+            tagIndex={tagIndex}
+            liveSetpoints={liveSetpoints ?? undefined}
+            disabled={false}
+            update={update}
+            onContext={openCtx}
+            capturePose={capturePose}
+            previewPose={previewPose}
+            forcing={forcing}
+          />
+        ))}
+      </ControllerScope>
       {!multi && part.type === 'part' && <HoldsSection store={store} part={part as SdkPart} scene={state.scene} running={state.running} />}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItemsFor(menu)} onClose={() => setMenu(null)} />}
     </div>

@@ -1,4 +1,4 @@
-// Assign I/O and Import I/O list, through the menu a user opens: right-click Main (the top-level code) in the PLC
+// Assign I/O and Import I/O list, through the menu a user opens: right-click Top-level code (the code outside every POU) in the PLC
 // panel's organizer, since what they assign is addresses for its variables.
 //
 // The command turns a scene wired by name into one wired to a PLC's I/O points: every tag a part is wired
@@ -51,9 +51,9 @@ try {
       version: st.getState().scene.version,
       parts: [
         { id: 'belt', type: 'part', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0,
-          params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, enableComms: true, runTag: 'Run' } },
+          params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, runTag: 'Run' } },
         { id: 'eye', type: 'part', packageId: 'oip.diffuse-sensor', position: [3, 0.75, -0.6], rotationY: 0,
-          params: { maxRange: 1.2, enableComms: true, tag: 'Eye' } },
+          params: { maxRange: 1.2, tag: 'Eye' } },
       ],
       packages: need,
     })
@@ -67,7 +67,7 @@ try {
   await showPlcEditor(page)
   const tags = page.locator('[data-testid="org-top"]')
   await tags.waitFor({ timeout: 20000 })
-  /** A command from the Main row's right-click menu. */
+  /** A command from the Top-level code row's right-click menu. */
   const tagsMenu = async (testid) => {
     await tags.click({ button: 'right' })
     const item = page.locator(`[data-testid="${testid}"]`)

@@ -6,9 +6,9 @@
     "bed": "arc",
     "surface": "roller",
     "speedParam": "speed",
+    "frictionParam": "friction",
     "reverseParam": "reverse"
   },
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "drawn",
     "bounds": {

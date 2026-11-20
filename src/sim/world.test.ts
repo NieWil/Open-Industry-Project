@@ -1,13 +1,14 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
 import { CARGO_KIND_BOX, CARGO_KIND_PALLET } from '../core/frame'
 import { quatFromYXZ } from '../core/math'
 import { PALLET_SIZE, SCENE_VERSION, DEFAULT_SIM_HZ } from '../core/types'
 import type { BuildingPart, SdkPart, PartInstance, SceneJSON } from '../core/types'
-import type { PartAsset, PartMaterial, PartPackage, PartPackageGeometry } from '../core/partPackage'
-import { createSdkPart } from '../core/scene'
-import { registerPackage } from '../core/partRegistry'
+import type { PartAsset, PartMaterial, PartPackage, PartPackageGeometry } from '../core/parts/partPackage'
+import { createSdkPart } from '../core/scene/scene'
+import { clearPartDiagnostics, partDiagnosticsFor } from '../core/parts/partDiagnostics'
+import { registerPackage, unregisterPackage } from '../core/parts/partRegistry'
 import { buildPackage } from './buildPackage'
 import { SimWorld } from './world'
 
@@ -192,14 +193,24 @@ describe('chain transfer pop-up physically lifts + diverts cargo', () => {
     world.dispose()
   })
 
-  // Where the lowered deck rests is what makes a transfer installable in a bed at all. Its `conveys` deck rides
-  // the lift joint, so seated flush with the host roller line the two conveying surfaces are coplanar: a case
-  // touches both, and an idle chain deck is not neutral - it is a stopped belt (surface velocity zero at
-  // CONVEYOR_FRICTION), so it brakes the case the rollers are trying to carry. The part declares a recess for
-  // exactly this (examples/parts/chain-transfer, snap.track.targetLocalY = -0.03), so the track snap seats it
-  // below the bed and cargo rides the rollers alone until the pop-up takes it. This pins the physics that number
-  // exists for; the declaration itself is guarded in editor/bundledPackageData.test.ts.
-  it('a lowered transfer resting in a running roller bed lets cargo pass; seated flush it brakes it', () => {
+  // Where the lowered deck rests is what makes a transfer installable in a bed at all. An idle chain deck is not
+  // neutral: it is a stopped belt (surface velocity zero), and its `conveys` deck rides the lift joint, so it is a
+  // kinematic body. The part declares a recess (examples/parts/chain-transfer, snap.track.targetLocalY = -0.03), so
+  // the track snap seats it below the bed and cargo rides the rollers alone until the pop-up takes it. This pins
+  // that the recess works; the declaration itself is guarded in editor/parts/bundledPackageData.test.ts.
+  //
+  // Seated flush, what holds the case back depends on the step rate, measured with the deck 0 to 5 mm proud of the
+  // rollers and 2 to 10 mm below them:
+  //   - below the rollers by 2 mm or more: the case rides through at every rate (3.9 m);
+  //   - proud by 2 mm or more: it catches on the deck's leading edge at every rate (0.5-0.7 m);
+  //   - exactly flush: at 60 Hz it catches on the leading edge (0.8 m), never reaching the deck; at 90 Hz it gets
+  //     onto the deck and is braked there (1.2 m); at 120 and 240 Hz it rides over with almost no drag (3.7-3.9 m).
+  // A real case on a stopped surface flush with the driven one would be dragged back while it crossed, so none of
+  // the flush results is the friction the stopped deck should give. A static coplanar seam (a running roller bed
+  // butted to a stopped one) behaves at every rate: the case crosses and friction stops it 0.1-0.2 m on. So the
+  // flush half below holds at the default 60 Hz, by the edge catch, and is a control for the recess, not a claim
+  // about flush seating.
+  it('a lowered transfer resting in a running roller bed lets cargo pass; seated flush it holds it back', () => {
     const DROP = 0.03 // snap.track.targetLocalY, as a positive depth
     /** how far the box travels along the bed in 4 s with a lowered, idle transfer seated at `chainY` */
     function travel(chainY: number): number {
@@ -216,7 +227,7 @@ describe('chain transfer pop-up physically lifts + diverts cargo', () => {
     const recessed = travel(0.75 - DROP)
     const flush = travel(0.75)
     expect(recessed).toBeGreaterThan(1.65) // clears the whole 1.65 m deck and keeps going (measured 3.89 m)
-    expect(flush).toBeLessThan(recessed - 2) // coplanar: braked at the deck edge (measured 0.80 m)
+    expect(flush).toBeLessThan(recessed - 2) // flush at 60 Hz: caught on the deck's leading edge (measured 0.79 m)
   })
 
   it('a raised transfer diverts the box 90° off the line, along −Z (the kinematic deck still conveys)', () => {
@@ -736,6 +747,40 @@ describe('freeze body (gizmo grab)', () => {
     expect(world.frame().positions[1]!).toBeLessThan(1.5)
     world.dispose()
   })
+
+  it('a step reads a body moved since the frame, not the frame snapshot it would reuse', () => {
+    const world = new SimWorld(Jolt, scene(belt('b1', 0, 0.75, 0, 4, 0.5), boxPart('bx1', 0, 0.95, 0)))
+    world.step()
+    expect(world.frame().count).toBe(1) // the frame's snapshot is kept for the next step
+    // dragged below the cull height between steps: the next step's cull must see it there
+    world.moveBody('bx1', [0, -10, 0], null)
+    world.step()
+    expect(world.frame().count).toBe(0)
+    world.dispose()
+  })
+
+  it('a body moved between steps after something read the snapshot is still seen by the next step', () => {
+    const world = new SimWorld(Jolt, scene(belt('b1', 0, 0.75, 0, 4, 0.5), boxPart('bx1', 0, 0.95, 0)))
+    world.step()
+    world.frame()
+    // a query between steps reads the cached snapshot first; that must not stop the move below from invalidating it
+    ;(world as unknown as { cargo: { stepSnapshot(): unknown } }).cargo.stepSnapshot()
+    world.moveBody('bx1', [0, -10, 0], null)
+    world.step()
+    expect(world.frame().count).toBe(0)
+    world.dispose()
+  })
+
+  it('a step reads a grip pose set since the frame', () => {
+    const world = new SimWorld(Jolt, scene(belt('b1', 0, 0.75, 0, 4, 0.5), boxPart('bx1', 0, 0.95, 0)))
+    world.step()
+    const id = world.frame().ids[0]!
+    world.grabBody(id)
+    world.setGrabbedPose(id, [0, -10, 0], [0, 0, 0, 1])
+    world.step()
+    expect(world.frame().count).toBe(0)
+    world.dispose()
+  })
 })
 
 describe('tilted cargo (full orientation)', () => {
@@ -916,6 +961,94 @@ describe('live editing (updateScene)', () => {
     for (let i = 0; i < 30; i++) world.step()
     expect(world.frame().positions[0]!).toBeGreaterThan(before) // still conveying +x
     world.dispose()
+  })
+
+  it('a part whose package the sim was not given reports it, and builds once the package arrives', SLOW, () => {
+    // The worker knows only the packages a scene hands it. A belt pasted into a scene that never embedded its
+    // package still draws, but here it has no deck: a box spawned over it falls to the floor.
+    unregisterPackage(BELT_PKG.id)
+    clearPartDiagnostics()
+    try {
+      const world = new SimWorld(Jolt, scene(belt('b1', 0, 0.75, 0, 4, 0)))
+      expect(partDiagnosticsFor('b1').map((d) => d.source)).toEqual(['build'])
+      world.spawnBoxAt(0, 1.2, 0, 0.15, 0.2, 0.15)
+      for (let i = 0; i < 90; i++) world.step()
+      expect(world.frame().positions[1]!).toBeLessThan(0.5)
+
+      // the next push carries the package: the part rebuilds, its report clears, and the deck catches cargo
+      world.updateScene({ ...scene(belt('b1', 0, 0.75, 0, 4, 0)), packages: [BELT_PKG] })
+      expect(partDiagnosticsFor('b1')).toEqual([])
+      world.spawnBoxAt(0, 1.2, 0, 0.15, 0.2, 0.15)
+      for (let i = 0; i < 90; i++) world.step()
+      expect(world.frame().positions[4]!).toBeGreaterThan(0.85)
+      world.dispose()
+    } finally {
+      registerPackage(BELT_PKG)
+    }
+  })
+
+  it('a rebuilt or deleted part leaves no behavior running', SLOW, () => {
+    const count = (w: SimWorld): number => (w as unknown as { bus: { behaviors: unknown[] } }).bus.behaviors.length
+    const tagged = (tag: string): SdkPart => {
+      const p = belt('b1', 0, 0.75, 0, 4, 0.5)
+      p.params.runningTag = tag
+      return p
+    }
+    const world = new SimWorld(Jolt, scene(tagged('B1_RUN')))
+    world.step()
+    expect(world.behaviorTagWrites()).toMatchObject({ B1_RUN: true })
+    // renaming the tag rebuilds the part: only the new tag is written, by one behavior
+    world.updateScene(scene(tagged('B1_RUN_2')))
+    world.step()
+    expect(count(world)).toBe(1)
+    expect(world.behaviorTagWrites()).toHaveProperty('B1_RUN_2', true)
+    expect(world.behaviorTagWrites()).not.toHaveProperty('B1_RUN')
+    // deleting it stops it
+    world.updateScene(scene())
+    world.step()
+    expect(count(world)).toBe(0)
+    expect(world.behaviorTagWrites()).not.toHaveProperty('B1_RUN_2')
+    world.dispose()
+  })
+
+  it('editing one belt of a merged deck keeps every member conveying', SLOW, () => {
+    // the cluster owner attaches every member's behavior, and any member's edit rebuilds them all
+    const count = (w: SimWorld): number => (w as unknown as { bus: { behaviors: unknown[] } }).bus.behaviors.length
+    const pair = (upSpeed: number, downSpeed: number): SceneJSON => scene(belt('up', -2.25, 0.75, 0, 4, upSpeed), belt('down', 2.25, 0.75, 0, 4, downSpeed))
+    const world = new SimWorld(Jolt, pair(0.5, 0.5))
+    expect(count(world)).toBe(2)
+    for (const [up, down] of [[0.6, 0.5], [0.6, 0.7]] as const) {
+      world.updateScene(pair(up, down))
+      expect(count(world)).toBe(2)
+    }
+    // a box on each belt still moves at its belt's speed
+    world.spawnBoxAt(-3.5, 0.97, 0, 0.15, 0.2, 0.15)
+    world.spawnBoxAt(1, 0.97, 0, 0.15, 0.2, 0.15)
+    for (let i = 0; i < 60; i++) world.step()
+    const x0 = [world.frame().positions[0]!, world.frame().positions[3]!]
+    for (let i = 0; i < 30; i++) world.step()
+    const v = [(world.frame().positions[0]! - x0[0]!) * 2, (world.frame().positions[3]! - x0[1]!) * 2]
+    expect(v[0]).toBeGreaterThan(0.45)
+    expect(v[1]).toBeGreaterThan(0.6)
+    world.dispose()
+  })
+
+  it('a part added to a full physics world is built without bodies and reported, never half built', SLOW, () => {
+    const world = new SimWorld(Jolt, scene())
+    // fill Jolt's body table with cargo (nothing caps cargo: a line with no outlet piles up like this)
+    let n = 0
+    while (world.spawnBoxAt((n % 100) * 0.5, 1 + Math.floor(n / 100) * 0.5, 0, 0.1, 0.1, 0.1) >= 0) n++
+    expect(n).toBeGreaterThan(1000)
+    clearPartDiagnostics()
+    world.updateScene(scene(belt('b1', 0, 0.75, 0, 4, 0.5)))
+    expect(partDiagnosticsFor('b1').map((d) => d.source)).toEqual(['build'])
+    expect((world as unknown as { partGroups: Map<string, { bodies: unknown[] }> }).partGroups.get('b1')?.bodies).toEqual([])
+    expect(() => world.step()).not.toThrow()
+    // an unrelated edit leaves the bodiless part alone (same signature), so it does not retry on every update
+    world.updateScene(scene(belt('b1', 0, 0.75, 0, 4, 0.5)))
+    expect(partDiagnosticsFor('b1')[0]?.count).toBe(1)
+    world.dispose()
+    clearPartDiagnostics()
   })
 })
 

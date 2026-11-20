@@ -1,16 +1,16 @@
 import { Group } from 'three'
-import { getPackage } from '../../core/partRegistry'
-import type { RollerGrid } from '../../core/rollerGrid'
-import type { GuardOpenings } from '../../core/guardOpenings'
-import type { GuardExtents } from '../../core/guardExtents'
+import { getPackage } from '../../core/parts/partRegistry'
+import type { RollerGrid } from '../../core/conveyor/rollerGrid'
+import type { GuardOpenings } from '../../core/guards/guardOpenings'
+import type { GuardExtents } from '../../core/guards/guardExtents'
 import type { LegRestRows } from '../../core/legRests'
-import type { GuardHoles } from '../../core/guardHoles'
+import type { GuardHoles } from '../../core/guards/guardHoles'
 import type { StructureConnections } from '../../core/structureConnections'
 import { applyStairLift } from '../../core/structureCuts'
-import { linkFinishKey, resolveLinkFinishes } from '../../core/rigFinish'
-import type { PartPackage } from '../../core/partPackage'
+import { linkFinishKey, resolveLinkFinishes } from '../../core/rig/rigFinish'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { SdkPart, PartInstance } from '../../core/types'
-import type { ResolvedContext } from '../../core/sceneResolve'
+import type { ResolvedContext } from '../../core/scene/sceneResolve'
 import { applyPartRotation, setSelectedMaterials } from './common'
 import { bumpStructureVersion } from './structureRev'
 import { bumpPoseRev } from './poseRev'
@@ -21,7 +21,7 @@ import { buildCargo } from './sdk/cargo'
 import { buildFunctionMesh } from './sdk/functionMesh'
 import { buildRig } from './sdk/rig'
 
-// Imported custom-part visual. Two geometry kinds (see core/partPackage):
+// Imported custom-part visual. Two geometry kinds (see core/parts/partPackage):
 //  - 'deck': a textured powered slab (the conveyor primitive) with a discharge-end accent bar.
 //  - 'rig':  a multi-body kinematic tree (robots/AGVs/gates) - a Group per link, parented per link.parent,
 //            at its rest offset/rotation. The behavior's per-tick joint output (ctx.setJoint → the step
@@ -84,6 +84,8 @@ export function createCustomVisual(part: PartInstance): PartVisual {
     // expose joint articulation to the running frame loop + the editor IK gizmo (rig only)
     group.userData.applyJoints = content.applyJoints
     group.userData.applySubPoses = content.applySubPoses
+    group.userData.applyCopySpeeds = content.applyCopySpeeds
+    group.userData.resetRunPose = content.resetRunPose // the view's Stop reset (resetRunPoses)
     group.userData.applyLamps = content.applyLamps // the view routes frame.lamps here to light rig lamps
     group.userData.applyDisplays = content.applyDisplays // ...and frame.displays here, to paint live caption plates
     // the view reads this to draw/pick/drag the rig gizmo (RigGizmoOverlay) for whichever part the editor made

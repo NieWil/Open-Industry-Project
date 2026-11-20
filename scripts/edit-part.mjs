@@ -1,15 +1,22 @@
 // Change a PLACED part in a project folder, headless:
 //
-//   npm run edit-part -- <project-folder> <partId> [--params k=v,...] [--at x,y,z] [--rot <deg>] [--name <text>]
+//   npm run edit-part -- <project-folder> <partId> [--params k=v,...] [--at x,y,z] [--rot <deg>] [--name <text>] [--docks]
 //
 //   --params k=v,...  checked against each param's declared type and applied the way add-part applies them
-//                     (core/partParamArgs.ts): a param its `visibleWhen` switch hides is warned about, and
+//                     (core/parts/partParamArgs.ts): a param its `visibleWhen` switch hides is warned about, and
 //                     `length` / `width` / `height` on a part with no param of that name resize it through its own
-//                     resize path (a belt's length lives in its `segments`)
+//                     resize path (a belt's length lives in its `segments`).
+//                     On the building (core/building/buildingEdit.ts): its size, its wall rules as a JSON list
+//                     (`rules=[{"wall":"dock_door","run":1,"gap":0,"count":3,"start":2,"doorCount":2,"trailer":true}]`)
+//                     and `openDoors`, the dock doors that start open, by the keys --docks prints
+//                     (`openDoors=18:0,18:1`; '' = all shut). Open doors the new rules no longer cut are dropped.
+//   --docks           on the building: print which perimeter cells each wall holds (what a rule's `start` counts)
+//                     and every dock door with its key, wall, position and whether it starts open. Alone, it writes
+//                     nothing.
 //   --at x,y,z        the part's new ORIGIN, world metres, y up (`npm run catalog -- <packageId>` says where it is)
 //   --rot <deg>       its new yaw about +Y, in degrees
 //   --name <text>     its scene-tree name ('' clears it, so the tree shows the id)
-// A moved or turned part carries its soft-parented subtree, as the editor's gizmo does (core/partEdit.ts).
+// A moved or turned part carries its soft-parented subtree, as the editor's gizmo does (core/parts/partEdit.ts).
 // It prints each change, old -> new, and says when a new value is the param's default.
 //
 // Why this exists: without it the only way to change a part already in scene.json is a hand-written script over
@@ -27,14 +34,15 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const argv = process.argv.slice(2)
 const usage = (why) => {
   if (why) console.error(`✗ ${why}`)
-  console.error('usage: npm run edit-part -- <project-folder> <partId> [--params k=v,...] [--at x,y,z] [--rot <deg>] [--name <text>]')
+  console.error('usage: npm run edit-part -- <project-folder> <partId> [--params k=v,...] [--at x,y,z] [--rot <deg>] [--name <text>] [--docks]')
   process.exit(2)
 }
 const positional = []
 const o = {}
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
-  if (a === '--params' || a === '--at' || a === '--rot' || a === '--name') {
+  if (a === '--docks') o.docks = true
+  else if (a === '--params' || a === '--at' || a === '--rot' || a === '--name') {
     const v = argv[++i]
     if (v === undefined) usage(`${a} wants a value`)
     if (a === '--params') o.params = v
@@ -54,7 +62,8 @@ for (let i = 0; i < argv.length; i++) {
 const [folder, partId, ...extra] = positional
 if (!folder || !partId) usage()
 if (extra.length) usage(`one part at a time (got ${[partId, ...extra].join(', ')})`)
-if (o.params === undefined && !o.at && o.rot === undefined && o.name === undefined) usage('nothing to change: give --params, --at, --rot or --name')
+const edits = o.params !== undefined || o.at !== undefined || o.rot !== undefined || o.name !== undefined
+if (!edits && !o.docks) usage('nothing to change: give --params, --at, --rot or --name (or --docks to list a building\'s dock doors)')
 
 const r6 = (n) => Math.round(n * 1e6) / 1e6
 const shown = (v) => (v === undefined ? '(unset)' : JSON.stringify(v))
@@ -86,9 +95,32 @@ try {
     exit = 2
     throw new Error('unknown id')
   }
-  const { editPartParams, editPartPose } = await vite.ssrLoadModule('/src/core/partEdit.ts')
+  const { editPartParams, editPartPose } = await vite.ssrLoadModule('/src/core/parts/partEdit.ts')
+  const buildingEdit = await vite.ssrLoadModule('/src/core/building/buildingEdit.ts')
+  if (o.docks && part.type !== 'building') {
+    console.error(`✗ ${partId} is ${part.type === 'part' ? part.packageId : `a ${part.type}`}: --docks lists a building's dock doors`)
+    exit = 2
+    throw new Error('not a building')
+  }
   const lines = []
-  if (o.params !== undefined) {
+  if (o.params !== undefined && part.type === 'building') {
+    const { parseParamArgs } = await vite.ssrLoadModule('/src/core/parts/partParamArgs.ts')
+    const notes = []
+    let r
+    try {
+      const args = parseParamArgs(o.params)
+      r = buildingEdit.editBuildingParams(part, args, notes)
+      const same = Object.keys(args).filter((k) => !r.changes.some((c) => c.key === k))
+      for (const c of r.changes) lines.push(`  ${c.key}: ${shown(c.from)} -> ${shown(c.to)}${c.isDefault ? '  (the default)' : ''}`)
+      if (same.length) lines.push(`  unchanged (already that value): ${same.join(', ')}`)
+    } catch (e) {
+      console.error(`✗ ${partId} --params: ${e.message.replace(/^params: /, '')}`)
+      exit = 1
+      throw e
+    }
+    for (const n of notes) lines.push(`  note: ${n}`)
+    part.params = r.params
+  } else if (o.params !== undefined) {
     if (part.type !== 'part') {
       console.error(`✗ ${partId} is a ${part.type}, not a part with a package: --params edits a part's package params`)
       exit = 2
@@ -107,8 +139,8 @@ try {
     part.params = r.params
     for (const c of r.changes) lines.push(`  ${c.key}: ${shown(c.from)} -> ${shown(c.to)}${c.isDefault ? '  (the default)' : ''}`)
     // a declared param given at its current value is no change; say so, or the edit looks lost
-    const { parseParamArgs } = await vite.ssrLoadModule('/src/core/partParamArgs.ts')
-    const { getPackage } = await vite.ssrLoadModule('/src/core/partRegistry.ts')
+    const { parseParamArgs } = await vite.ssrLoadModule('/src/core/parts/partParamArgs.ts')
+    const { getPackage } = await vite.ssrLoadModule('/src/core/parts/partRegistry.ts')
     const declared = getPackage(part.packageId)?.params ?? {}
     const same = Object.keys(parseParamArgs(o.params)).filter((k) => k in declared && !r.changes.some((c) => c.key === k))
     if (same.length) lines.push(`  unchanged (already that value): ${same.join(', ')}`)
@@ -136,11 +168,17 @@ try {
     else target.name = o.name
     lines.push(`  name: ${shown(was)} -> ${o.name === '' ? '(unset: shows the id)' : shown(o.name)}`)
   }
-  lib.save()
-  console.log(`${partId} (${part.packageId ?? part.type}):`)
-  for (const l of lines) console.log(l)
-  console.log(`
+  if (edits) {
+    lib.save()
+    console.log(`${partId} (${part.packageId ?? part.type}):`)
+    for (const l of lines) console.log(l)
+  }
+  const building = scene.parts.find((p) => p.id === partId)
+  if (building.type === 'building' && (o.docks || o.params !== undefined)) printDocks(building, buildingEdit)
+  if (edits) {
+    console.log(`
 next: npm run check-layout -- ${folder}   then   npm run test-project -- ${folder}`)
+  }
 } catch (e) {
   if (exit === 0) {
     console.error(`✗ ${e.message}`)
@@ -150,3 +188,18 @@ next: npm run check-layout -- ${folder}   then   npm run test-project -- ${folde
   await vite.close()
 }
 process.exit(exit)
+
+/** the perimeter order a wall rule's `start` counts in, and every dock door the rules cut */
+function printDocks(building, { perimeterSides, dockDoors }) {
+  const { lengthSections: L, widthSections: W } = building.params
+  console.log(`
+${building.id}: ${L} x ${W} sections (10 m each), perimeter cells by wall (building-local):`)
+  for (const s of perimeterSides(L, W)) console.log(`  ${s.side.padEnd(5)} (${s.facing})  cells ${s.first}-${s.last}`)
+  const doors = dockDoors(building)
+  if (doors.length === 0) {
+    console.log('  no dock doors: a rule with "wall":"dock_door" cuts them')
+    return
+  }
+  console.log(`dock doors (${doors.filter((d) => d.open).length} of ${doors.length} start open; openDoors names them by key):`)
+  for (const d of doors) console.log(`  ${d.key.padEnd(6)} ${d.side.padEnd(5)}  at x ${d.x}, z ${d.z}  ${d.open ? 'open' : 'shut'}`)
+}

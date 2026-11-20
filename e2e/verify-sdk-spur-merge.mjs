@@ -63,9 +63,9 @@ async function main() {
     // Build a roller host + the SDK spur overlapping its bed (the override gate pulls an
     // overlapping conveyor out to butt), run the real snap engine, load the merged scene.
     const out = await page.evaluate(async () => {
-      const ex = await import('/src/core/guardExtents.ts')
-      const sf = await import('/src/core/snapFeatures.ts')
-      const pg = await import('/src/core/partGeometry.ts')
+      const ex = await import('/src/core/guards/guardExtents.ts')
+      const sf = await import('/src/core/snap/snapFeatures.ts')
+      const pg = await import('/src/core/parts/partGeometry.ts')
 
       const host = {
         id: 'rc_1', type: 'part', packageId: 'oip.roller-conveyor', position: [0, 0.75, 0], rotationY: 0,

@@ -56,7 +56,7 @@ async function main() {
   let cases
   let toPlcopenXml
   try {
-    ;({ toPlcopenXml } = await vite.ssrLoadModule('/src/plc/export.ts'))
+    ;({ toPlcopenXml } = await vite.ssrLoadModule('/src/plc/exchange/export.ts'))
     ;({ CONFORMANCE_CASES: cases } = await vite.ssrLoadModule('/src/plc/conformanceCases.ts'))
   } finally {
     await vite.close()

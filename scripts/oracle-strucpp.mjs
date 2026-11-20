@@ -40,7 +40,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { CONFORMANCE_CASES } from '../src/plc/conformanceCases.ts'
-import { renderIecText } from '../src/plc/exportText.ts'
+import { renderIecText } from '../src/plc/exchange/exportText.ts'
 import { parseStrucppHeader, renderStrucppHarness } from '../src/plc/oracleStrucpp.ts'
 import { diffCase, watchedVars } from './oracle-matiec.mjs'
 
@@ -124,7 +124,7 @@ const STRUCPP_GAPS = [
  * builds; a listed case is reported, not failed, and an entry whose cases all agree again is named for
  * retirement, as STRUCPP_GAPS are. Matched by case NAME: a new disagreement anywhere else fails the run.
  *
- * The export warns where a program meets one of these (src/plc/export.ts `strucppWarnings`), except `library-name`
+ * The export warns where a program meets one of these (src/plc/exchange/export.ts `strucppWarnings`), except `library-name`
  * (the names come from the release's GPL libraries, which the app does not ship): retiring an entry here means
  * retiring its warning there too.
  */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { linkHalfExtents, resolvedOffset, rigWorldPoses } from '../../core/rigPose'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
+import { linkHalfExtents, resolvedOffset, rigWorldPoses } from '../../core/rig/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
 import { examplePart, type RigGeo } from './examplePart'
 const { behavior: STACK_LIGHT_SDK_BEHAVIOR, geometry: STACK_LIGHT_SDK_RIG } = examplePart<RigGeo>('oip.stack-light')
 

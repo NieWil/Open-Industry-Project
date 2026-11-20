@@ -201,25 +201,14 @@ try {
     expect((await partOf(page, A)).behavior?.endsWith(MARK), 'the first project has its outside edit back')
     expect((await partOf(page, C)).behavior?.endsWith(MARK_C), 'and its in-app edit')
 
-    // File > Import Parts from Folder… on the old folder, through the real menu item
+    // Import part > A folder of parts… on the old folder, through the Parts panel
     await app.evaluate(({ dialog }, dir) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] })
     }, custom)
-    const clicked = await app.evaluate(({ Menu, BrowserWindow }) => {
-      const find = (items) => {
-        for (const it of items) {
-          if (it.label === 'Import Parts from Folder…') return it
-          const sub = it.submenu && find(it.submenu.items)
-          if (sub) return sub
-        }
-        return null
-      }
-      const item = find(Menu.getApplicationMenu()?.items ?? [])
-      if (!item) return false
-      item.click(item, BrowserWindow.getAllWindows()[0])
-      return true
-    })
-    expect(clicked, 'the File menu has Import Parts from Folder…')
+    await page.locator('[data-testid="catalog-import"]').click()
+    const folderItem = page.locator('.ctx-menu [data-testid="catalog-import-folder"]')
+    expect((await folderItem.count()) === 1, 'Import part offers A folder of parts…')
+    await folderItem.click()
     expect(await waitFor(async () => (await partOf(page, ORPHAN)).inLibrary), "the leftover is imported into this project's parts")
     const orphanFile = () => readdirSync(join(projects, first, 'parts')).some((slug) => existsSync(join(projects, first, 'parts', slug, 'manifest.json')) && readFileSync(join(projects, first, 'parts', slug, 'manifest.json'), 'utf8').includes(`"${ORPHAN}"`))
     expect(await waitFor(orphanFile), "and written to this project's folder")

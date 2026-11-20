@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { linkHalfExtents, rigWorldPoses } from '../../core/rigPose'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
+import { linkHalfExtents, rigWorldPoses } from '../../core/rig/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
 import { examplePart, type RigGeo } from './examplePart'
 const { behavior: GATE_BEHAVIOR, geometry: SAFETY_GATE_RIG, materials: GATE_MATS } = examplePart<RigGeo>('oip.safety-gate')
 

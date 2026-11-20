@@ -10,6 +10,8 @@
 // solids and ~40% of the triangles, and a solid per draw would have put one machine over the whole demo scene's
 // draw budget. Those assemblies had only 2-3 distinct colours, so merging by colour takes one to ~3 meshes.
 
+import { ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FLOAT, GlbBin, packGlb, UNSIGNED_INT, UNSIGNED_SHORT } from './glbPack'
+
 /** One tessellated solid, as occt-import-js hands it over (only the fields this reads). */
 export interface StepMesh {
   name?: string
@@ -226,30 +228,10 @@ function mergeByColour(pieces: Piece[]): Piece[] {
   return out
 }
 
-const ARRAY_BUFFER = 34962
-const ELEMENT_ARRAY_BUFFER = 34963
-const FLOAT = 5126
-const UNSIGNED_SHORT = 5123
-const UNSIGNED_INT = 5125
-
 /** One node + mesh + material per piece, all in one binary buffer. */
 function writeGlb(pieces: Piece[]): Uint8Array {
-  const chunks: Uint8Array[] = []
-  let binLength = 0
-  const bufferViews: object[] = []
+  const bin = new GlbBin()
   const accessors: object[] = []
-  const push = (bytes: Uint8Array, target: number): number => {
-    // every view starts 4-byte aligned (glTF requires it for FLOAT and UNSIGNED_INT data)
-    const pad = (4 - (binLength % 4)) % 4
-    if (pad) {
-      chunks.push(new Uint8Array(pad))
-      binLength += pad
-    }
-    bufferViews.push({ buffer: 0, byteOffset: binLength, byteLength: bytes.length, target })
-    chunks.push(bytes)
-    binLength += bytes.length
-    return bufferViews.length - 1
-  }
   const materials: object[] = []
   const meshes: object[] = []
   const nodes: object[] = []
@@ -262,17 +244,17 @@ function writeGlb(pieces: Piece[]): Uint8Array {
         min[k] = Math.min(min[k]!, p.pos[i + k]!)
         max[k] = Math.max(max[k]!, p.pos[i + k]!)
       }
-    const posView = push(new Uint8Array(p.pos.buffer, p.pos.byteOffset, p.pos.byteLength), ARRAY_BUFFER)
+    const posView = bin.push(new Uint8Array(p.pos.buffer, p.pos.byteOffset, p.pos.byteLength), ARRAY_BUFFER)
     const attributes: Record<string, number> = { POSITION: accessors.length }
     accessors.push({ bufferView: posView, componentType: FLOAT, count, type: 'VEC3', min, max })
     if (p.nrm) {
       attributes.NORMAL = accessors.length
-      accessors.push({ bufferView: push(new Uint8Array(p.nrm.buffer, p.nrm.byteOffset, p.nrm.byteLength), ARRAY_BUFFER), componentType: FLOAT, count, type: 'VEC3' })
+      accessors.push({ bufferView: bin.push(new Uint8Array(p.nrm.buffer, p.nrm.byteOffset, p.nrm.byteLength), ARRAY_BUFFER), componentType: FLOAT, count, type: 'VEC3' })
     }
     // 16-bit indices when they fit: half the index bytes on most single solids
     const small = count <= 0xffff
     const idx = small ? Uint16Array.from(p.idx) : p.idx instanceof Uint32Array ? p.idx : Uint32Array.from(p.idx)
-    const idxView = push(new Uint8Array(idx.buffer, idx.byteOffset, idx.byteLength), ELEMENT_ARRAY_BUFFER)
+    const idxView = bin.push(new Uint8Array(idx.buffer, idx.byteOffset, idx.byteLength), ELEMENT_ARRAY_BUFFER)
     const indices = accessors.length
     accessors.push({ bufferView: idxView, componentType: small ? UNSIGNED_SHORT : UNSIGNED_INT, count: idx.length, type: 'SCALAR' })
     materials.push({ name: p.name, pbrMetallicRoughness: { baseColorFactor: [...p.colour, 1], metallicFactor: 0, roughnessFactor: 0.6 } })
@@ -287,29 +269,6 @@ function writeGlb(pieces: Piece[]): Uint8Array {
     meshes,
     materials,
     accessors,
-    bufferViews,
-    buffers: [{ byteLength: binLength }],
   }
-  const json = new TextEncoder().encode(JSON.stringify(gltf))
-  const jsonLength = Math.ceil(json.length / 4) * 4
-  const binPadded = Math.ceil(binLength / 4) * 4
-  const total = 12 + 8 + jsonLength + 8 + binPadded
-  const out = new Uint8Array(total)
-  const view = new DataView(out.buffer)
-  view.setUint32(0, 0x46546c67, true) // 'glTF'
-  view.setUint32(4, 2, true)
-  view.setUint32(8, total, true)
-  view.setUint32(12, jsonLength, true)
-  view.setUint32(16, 0x4e4f534a, true) // 'JSON'
-  out.set(json, 20)
-  out.fill(0x20, 20 + json.length, 20 + jsonLength) // JSON pads with spaces
-  let at = 20 + jsonLength
-  view.setUint32(at, binPadded, true)
-  view.setUint32(at + 4, 0x004e4942, true) // 'BIN\0'
-  at += 8
-  for (const c of chunks) {
-    out.set(c, at)
-    at += c.length
-  }
-  return out
+  return packGlb(gltf, bin)
 }

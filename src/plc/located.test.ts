@@ -5,12 +5,12 @@
 import { describe, expect, it } from 'vitest'
 import { diagnostics } from './checker'
 import { toTypeScript } from './emit'
-import { exportProgram, toPlcopenXml } from './export'
-import { renderIecText } from './exportText'
-import { importIecText } from './importText'
-import { importPlcopenXml } from './importXml'
+import { exportProgram, toPlcopenXml } from './exchange/export'
+import { renderIecText } from './exchange/exportText'
+import { importIecText } from './exchange/importText'
+import { importPlcopenXml } from './exchange/importXml'
 import { compile } from './interpreter'
-import { LocalPlcLink } from './plcLink'
+import { LocalPlcLink } from './link/plcLink'
 
 const CONVEYOR = `VAR
   Eye AT %IX100.0 : BOOL;

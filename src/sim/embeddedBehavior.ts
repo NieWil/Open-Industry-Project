@@ -3,35 +3,39 @@
 // Compartment: docs/part-sandbox.md) evaluates this bundle once, then drives user part scripts through strings +
 // numbers only. No objects cross the boundary and no host APIs (Date.now / Math.random / window /
 // fetch) are used, so the same part script runs across both shipping surfaces (browser + Electron) and
-// runs deterministically inside the fixed-timestep SimCore (see src/core/simCore.ts, src/core/partApi.ts).
+// runs deterministically inside the fixed-timestep SimCore (see src/core/simCore.ts, src/core/parts/partApi.ts).
 // The string-only boundary serves the determinism discipline (docs/custom-part-capability-surface.md)
 // and the sandbox's copy-in / validate-out rule (docs/part-sandbox.md).
 //
 // Boundary (everything a host needs):
-//   create(source, paramsJson[, servosJson]) -> handle (>0), or 0 on error (see error()); servosJson = the
-//                                  rig's servo joints (RigJoint[] with `servo`), whose motion the instance runs
+//   create(source, paramsJson[, jointsJson[, arraysJson]]) -> handle (>0), or 0 on error (see error()); jointsJson = the
+//                                  rig's joints (RigJoint[]): the instance runs the motion of those with a `servo`,
+//                                  and a part that declares `robot` drives them through its controller;
+//                                  arraysJson = its posable array links (PosableArraySpec[]), what ctx.arrayCount reads
 //   meta(handle)                -> JSON {param: {type, default, ...}} - drives the Inspector
-//   step(handle, inputJson, dt) -> JSON {surfaceVelocity:[x,y,z], tags:{name:bool}, joints:{name:number}, grips:{name:bool}, lamps:{name:bool}, subPoses:{link:{position?,rotation?}}}
+//   step(handle, inputJson, dt) -> JSON {surfaceVelocity:[x,y,z], tags:{name:bool}, joints:{name:number}, grips:{name:bool}, lamps:{name:bool}, subPoses:{link:{position?,rotation?,instances?}}}
 //   destroy(handle)             -> void
 //   error()                     -> last error message (and clears it)
 //
 // input JSON: {simTime:number, position:[x,y,z], forward:[x,y,z], tags:{name:bool}, joints:{name:number}}
 //   joints = host-applied (clamped) joint pose from the previous tick - closed-loop feedback for ctx.measured.joints
 
-import { createGeometryBuilder } from '../core/geometryBuilder'
-import { canonicalMeshParts } from '../core/geometryEval'
+import { createGeometryBuilder } from '../core/geometry/geometryBuilder'
+import { canonicalMeshParts } from '../core/geometry/geometryEval'
 import { hostCopy } from '../core/hostCopy'
-import { canonicalAddress } from '../core/iecAddress'
-import { instantiatePartScript, resolvePartParams } from '../core/partScript'
+import { canonicalAddress } from '../core/io/iecAddress'
+import { instantiatePartScript, resolvePartParams } from '../core/parts/partScript'
 import { Rng } from '../core/rng'
-import { jointLimits, type RigParams } from '../core/rigPose'
-import type { RigJoint } from '../core/partPackage'
+import { arrayInstanceDeltas, copyGripName, jointLimits, type PosableArraySpec, type RigParams, type SubPose } from '../core/rig/rigPose'
+import type { RigJoint } from '../core/parts/partPackage'
+import { createRobot, robotDeclOf, type RobotDecl } from '../core/robot/robotController'
+import { robotToolParts } from '../core/robot/robotTools'
 import {
   axisCommandAborted, axisCommandDone, axisCommandQueued, axisFollow, axisHalt, axisHome, axisInPosition, axisMoveAbsolute, axisMoveRelative, axisMoveVelocity,
   axisPosition, axisPower, axisReleaseStop, axisReset, axisStop, createAxis, stepAxis, type Axis, type ModuloDirection,
 } from '../core/motionAxis'
 import type { ZoneMix, ZoneTally } from '../core/frame'
-import type { GeometryContext, ParamSchema, ParamsOf, ParamValue, PartContext, PartDefinition, Servo, SnapSpec, UnitLoadDecl, Vec3 } from '../core/partApi'
+import type { GeometryContext, ParamSchema, ParamsOf, ParamValue, PartContext, PartDefinition, Servo, SnapSpec, UnitLoadDecl, Vec3 } from '../core/parts/partApi'
 
 // the runtime's writable view of the context the script sees as readonly
 type MutableContext = { -readonly [K in keyof PartContext]: PartContext[K] }
@@ -41,6 +45,10 @@ interface Instance {
   ctx: MutableContext
   /** init() is still owed: it runs at the start of the first step, not in create() - see create() */
   needsInit: boolean
+  /** the part asked to be called on the next step (ctx.again) */
+  again: { v: boolean }
+  /** the part read a conveyor's speed this step: one that did not is not called for a speed changing (partSleep.ts) */
+  readSpeeds: { v: boolean }
   out: {
     sv: [number, number, number]
     tags: Record<string, TagVal>
@@ -49,13 +57,14 @@ interface Instance {
     lamps: Record<string, boolean>
     values: Record<string, TagVal>
     displays: Record<string, number | boolean | string>
-    subPoses: Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>
+    subPoses: Record<string, SubPose>
     spawns: SpawnReq[]
     despawns: string[]
     cargo: CargoOp[]
     drive: { forward: number; turn: number } | null
     arc: { cx: number; cz: number; omega: number } | null
     deckSpeed: number | number[] | null
+    copySpeeds: Record<string, number[]> | null
   }
   /** host tag tables held by reference (never copied): cur = this tick's, prev = last tick's (backs
    *  ctx.rising/falling), driven = the controller's output-ownership set. Safe to share because hosts
@@ -72,8 +81,8 @@ interface Instance {
    *  script never reaches the objects. beams = beam hits by name; zones = cargo count per detection zone
    *  (C-despawn); zoneAges = summed cargo age per zone (ctx.zoneAge); zoneMarks = per zone, how many cargo
    *  bodies in it carry each truthy mark (ctx.marked); zoneMix = per zone, its count and age by product and by kind
-   *  (ctx.zone's filter). */
-  sensed: { beams: Record<string, BeamHit>; zones: Record<string, number>; zoneAges: Record<string, number>; zoneMarks: Record<string, Record<string, number>>; zoneMix: Record<string, ZoneMix> }
+   *  (ctx.zone's filter); weights = kg on each load-cell link (ctx.weight). */
+  sensed: { beams: Record<string, BeamHit>; zones: Record<string, number>; zoneAges: Record<string, number>; zoneMarks: Record<string, Record<string, number>>; zoneMix: Record<string, ZoneMix>; weights: Record<string, number> }
   /** holder so step() can set the per-tick "used" flag that ctx.used() (a create-time closure) reads */
   inUsed: { used: boolean }
   /** holder for the scene's live conveyor speeds (partId → commanded speed), so ctx.conveyorRunning(id) - the
@@ -81,6 +90,8 @@ interface Instance {
   inConveyorSpeeds: { v: Record<string, number> }
   /** the rig's servo axes by joint name: commanded through ctx.servos, stepped after step(), posing their joints */
   servos: Map<string, Axis>
+  /** this tick's held-load reach per gripper (StepInput.gripWidths), for the robot controller */
+  heldWidths: { v: Record<string, number> | undefined }
 }
 
 /** A PLC tag value crossing the behavior boundary: BOOL or a number (INT/REAL). */
@@ -102,7 +113,7 @@ const NO_MARKS: Record<string, Record<string, number>> = Object.freeze({})
 const NO_MIX: Record<string, ZoneMix> = Object.freeze({})
 
 /**
- * The key a behavior's tag name is stored under. A direct address (`%qx100.0`, core/iecAddress.ts) is one
+ * The key a behavior's tag name is stored under. A direct address (`%qx100.0`, core/io/iecAddress.ts) is one
  * I/O point in any spelling, and the tag tables hold its canonical one, so a part whose tag was typed in
  * lower case still meets the PLC. Checked here, at every read and write, because not every way a tag
  * enters a scene goes through the scene's normalisation. Cached: a part reads the same few names every tick.
@@ -119,13 +130,14 @@ function tagKey(name: string): string {
 }
 
 /** A cargo-spawn request this tick (C-spawn); the host fulfills it after step(). */
-type SpawnReq = { part?: string; params?: Record<string, number | boolean | string>; kind?: 'box' | 'pallet' | 'tote'; size?: [number, number, number]; color?: [number, number, number]; mass?: number; offset?: [number, number, number] }
+type SpawnReq = { part?: string; params?: Record<string, number | boolean | string>; kind?: 'box' | 'pallet' | 'tote'; size?: [number, number, number]; color?: [number, number, number]; mass?: number; offset?: [number, number, number]; marks?: Record<string, CargoMark> }
 /** one ctx.wrap request: stretch-wrap the load in `zone` up to `upTo` m above the part origin */
 /** a mark a machine leaves on cargo (ctx.mark) */
 type CargoMark = number | boolean | string
 /** One product-state request (ctx.mark / dress / join / split), applied by the host in call order after the tick. */
 export type CargoOp =
   | { op: 'mark'; zone: string; key: string; value: CargoMark }
+  | { op: 'markHit'; beam: string; key: string; value: CargoMark }
   | { op: 'dress'; zone: string; id: string; material: string; opacity?: number; upTo?: number; web?: { link: string; offset: [number, number, number]; height: number } }
   | { op: 'join'; zone: string }
 const MAX_SPAWNS_PER_TICK = 8 // a buggy behavior can't flood the world in one tick
@@ -141,13 +153,34 @@ function readVec3(v: unknown): [number, number, number] | null {
   const c = finiteOrUndef(v[2])
   return a === undefined || b === undefined || c === undefined ? null : [a, b, c]
 }
+/** the first four entries of `v` as a unit quaternion, each read once, when all are finite and not all zero */
+function readQuat(v: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(v)) return null
+  const q = [finiteOrUndef(v[0]), finiteOrUndef(v[1]), finiteOrUndef(v[2]), finiteOrUndef(v[3])]
+  if (q.some((c) => c === undefined)) return null
+  const [x, y, z, w] = q as number[]
+  const len = Math.hypot(x!, y!, z!, w!)
+  return len > 1e-9 ? [x! / len, y! / len, z! / len, w! / len] : null
+}
 /** The servo axes of a rig's servo joints, limits resolved against this instance's params, each starting at its
  *  joint's rest value (clamped into its limits). Bad entries are skipped: validatePart reports them. */
-function buildServos(servosJson: string | undefined, params: Record<string, ParamValue>): Map<string, Axis> {
+/** Each posable array link's instance count for these params: the count the sim builds its instance bodies to. */
+function buildArrayCounts(arraysJson: string | undefined, params: Record<string, ParamValue>): Map<string, number> {
+  const counts = new Map<string, number>()
+  if (!arraysJson) return counts
+  for (const a of JSON.parse(arraysJson) as PosableArraySpec[]) counts.set(a.name, arrayInstanceDeltas(a.array, params as RigParams, undefined, a.showParam).length)
+  return counts
+}
+
+/** The rig's joints from create()'s jointsJson, or none. */
+function rigJointsOf(jointsJson: string | undefined): RigJoint[] {
+  if (!jointsJson) return []
+  const joints = JSON.parse(jointsJson) as RigJoint[]
+  return Array.isArray(joints) ? joints : []
+}
+
+function buildServos(joints: readonly RigJoint[], params: Record<string, ParamValue>): Map<string, Axis> {
   const servos = new Map<string, Axis>()
-  if (!servosJson) return servos
-  const joints = JSON.parse(servosJson) as RigJoint[]
-  if (!Array.isArray(joints)) return servos
   for (const j of joints) {
     const sv = j?.servo
     if (!sv || typeof j.name !== 'string' || !Number.isFinite(j.min) || !Number.isFinite(j.max)) continue
@@ -244,8 +277,12 @@ export interface BehaviorInput {
   zoneMarks?: Record<string, Record<string, number>>
   /** per zone, its count and summed age by product and by kind (ctx.zone's filter), keyed alike; absent when empty */
   zoneMix?: Record<string, ZoneMix>
+  /** kg resting on each load-cell link this tick (ctx.weight), keyed by link name; absent when the part has none */
+  weights?: Record<string, number>
   joints?: Record<string, number>
   grips?: Record<string, boolean>
+  /** each holding gripper's load reach along its X (m), for the robot controller's grip joint; not part of ctx */
+  gripWidths?: Record<string, number>
   used?: boolean
   /** the scene's live conveyor speeds (partId → commanded m/s or arc omega), for ctx.conveyorRunning(id) - the
    *  spawner "pause when conveyor stopped" interlock. Absent when the scene has no conveyors. */
@@ -269,7 +306,7 @@ export interface BehaviorOutput {
   /** Named display values the behavior published this tick (ctx.display) - what its own screens/labels show.
    *  Strings allowed (a display is shown on the part, never sent to a PLC). Keyed by display name. */
   displays: Record<string, number | boolean | string>
-  subPoses: Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>
+  subPoses: Record<string, SubPose>
   spawns: SpawnReq[]
   despawns: string[]
   /** product-state requests this tick (ctx.mark / dress / join / split), in call order. Present only when there are
@@ -280,6 +317,14 @@ export interface BehaviorOutput {
   /** ctx.setSurfaceSpeed: every conveying deck runs along its own local +X at this speed - or, as an array, each deck
    *  (in the rig's `conveys` link order) at its own, a missing entry standing still */
   deckSpeed?: number | number[]
+  /** ctx.setSurfaceSpeed(speed, link, i): each copy of a posable conveying array at its own speed along its own
+   *  local +X, by link, in copy order (0 = stopped). Present only when commanded this tick. */
+  copySpeeds?: Record<string, number[]>
+  /** a reactive part (definePart's `react`) that did not ask to be called again: the host calls it next when
+   *  something it is handed changes (partSleep.ts). Never set for a part with `step`. */
+  idle?: boolean
+  /** the part read a conveyor's speed this step (ctx.conveyorRunning / conveyorSpeed) */
+  readSpeeds?: boolean
 }
 
 const instances = new Map<number, Instance>()
@@ -330,9 +375,9 @@ function seedFrom(paramsJson: string): number {
   return h >>> 0
 }
 
-export function create(source: string, paramsJson = '{}', servosJson?: string): number {
+export function create(source: string, paramsJson = '{}', jointsJson?: string, arraysJson?: string): number {
   try {
-    // The one eval chokepoint for part code lives in core/partScript.ts, shared with the render/headless
+    // The one eval chokepoint for part code lives in core/parts/partScript.ts, shared with the render/headless
     // geometry evaluator so the two can never drift: the determinism scan rejects Date/Math.random/fetch
     // before the source runs, shadowed-global shims catch what the scan can't see, and each create() runs
     // a fresh top level so module-level closures stay instance-isolated. In-process here, which is not
@@ -349,7 +394,13 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
     const overrides = JSON.parse(paramsJson) as Record<string, ParamValue>
     const params = resolvePartParams(def.params, overrides)
     const rng = new Rng(seedFrom(JSON.stringify(params)))
-    const servos = buildServos(servosJson, params)
+    const rigJoints = rigJointsOf(jointsJson)
+    const servos = buildServos(rigJoints, params)
+    const robotDecl = robotDeclOf(def.robot)
+    const robot = robotDecl ? createRobot(robotDecl, rigJoints) : null
+    // the held loads' reach this tick, read by the robot controller's grip joint (ref-swapped each step)
+    const heldWidths: { v: Record<string, number> | undefined } = { v: undefined }
+    const arrayCounts = buildArrayCounts(arraysJson, params)
     const servoHandles: Record<string, Servo> = {}
     for (const [name, ax] of servos) servoHandles[name] = servoHandle(ax)
     Object.freeze(servoHandles)
@@ -361,20 +412,21 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
       lamps: {} as Record<string, boolean>,
       values: {} as Record<string, TagVal>,
       displays: {} as Record<string, number | boolean | string>,
-      subPoses: {} as Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>,
+      subPoses: {} as Record<string, SubPose>,
       spawns: [] as SpawnReq[],
       despawns: [] as string[],
       cargo: [] as CargoOp[],
       drive: null as { forward: number; turn: number } | null,
       arc: null as { cx: number; cz: number; omega: number } | null,
       deckSpeed: null as number | number[] | null,
+      copySpeeds: null as Record<string, number[]> | null,
     }
     // host tag tables by reference (cur = this tick, prev = last tick, driven = output ownership) - the
     // ctx closures below read through this box, so stepDirect retargets the references each tick (same
     // ref-swap pattern as inConveyorSpeeds) instead of copying tables per part per tick
     const tagsBox: { cur: Record<string, TagVal>; prev: Record<string, TagVal>; driven: Record<string, TagVal> } = { cur: {}, prev: {}, driven: {} }
     const readBoolTag = (v: TagVal | undefined): boolean => (typeof v === 'number' ? v !== 0 : (v ?? false))
-    const sensed: Instance['sensed'] = { beams: NO_BEAMS, zones: NO_COUNTS, zoneAges: NO_COUNTS, zoneMarks: NO_MARKS, zoneMix: NO_MIX }
+    const sensed: Instance['sensed'] = { beams: NO_BEAMS, zones: NO_COUNTS, zoneAges: NO_COUNTS, zoneMarks: NO_MARKS, zoneMix: NO_MIX, weights: NO_COUNTS }
     // the tally a zone filter picks out (ZoneFilter), or undefined for no usable filter: read field by field, so the
     // script's object is never kept
     const filtered = (zone: string, filter: unknown): ZoneTally | null | undefined => {
@@ -422,6 +474,8 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
       lampState[name] = v
       out.lamps[name] = v
     }
+    const again = { v: false }
+    const readSpeeds = { v: false }
     const ctx: MutableContext = {
       dt: 0,
       simTime: 0,
@@ -495,7 +549,17 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
         const omega = finiteOrUndef(opts?.omega)
         if (cx !== undefined && cz !== undefined && omega !== undefined) out.arc = { cx, cz, omega }
       },
-      setSurfaceSpeed: (speed: number | readonly number[]) => {
+      setSurfaceSpeed: (speed: number | readonly number[], link?: string, index?: number) => {
+        if (link !== undefined) {
+          // one copy (or, with no index, every copy) of a posable conveying array
+          const n = typeof link === 'string' ? (arrayCounts.get(link) ?? 0) : 0
+          const s = finiteOrUndef(speed as number)
+          if (n === 0 || s === undefined) return
+          const copies = ((out.copySpeeds ??= {})[link] ??= new Array<number>(n).fill(0))
+          if (index === undefined) copies.fill(s)
+          else if (typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < n) copies[index] = s
+          return
+        }
         if (Array.isArray(speed)) {
           const n = Math.min(Number(speed.length) >>> 0, MAX_DECK_SPEEDS)
           const deck: number[] = []
@@ -510,17 +574,35 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
         if (Number.isFinite(forward) && Number.isFinite(turn)) out.drive = { forward, turn }
       },
       setJoint: commandJoint,
-      setGrip: commandGrip,
+      setGrip: (name: string, on: boolean, index?: number) => {
+        if (index === undefined) return commandGrip(name, on)
+        // one copy of a posable array: it grips under the name link#index (an index outside the row is ignored)
+        const n = typeof name === 'string' ? (arrayCounts.get(name) ?? 0) : 0
+        if (typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < n) commandGrip(copyGripName(name, index), on)
+      },
       setEmissive: commandLamp,
-      setSubPose: (link: string, pose: { position?: [number, number, number]; rotation?: [number, number, number] }) => {
+      setSubPose: (link: string, pose: { position?: [number, number, number]; rotation?: [number, number, number]; quat?: [number, number, number, number] }, index?: number) => {
         if (typeof link !== 'string' || link === '' || link === '__proto__') return
-        const p: { position?: [number, number, number]; rotation?: [number, number, number] } = {}
+        const p: { position?: [number, number, number]; rotation?: [number, number, number]; quat?: [number, number, number, number] } = {}
         const position = readVec3(pose?.position)
         const rotation = readVec3(pose?.rotation)
+        const quat = readQuat(pose?.quat)
         if (position) p.position = position
-        if (rotation) p.rotation = rotation
-        out.subPoses[link] = p
+        if (quat) p.quat = quat
+        else if (rotation) p.rotation = rotation
+        const prev = out.subPoses[link]
+        if (index === undefined) {
+          out.subPoses[link] = prev?.instances ? { ...p, instances: prev.instances } : p
+          return
+        }
+        // one instance of a posable array: an index outside the row (or a link that is not a posable array) is ignored
+        const n = arrayCounts.get(link) ?? 0
+        if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= n) return
+        const sub = prev ?? (out.subPoses[link] = {})
+        const list = (sub.instances ??= new Array<null>(n).fill(null))
+        list[index] = p
       },
+      arrayCount: (link: string) => (typeof link === 'string' ? (arrayCounts.get(link) ?? 0) : 0),
       // typed property bags: `ctx.joints.shoulder = v` / `ctx.grips.hand = true`. Writes funnel through the
       // same validated command path as setJoint/setGrip; reads return the last-commanded state.
       joints: new Proxy(jointState, {
@@ -545,6 +627,7 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
         },
       }),
       servos: servoHandles,
+      robot: robot ? Object.freeze({ step: () => robot.step(ctx, { heldReach: (g: string) => heldWidths.v?.[g] }) }) : undefined,
       servo: (name: string) => (typeof name === 'string' && Object.hasOwn(servoHandles, name) ? servoHandles[name] : undefined),
       // closed-loop reads of the host-applied state (previous tick). Read-only: writes go through the
       // command bags (`ctx.joints` / `ctx.grips`); a write here is silently ignored, not an error.
@@ -569,6 +652,7 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
         const t = filtered(zone, filter)
         return t === undefined ? (sensed.zones[zone] ?? 0) : (t?.n ?? 0)
       },
+      weight: (link: string): number => sensed.weights[link] ?? 0,
       zoneAge: (zone: string, filter?: unknown): number => {
         const t = filtered(zone, filter)
         return t === undefined ? (sensed.zoneAges[zone] ?? 0) : (t?.age ?? 0)
@@ -580,6 +664,12 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
         if (typeof value !== 'number' && typeof value !== 'boolean' && typeof value !== 'string') return
         if (typeof value === 'number' && !Number.isFinite(value)) return
         out.cargo.push({ op: 'mark', zone, key, value })
+      },
+      markHit: (beam: string, key: string, value: CargoMark) => {
+        if (typeof beam !== 'string' || !beam || typeof key !== 'string' || !key) return
+        if (typeof value !== 'number' && typeof value !== 'boolean' && typeof value !== 'string') return
+        if (typeof value === 'number' && !Number.isFinite(value)) return
+        out.cargo.push({ op: 'markHit', beam, key, value })
       },
       marked: (zone: string, key: string): number => sensed.zoneMarks[zone]?.[key] ?? 0,
       dress: (zone: string, spec: { id?: unknown; material?: unknown; opacity?: unknown; upTo?: unknown; web?: { link?: unknown; offset?: unknown; height?: unknown } }) => {
@@ -612,8 +702,11 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
       // presence-keyed: the host hands in the controller's output tags projected exactly like the value
       // table, so this resolves scoped/absolute names identically to readTag
       tagDriven: (name: string) => tagsBox.driven[tagKey(name)] !== undefined,
-      writeTag: (name: string, value: boolean) => {
-        out.tags[tagKey(name)] = value === true
+      // a number goes the way writeNumber sends it; anything else that is not `true` writes FALSE
+      writeTag: (name: string, value: boolean | number) => {
+        if (typeof value === 'number') {
+          if (Number.isFinite(value)) out.tags[tagKey(name)] = value
+        } else out.tags[tagKey(name)] = value === true
       },
       readNumber: (name: string) => {
         const v = tagsBox.cur[tagKey(name)]
@@ -641,11 +734,21 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
       },
       // synchronous edge detection over the begin-of-tick tag tables (prev = last tick, cur = this tick).
       // No callbacks/refs - same value every part reads, so it stays deterministic + order-independent.
-      rising: (name: string) => readBoolTag(tagsBox.cur[name]) && !readBoolTag(tagsBox.prev[name]),
-      falling: (name: string) => !readBoolTag(tagsBox.cur[name]) && readBoolTag(tagsBox.prev[name]),
+      rising: (name: string) => {
+        const key = tagKey(name)
+        return readBoolTag(tagsBox.cur[key]) && !readBoolTag(tagsBox.prev[key])
+      },
+      falling: (name: string) => {
+        const key = tagKey(name)
+        return !readBoolTag(tagsBox.cur[key]) && readBoolTag(tagsBox.prev[key])
+      },
       used: () => inUsed.used,
+      again: () => {
+        again.v = true
+      },
       conveyorRunning: (id: string): boolean => {
         if (typeof id !== 'string' || id === '') return true // unset ⇒ no interlock
+        readSpeeds.v = true
         const s = inConveyorSpeeds.v[id]
         return s === undefined ? true : s !== 0 // dangling / non-conveyor ⇒ inert; only a real stopped conveyor ⇒ false
       },
@@ -675,6 +778,16 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
         if (offset) req.offset = offset
         const mass = finiteOrUndef(opts?.mass)
         if (mass !== undefined && mass > 0) req.mass = mass
+        // the facts it starts with, copied value by value like `params`
+        const given = opts?.marks
+        if (typeof given === 'object' && given !== null) {
+          const marks: Record<string, CargoMark> = {}
+          for (const k of Object.keys(given)) {
+            const v = (given as Record<string, unknown>)[k]
+            if (k && (typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))) marks[k] = v
+          }
+          if (Object.keys(marks).length > 0) req.marks = marks
+        }
         out.spawns.push(req)
       },
     }
@@ -683,7 +796,7 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
     // gave (a joint, a lamp), so an author's "start pose" would silently never happen; a throw would also leave the
     // half-built instance registered. At the first step it sees the real pose, params and tags, and its commands
     // stay in that tick's output unless step() overrides them.
-    instances.set(handle, { def, ctx, out, tags: tagsBox, measuredJoints, measuredGrips, sensed, inUsed, inConveyorSpeeds, servos, needsInit: typeof def.init === 'function' })
+    instances.set(handle, { def, ctx, out, tags: tagsBox, measuredJoints, measuredGrips, heldWidths, sensed, inUsed, inConveyorSpeeds, servos, again, readSpeeds, needsInit: typeof def.init === 'function' })
     return handle
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e))
@@ -693,7 +806,7 @@ export function create(source: string, paramsJson = '{}', servosJson?: string): 
 
 /** The joint/gripper names a part declared (definePart({ joints, grippers })) - for buildPackage to
  *  cross-check them against the rig geometry, making the typed-bag's "typo = error" promise true at build. */
-export function declarations(handle: number): { joints: string[]; grippers: string[]; lamps: string[]; servos: string[]; interactive: boolean; hasStep: boolean; hasInit: boolean; useParam?: string; snap?: SnapSpec; unit?: UnitLoadDecl } {
+export function declarations(handle: number): { joints: string[]; grippers: string[]; lamps: string[]; servos: string[]; interactive: boolean; hasStep: boolean; hasBoth?: boolean; hasInit: boolean; useParam?: string; snap?: SnapSpec; unit?: UnitLoadDecl; robot?: RobotDecl } {
   const inst = instances.get(handle)
   if (!inst) {
     fail(`oip-behavior: bad handle ${handle}`)
@@ -708,17 +821,20 @@ export function declarations(handle: number): { joints: string[]; grippers: stri
   const useParam = hostCopy(def.useParam)
   const snap = hostCopy((def as { snap?: SnapSpec }).snap)
   const unit = hostCopy(def.unit)
+  const robot = robotDeclOf(def.robot)
   return {
     joints: names(def.joints),
     grippers: names(def.grippers),
     lamps: names(def.lamps),
     servos: names(def.servos),
     interactive: def.interactive === true,
-    hasStep: typeof def.step === 'function',
+    hasStep: typeof def.step === 'function' || typeof def.react === 'function',
+    hasBoth: typeof def.step === 'function' && typeof def.react === 'function',
     hasInit: typeof def.init === 'function',
     ...(useParam !== undefined ? { useParam } : {}),
     ...(snap ? { snap } : {}),
     ...(unit ? { unit } : {}),
+    ...(robot ? { robot } : {}),
   }
 }
 
@@ -740,14 +856,17 @@ export function geometry(handle: number, paramsJson = '{}', ctxJson = '{}'): str
     fail(`oip-behavior: bad handle ${handle}`)
     return ''
   }
-  if (!inst.def.geometry) return '' // no procedural geometry - fully manifest-described
+  const tool = robotDeclOf(inst.def.robot)?.tool
+  if (!inst.def.geometry && !tool) return '' // no procedural geometry - fully manifest-described
   try {
     const overrides = JSON.parse(paramsJson) as Record<string, ParamValue>
     const params = resolvePartParams(inst.def.params, overrides) as ParamsOf<ParamSchema>
-    const out = inst.def.geometry(createGeometryBuilder(), params, JSON.parse(ctxJson) as GeometryContext)
+    const out = inst.def.geometry ? inst.def.geometry(createGeometryBuilder(), params, JSON.parse(ctxJson) as GeometryContext) : []
     // normalize to MeshPart[] (a bare description = one role-less part) in the current spelling, so render + sim
-    // see one shape whatever format the script was written for (core/geometryEval canonicalMeshParts)
-    const parts = canonicalMeshParts(Array.isArray(out) ? out : [{ desc: out }])
+    // see one shape whatever format the script was written for (core/geometry/geometryEval canonicalMeshParts); a
+    // robot's tool, drawn by the host, follows the part's own meshes
+    const own = Array.isArray(out) ? out : [{ desc: out }]
+    const parts = canonicalMeshParts(tool ? [...own, ...robotToolParts(createGeometryBuilder(), params, tool)] : own)
     return JSON.stringify(parts)
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e))
@@ -817,6 +936,7 @@ export function stepDirect(handle: number, input: BehaviorInput, dt: number): Be
     sn.zoneAges = input.zoneAges ?? NO_COUNTS
     sn.zoneMarks = input.zoneMarks ?? NO_MARKS
     sn.zoneMix = input.zoneMix ?? NO_MIX
+    sn.weights = input.weights ?? NO_COUNTS
     const t1 = timed ? now() : 0
     // refresh joint feedback in place (the proxy reads this object). Merge, not replace: the host sends the
     // host-applied pose per joint each tick, and a joint not reported retains its last measured value.
@@ -831,6 +951,7 @@ export function stepDirect(handle: number, input: BehaviorInput, dt: number): Be
     if (input.grips) {
       for (const k of Object.keys(input.grips)) inst.measuredGrips[k] = input.grips[k] === true
     }
+    inst.heldWidths.v = input.gripWidths
     inst.inUsed.used = input.used === true
     inst.inConveyorSpeeds.v = input.conveyorSpeeds ?? EMPTY_SPEEDS // ref-swap (host rebuilds the map once per tick)
     inst.out.sv[0] = inst.out.sv[1] = inst.out.sv[2] = 0
@@ -849,6 +970,9 @@ export function stepDirect(handle: number, input: BehaviorInput, dt: number): Be
     inst.out.drive = null
     inst.out.arc = null
     inst.out.deckSpeed = null
+    inst.out.copySpeeds = null
+    inst.again.v = false
+    inst.readSpeeds.v = false
     const t2 = timed ? now() : 0
 
     if (inst.needsInit) {
@@ -856,7 +980,7 @@ export function stepDirect(handle: number, input: BehaviorInput, dt: number): Be
       inst.def.init!(ctx)
     }
     // dt is also passed positionally for behavior code stored before format 4, whose step(ctx, dt) read it there
-    ;(inst.def.step as (c: typeof ctx, dt: number) => void)(ctx, dt)
+    ;((inst.def.react ?? inst.def.step) as (c: typeof ctx, dt: number) => void)(ctx, dt)
     // the servos run after the tick's commands, so a command takes effect this tick, and each poses its joint
     for (const [name, ax] of inst.servos) {
       stepAxis(ax, dt)
@@ -886,6 +1010,11 @@ export function stepDirect(handle: number, input: BehaviorInput, dt: number): Be
       drive: o.drive ?? undefined,
       arc: o.arc ?? undefined,
       deckSpeed: o.deckSpeed ?? undefined,
+      copySpeeds: o.copySpeeds ?? undefined,
+      // a servo is the host's to move every step, so a part with one is never idle
+      // (both absent when false, like the fields above: the string boundary's output is then what it was)
+      idle: inst.def.react !== undefined && !inst.again.v && inst.servos.size === 0 ? true : undefined,
+      readSpeeds: inst.readSpeeds.v ? true : undefined,
     }
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e))

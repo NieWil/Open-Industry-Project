@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { resolvedBoxSize, resolvedCylinder, resolvedOffset } from '../../core/rigPose'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { instantiatePartScript, resolvePartParams } from '../../core/partScript'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
-import type { ParamValue } from '../../core/partApi'
+import { resolvedBoxSize, resolvedCylinder, resolvedOffset } from '../../core/rig/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { instantiatePartScript, resolvePartParams } from '../../core/parts/partScript'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
+import type { ParamValue } from '../../core/parts/partApi'
 import { examplePart, type RigGeo } from './examplePart'
 const { geometry: TURNTABLE_RIG, behavior: TURNTABLE_BEHAVIOR } = examplePart<RigGeo>('oip.turntable-conveyor')
 
@@ -12,7 +13,7 @@ const { geometry: TURNTABLE_RIG, behavior: TURNTABLE_BEHAVIOR } = examplePart<Ri
 // rotate → align → convey. This pins the rig - a width-parametric deck
 // disc on a continuous revolute Y 'rotate' joint, a hidden `conveys` lane box on top (the cargo surface),
 // decorative drum + rollers that rotate with the deck, static legs - and the committed behavior's slew/convey
-// logic: shortest-path ±180° wrap, convey-only-when-settled along the deck's current yaw, the comms angle/speed/
+// logic: shortest-path ±180° wrap, convey-only-when-settled along the deck's current yaw, the angle/speed/
 // done tags, and the one-shot angle-tag seed write.
 
 const geo = TURNTABLE_RIG
@@ -208,7 +209,7 @@ describe('Turntable custom-part rig - rotating kinematic deck + conveying lane',
 })
 
 // ---- behavior logic, driven from the real committed source ------------------------------------------------
-// A minimal PartContext mock over core/partScript (the one compile chokepoint): enough surface for the
+// A minimal PartContext mock over core/parts/partScript (the one compile chokepoint): enough surface for the
 // turntable behavior - params, dt, the joints bag, tag reads/writes, and the two surface-velocity commands.
 
 interface Tick {
@@ -241,6 +242,8 @@ function turntable(overrides: Record<string, ParamValue>, tags: Record<string, n
     grips,
     measured: { joints: {}, grips: {} },
     readTag: (n: string) => { const v = tags[n]; return typeof v === 'number' ? v !== 0 : v === true },
+    // a tag the test sets stands for a program driving it (an enable tag counts only while driven)
+    tagDriven: (n: string) => n in tags,
     readNumber: (n: string) => { const v = tags[n]; return typeof v === 'number' ? v : v === true ? 1 : 0 },
     writeTag: (n: string, v: boolean) => { out[n] = v === true },
     writeNumber: (n: string, v: number) => { out[n] = v },
@@ -254,7 +257,7 @@ function turntable(overrides: Record<string, ParamValue>, tags: Record<string, n
     sv = null
     arc = null
     out = {}
-    def.step(ctx as never)
+    def.step!(ctx as never)
     ctx.simTime += ctx.dt
     return { joint: joints.rotate, sv, arc, tags: out, gripped: grips.deck === true }
   }
@@ -263,7 +266,7 @@ function turntable(overrides: Record<string, ParamValue>, tags: Record<string, n
 
 describe('Turntable behavior - slew + convey (the committed behavior source)', () => {
   it('wraps the slew delta to ±180°: commanded 350° from 0 takes the −10° path (shortest-path wrap)', () => {
-    const t = turntable({ enableComms: true, angleTag: 'tt.angle', doneTag: 'tt.done' }, { 'tt.angle': 350 })
+    const t = turntable({ angleTag: 'tt.angle', doneTag: 'tt.done' }, { 'tt.angle': 350 })
     t.step() // seed tick: target = current angle (0) → settled, tag seeded
     const arm = t.step() // first PLC-commanded tick: the deck grips its load and holds still for one tick
     expect(arm.gripped).toBe(true)
@@ -284,7 +287,7 @@ describe('Turntable behavior - slew + convey (the committed behavior source)', (
   })
 
   it('conveys only when settled: the slew holds linear velocity at 0 and spins the platter (arc) instead', () => {
-    const t = turntable({ enableComms: true, angleTag: 'a', doneTag: 'd' }, { a: 90 })
+    const t = turntable({ angleTag: 'a', doneTag: 'd' }, { a: 90 })
     const seedTick = t.step() // settled at 0 (target seeds from the current angle) → conveying along +X
     expect(seedTick.arc).toBeNull()
     expect(seedTick.sv!.x).toBeCloseTo(1, 6) // default speed 1 m/s along the deck forward (= part +X at 0°)
@@ -315,7 +318,7 @@ describe('Turntable behavior - slew + convey (the committed behavior source)', (
 
   it('speedTag (REAL) overrides the speed param for the conveyed velocity (gd speed tag)', () => {
     const tags: Record<string, number | boolean> = { a: 0, s: 2.5 }
-    const t = turntable({ enableComms: true, angleTag: 'a', speedTag: 's', speed: 1 }, tags)
+    const t = turntable({ angleTag: 'a', speedTag: 's', speed: 1 }, tags)
     const first = t.step() // settled at 0 from the start → conveying
     expect(first.sv!.x).toBeCloseTo(2.5, 6) // the tag, not the 1 m/s param
     tags.s = -1.5 // PLC reverses the rollers
@@ -323,7 +326,7 @@ describe('Turntable behavior - slew + convey (the committed behavior source)', (
   })
 
   it('seeds the angle tag once at sim start with the current target (gd tag-group init), then read-only', () => {
-    const t = turntable({ enableComms: true, angleTag: 'a', doneTag: 'd' }, { a: 0 })
+    const t = turntable({ angleTag: 'a', doneTag: 'd' }, { a: 0 })
     const first = t.step()
     expect(first.tags.a).toBe(0) // the one-shot seed write (a REAL, the current target angle)
     const second = t.step()
@@ -331,7 +334,7 @@ describe('Turntable behavior - slew + convey (the committed behavior source)', (
     expect(second.tags.d).toBe(true)
   })
 
-  it('default (comms + free-run off): slews to the manual deckAngleDeg and holds there (built-in parity)', () => {
+  it('default (no tags named): slews to the manual deckAngleDeg and holds there (built-in parity)', () => {
     const t = turntable({ deckAngleDeg: 45, rotationSpeedDeg: 90 }, {})
     let tick = t.step()
     for (let i = 0; i < 120; i++) tick = t.step() // 90°/s reaches 45° in 0.5 s, well inside 2 s
@@ -378,7 +381,7 @@ describe('Turntable behavior - slew + convey (the committed behavior source)', (
     for (let i = 0; i < 900 && tick.joint! < 90 * D2R - 1e-9; i++) tick = t.step()
     expect(tick.joint!).toBeCloseTo(90 * D2R, 9) // landed on the commanded angle
     expect(tick.gripped).toBe(true) // still held on the landing tick, so that pose reaches the load
-    expect(tick.tags).toEqual({}) // (no comms tags bound in this instance)
+    expect(tick.tags).toEqual({}) // (no tags named in this instance)
 
     // it lets go once the deck has arrived - within a tick or two, since a slew that accumulates exactly
     // onto the target takes one extra tick to register the landing

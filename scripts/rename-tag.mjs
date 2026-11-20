@@ -5,7 +5,7 @@
 //   --pou <name>   the PROGRAM, FUNCTION_BLOCK or FUNCTION that declares the tag; leave it out for a top-level
 //                  (controller) tag
 //
-// The same rename as the PLC panel's F2 and the agent door's rename_tag (src/editor/tagRename.ts): every spelling of
+// The same rename as the PLC panel's F2 and the agent door's rename_tag (src/editor/program/tagRename.ts): every spelling of
 // the tag in the program and nothing else, refused with the reason when a name would collide. Editing the .st file by
 // hand changes the code and leaves parts wired to the old name. Tests are not changed: it warns about each test that
 // still names the old tag.
@@ -50,8 +50,8 @@ try {
   const proj = await openProgramProject(vite, folder)
   const p = proj.project
   const { isKnownDialect } = await vite.ssrLoadModule('/src/core/dialect.ts')
-  const { planTagRename, testsNamingTag } = await vite.ssrLoadModule('/src/editor/tagRename.ts')
-  const { DEFAULT_SCAN_MS } = await vite.ssrLoadModule('/src/editor/stProgram.ts')
+  const { planTagRename, testsNamingTag } = await vite.ssrLoadModule('/src/editor/program/tagRename.ts')
+  const { DEFAULT_SCAN_MS } = await vite.ssrLoadModule('/src/editor/program/stProgram.ts')
   if (!p.stProgram) throw Object.assign(new Error(`${folder} has no PLC program`), { exit: 1 })
   if (!isKnownDialect(p.stDialect)) throw Object.assign(new Error(`the program is in a dialect this version does not run ("${p.stDialect}"), so its tags cannot be renamed`), { exit: 1 })
   const plan = planTagRename(p.scene, p.stProgram, p.controller ?? null, p.stScanMs ?? DEFAULT_SCAN_MS, pou, from, to)

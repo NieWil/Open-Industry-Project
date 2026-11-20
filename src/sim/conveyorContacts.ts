@@ -2,7 +2,7 @@
 // listener (the ?jsconveyor / stock-build fallback) and the native listener's facet table. ConveyorFacets (conveyorFacets.ts) owns
 // the conveyor maps and the table; everything here reads or writes what it is handed.
 import type Jolt from 'jolt-physics'
-import type { ConveyorEntry } from '../core/collisionShapes'
+import type { ConveyorEntry } from '../core/geometry/collisionShapes'
 import type { JoltModule } from './worldTypes'
 
 // Ghost (internal-edge) collision filtering. Each conveyor's running surface is many separate static convex
@@ -44,8 +44,9 @@ export const GHOST_RAM_UP_DOT = Math.cos(Math.PI / 4) // shallow-ram gate: <= co
 export const FRICTION_COUPLING = 1
 
 // Native ConveyorContactListener facet table (forked jolt-physics build). Layout per slot:
-// [kind (0 unused / 1 linear / 2 arc), vx, vy, vz, omega, cx, cz, nx, ny, nz, fx, fy, fz, x3] - 16
-// float64s. The velocity fields are mirrored from ConveyorEntry by ConveyorFacets.sync each step;
+// [kind (0 unused / 1 linear / 2 arc), vx, vy, vz, omega, cx, cz, nx, ny, nz, fx, fy, fz, friction, x2] - 16
+// float64s. The velocity and friction fields are mirrored from ConveyorEntry by ConveyorFacets.sync each step
+// (friction 0 = none: the body's applies, which for a merged deck is its lowest member's);
 // the axes (surface normal, flow) are body-local and therefore static, so they are written once at
 // registration. A conveyor body advertises its block in its 32-bit user data: bit 31 tag, bits
 // 12..30 base slot, bits 0..11 entry count (count 0 = gates only, e.g. a conveying rig's frame rail).
@@ -199,6 +200,10 @@ export function createConveyorContactListener(
     // Driven facets only, mirroring the native listener: a registered-but-undriven body (a
     // conveying rig's frame rail, empty entry list) resolves to no entry and stays uncoupled.
     if (e1 || e2) settings.mFrictionCoupling = FRICTION_COUPLING
+    // A facet with its own friction (a merged deck's member) combines it with the cargo's as Jolt combines two
+    // bodies', in place of the deck body's single value.
+    if (e1?.friction !== undefined) settings.mCombinedFriction = Math.sqrt(e1.friction * body2.GetFriction())
+    else if (e2?.friction !== undefined) settings.mCombinedFriction = Math.sqrt(e2.friction * body1.GetFriction())
   }
   const listener = new J.ContactListenerJS()
   listener.OnContactValidate = () => J.ValidateResult_AcceptAllContactsForThisBodyPair
@@ -249,19 +254,24 @@ export function syncFacetBlock(t: Float64Array | null, entries: readonly Conveyo
   if (!t) return
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i]
-    if (!e) continue
-    const o = (base + i) * FACET_STRIDE
-    if (e.kind === 'linear') {
-      t[o] = 1
-      t[o + 1] = e.vx
-      t[o + 2] = e.vy
-      t[o + 3] = e.vz
-    } else {
-      t[o] = 2
-      t[o + 4] = e.omega
-      t[o + 5] = e.cx
-      t[o + 6] = e.cz
-    }
+    if (e) syncFacet(t, e, base + i)
+  }
+}
+
+/** One entry's live values into its slot of the facet table. */
+export function syncFacet(t: Float64Array, e: ConveyorEntry, slot: number): void {
+  const o = slot * FACET_STRIDE
+  t[o + 13] = e.friction ?? 0
+  if (e.kind === 'linear') {
+    t[o] = 1
+    t[o + 1] = e.vx
+    t[o + 2] = e.vy
+    t[o + 3] = e.vz
+  } else {
+    t[o] = 2
+    t[o + 4] = e.omega
+    t[o + 5] = e.cx
+    t[o + 6] = e.cz
   }
 }
 

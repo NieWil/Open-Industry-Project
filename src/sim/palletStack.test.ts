@@ -1,4 +1,4 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 // A stack of empty pallets must stand.
 //
 // If a pallet's collider is a deck slab on nine blocks that stop at the deck's underside, each pallet in a stack
@@ -16,9 +16,9 @@ import type { PackageManifest } from '../core/partPackage'
 
 import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
-import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/partPackage'
-import { registerPackage } from '../core/partRegistry'
-import { createSdkPart } from '../core/scene'
+import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/parts/partPackage'
+import { registerPackage } from '../core/parts/partRegistry'
+import { createSdkPart } from '../core/scene/scene'
 import { PALLET_SIZE, SCENE_VERSION } from '../core/types'
 import { PALLET_STANDARDS } from '../core/pallet'
 import type { PartInstance } from '../core/types'

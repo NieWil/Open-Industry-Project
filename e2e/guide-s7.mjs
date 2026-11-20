@@ -6,7 +6,7 @@
 // and each label, default and status line the page quotes is looked up on the page first.
 //
 //   step 2  the parts' Comms fields set through the Inspector, to the page's addresses
-//   step 4  External PLC... from the palette; "S7 PUT/GET"; the CPU, port, rack and slot defaults; the PUT/GET reminder;
+//   step 4  PLC Controllers... from the palette; "S7 PUT/GET"; the CPU, port, rack and slot defaults; the PUT/GET reminder;
 //           the two points it lists; the consent prompt's wording, read from the shell's source
 //   step 5  Play with nothing listening waits and says so; a wrong slot is refused with the page's advice; PUT/GET off
 //           names the checkbox and holds the belt; ticking it (the stand-in allowing PUT/GET) mid-run lets the belt
@@ -14,7 +14,7 @@
 //   step 6  the eye moved to the page's data block address and the program to the block: left optimized (TIA Portal's
 //           default) the page's message names it and the belt never starts; unoptimized, the box stops at the eye
 //
-// What it does not do: drive TIA Portal or a real CPU. The CPU is src/plc/s7FakeCpu.ts, the unit tests' strict stand-in
+// What it does not do: drive TIA Portal or a real CPU. The CPU is src/plc/link/s7FakeCpu.ts, the unit tests' strict stand-in
 // (rack and slot checked at the COTP connect, the PDU limit, bit writes, PUT/GET off refused with 0x8104), served
 // over TCP here, with the page's program transcribed onto its memory. So what the page says the CPU needs, and that a real
 // CPU answers PUT/GET off with 0x8104 and a wrong slot at the connect, are as believed as src/plc/DEVICE-IO.md says
@@ -85,7 +85,7 @@ async function statusUntil(page, test, timeoutMs) {
 /** The unit tests' strict fake S7-1200, on a TCP port of this machine, running the page's program every 10 ms. */
 async function standInCpu({ run: out, eye: input }) {
   const vite = await createVite({ configFile: false, root: ROOT, logLevel: 'error', server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true } })
-  const { FakeS7Cpu } = await vite.ssrLoadModule('/src/plc/s7FakeCpu.ts')
+  const { FakeS7Cpu } = await vite.ssrLoadModule('/src/plc/link/s7FakeCpu.ts')
   await vite.close()
   // step 6's data block, as TIA Portal makes a new one: optimized
   const cpu = new FakeS7Cpu({ rack: 0, slot: 1, size: 256, putGet: false, dbs: dbEye ? { [Number(dbEye[1])]: { size: 16, optimized: true } } : {} })

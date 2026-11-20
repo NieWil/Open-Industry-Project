@@ -4,7 +4,7 @@
  * between two copies of the same project, where there is no adversary.
  *
  * The Electron shell carries an identical copy (apps/desktop/projectFolderIo.cjs) because it checks
- * core/folderSync.ts `FolderWriteOp.expect` against the file on disk. Both are pinned to the same vectors by their
+ * core/project/folderSync.ts `FolderWriteOp.expect` against the file on disk. Both are pinned to the same vectors by their
  * tests, so they cannot drift apart silently.
  */
 export function hashText(text: string): string {
@@ -23,7 +23,7 @@ export function hashText(text: string): string {
 }
 
 /**
- * The same hash over raw BYTES, for a binary file in a project folder (a part's asset file, core/partAssets.ts). A
+ * The same hash over raw BYTES, for a binary file in a project folder (a part's asset file, core/parts/partAssets.ts). A
  * `b` in front keeps it from ever equalling a text hash, so a file that changes kind reads as changed. The Electron
  * shell carries an identical copy, pinned by the same vectors, like {@link hashText}.
  */

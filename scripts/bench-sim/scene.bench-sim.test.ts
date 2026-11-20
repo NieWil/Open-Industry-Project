@@ -20,15 +20,15 @@ import { createRequire } from 'node:module'
 import type initJolt from 'jolt-physics'
 import { it } from 'vitest'
 import { dialectRefusal, isKnownDialect } from '../../src/core/dialect'
-import { registerPackage, registerScenePackages, setBuiltInPackages } from '../../src/core/partRegistry'
-import type { ProjectJSON } from '../../src/core/project'
-import { isZipData, oipBytesToProject } from '../../src/core/projectArchive'
-import { folderFilesToProject } from '../../src/core/projectFolder'
-import type { ProjectFolderFile } from '../../src/core/projectFolder'
-import { bundledPackagesFromData } from '../../src/editor/bundledPackageData'
+import { registerPackage, registerScenePackages, setBuiltInPackages } from '../../src/core/parts/partRegistry'
+import type { ProjectJSON } from '../../src/core/project/project'
+import { isZipData, oipBytesToProject } from '../../src/core/project/projectArchive'
+import { folderFilesToProject } from '../../src/core/project/projectFolder'
+import type { ProjectFolderFile } from '../../src/core/project/projectFolder'
+import { bundledPackagesFromData } from '../../src/editor/parts/bundledPackageData'
 import { controllerFor, runnableSource } from '../../src/plc/controller'
 import { setScanEngine, type ScanEngine } from '../../src/plc/interpreter'
-import { LocalPlcLink } from '../../src/plc/plcLink'
+import { LocalPlcLink } from '../../src/plc/link/plcLink'
 import { wiredBindings } from '../../src/plc/wiring'
 import { PlcHost } from '../../src/sim/plcHost'
 import { formatPartDiagnostics, validatePart } from '../../src/sim/validatePart'
@@ -70,7 +70,7 @@ function bakePart(manifestJson: string, behaviorJs: string): { package: NonNulla
 
 async function loadProject(target: string): Promise<ProjectJSON> {
   // the app's built-ins, declared before the project is read: format 3 names them by id and keeps no copy
-  // (core/project.ts), and they are the live copy of their ids, as in the app (bundledExamples.ts)
+  // (core/project/project.ts), and they are the live copy of their ids, as in the app (bundledExamples.ts)
   const builtIns = bundledPackagesFromData()
   for (const pkg of builtIns) registerPackage(pkg, true)
   setBuiltInPackages(builtIns)

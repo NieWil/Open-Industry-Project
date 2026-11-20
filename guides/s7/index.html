@@ -22,12 +22,13 @@
     <meta property="og:image" content="https://www.openindustryproject.org/og-image.jpg?v=20261013" />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- A hand-written page, unlike /plc/. Every label, default and status line below is read from the app (editor/components/ExternalPlcSection.tsx, editor/externalPlc.ts, editor/s7Link.ts, plc/s7Client.ts, core/s7Io.ts), and e2e/guide-s7.mjs follows the page against a strict stand-in CPU (plc/s7FakeCpu.ts). Change those and this goes stale. -->
+    <!-- A hand-written page, unlike /plc/. Every label, default and status line below is read from the app (editor/components/plc/ExternalPlcSection.tsx, editor/links/externalPlc.ts, editor/links/s7Link.ts, plc/link/s7Client.ts, core/io/s7Io.ts), and e2e/guide-s7.mjs follows the page against a strict stand-in CPU (plc/link/s7FakeCpu.ts). Change those and this goes stale. -->
 
     <link rel="preload" href="/fonts/plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
 
     <link rel="stylesheet" href="/src/site/site.css" />
+    <script type="module" src="/src/site/copyCode.js"></script>
   </head>
 
   <body class="doc">
@@ -37,7 +38,7 @@
         <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
         <nav class="nav-links" aria-label="Site">
           <a href="/plc/">PLC reference</a>
-          <a href="/guides/">Connection guides</a>
+          <a href="/guides/">Guides</a>
           <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
         <a class="btn btn-sm" href="/app/">Open the editor</a>
@@ -95,8 +96,7 @@
       <div class="wrap">
         <h2>2. Wire the parts to addresses</h2>
         <p>
-          Select each part, and in the Inspector's <span class="ui">Comms</span> group tick
-          <span class="ui">Enable Comms</span>, then type its address:
+          Select each part, and in the Inspector's <span class="ui">Comms</span> group type its address:
         </p>
         <div class="scroll-x">
           <table class="map">
@@ -108,8 +108,8 @@
           </table>
         </div>
         <figure class="shot">
-          <img src="img/inspector-comms.webp" width="395" height="128" loading="lazy" decoding="async"
-            alt="The Inspector's Comms group for the Photo Eye: Enable Comms ticked and Presence Tag set to %IX100.0." />
+          <img src="img/inspector-comms.webp" width="395" height="94" loading="lazy" decoding="async"
+            alt="The Inspector's Comms group for the Photo Eye, with Presence Tag set to %IX100.0." />
           <figcaption>The photo eye's Comms group, wired to the CPU's input I100.0.</figcaption>
         </figure>
         <p>
@@ -190,7 +190,7 @@
           </table>
         </div>
         <p>and one line in <b>Main [OB1]</b>, created in SCL (in LAD it is a normally closed contact on <code>Eye</code> driving a coil on <code>Run</code>):</p>
-        <pre class="code" translate="no"><code>"Run" := NOT "Eye";</code></pre>
+        <pre class="code" translate="no" data-copy><code>"Run" := NOT "Eye";</code></pre>
 
         <h3>3c. Download it</h3>
         <p>
@@ -204,10 +204,10 @@
     <section class="section" id="connect">
       <div class="wrap">
         <h2>4. Point the simulator at the CPU</h2>
-        <p>Open <span class="ui">Simulation &gt; External PLC…</span> and set:</p>
+        <p>Open <span class="ui">Simulation &gt; PLC Controllers…</span> and set:</p>
         <ol class="steps">
           <li><span class="ui">Runs on</span>: <b>An external PLC</b>.</li>
-          <li><span class="ui">PLC connection</span>: <b>S7 PUT/GET</b>.</li>
+          <li>Under it, how the PLC connects: <b>S7 PUT/GET</b>.</li>
           <li><span class="ui">CPU</span>: the CPU's IP address from step 3a. It starts at <b>192.168.0.1</b>, a new CPU's address.</li>
           <li><span class="ui">Port</span>: <b>102</b>, the port every S7 CPU answers on.</li>
           <li><span class="ui">Rack</span>: <b>0</b> and <span class="ui">Slot</span>: <b>1</b>, right for every S7-1200 and S7-1500.</li>
@@ -217,8 +217,8 @@
           <code>%QX100.0&nbsp;&nbsp;Q100.0&nbsp;&nbsp;read from the PLC</code>.
         </p>
         <figure class="shot">
-          <img src="img/external-plc-s7.webp" width="680" height="615" loading="lazy" decoding="async"
-            alt="The External PLC settings: Runs on An external PLC, PLC connection S7 PUT/GET, the CPU, Port, Rack 0 and Slot 1, the reminder to permit PUT/GET in TIA Portal, and the list: %IX100.0 I100.0 written to the PLC and %QX100.0 Q100.0 read from the PLC." />
+          <img src="img/external-plc-s7.webp" width="680" height="523" loading="lazy" decoding="async"
+            alt="The External PLC settings: Runs on An external PLC, connecting with S7 PUT/GET, the CPU, Port, Rack 0 and Slot 1, the reminder to permit PUT/GET in TIA Portal, and the list: %IX100.0 I100.0 written to the PLC and %QX100.0 Q100.0 read from the PLC." />
           <figcaption>Set up for S7 PUT/GET, with the two addresses it will write and read.</figcaption>
         </figure>
         <p>
@@ -266,7 +266,7 @@
           <li>Turn off optimized block access for the data block, so its variables have fixed byte offsets (Siemens' documentation shows where), and compile. <code>Eye</code> is then at offset <b>0.0</b>.</li>
           <li>Read it in <b>Main [OB1]</b> instead of the input (the data block's name in place of <code>"DB1"</code> if you gave it one):</li>
         </ol>
-        <pre class="code" translate="no"><code>"Run" := NOT "DB1".Eye;</code></pre>
+        <pre class="code" translate="no" data-copy><code>"Run" := NOT "DB1".Eye;</code></pre>
         <ol class="steps">
           <li>Download, then rewire the photo eye in the simulator to the data block, in the S7 data-block spelling, without the <code>%</code>:</li>
         </ol>
@@ -337,7 +337,7 @@
           <div>
             <h4>Explore</h4>
             <ul>
-              <li><a href="/guides/">All connection guides</a></li>
+              <li><a href="/guides/">All guides</a></li>
               <li><a href="/guides/plc-server/">Guide: connect a PLC that serves its I/O (Modbus TCP, OPC UA)</a></li>
               <li><a href="/guides/ads/">Guide: connect a TwinCAT PLC over ADS</a></li>
               <li><a href="/guides/reference/">Reference: defaults, address rules, timings</a></li>

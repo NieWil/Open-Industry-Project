@@ -47,7 +47,7 @@ const state = (page) => page.evaluate(() => {
   v.scene.traverse((o) => { if (!g && o.userData?.partId === 'plat') g = o })
   g?.updateMatrixWorld(true)
   let deckMeshes = 0
-  // the deck link's own children (rig.ts deck-cut pool: one full slab, or the strips round a notch). Counted by
+  // the deck link's own children (rigLayout.ts layoutDeckCut: one full slab, or the strips round a notch). Counted by
   // link, not by height: the platform's geometry() hardware hangs off the part root at the deck plane too.
   g?.traverse((o) => { if (o.isMesh && o.parent?.userData?.linkName === 'deck' && Math.abs(o.matrixWorld.elements[13] - 2.397) < 0.01 && o.scale.x > 0.1) deckMeshes++ })
   return {

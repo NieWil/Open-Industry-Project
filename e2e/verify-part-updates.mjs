@@ -56,8 +56,8 @@ try {
   // ── plant: a project whose copies of two built-ins are older than this app's ─────────────────────
   const planted = await page.evaluate(
     async ([old, mine]) => {
-      const { partFingerprint } = await import('/src/core/partOrigin.ts')
-      const { PROJECT_VERSION } = await import('/src/core/project.ts')
+      const { partFingerprint } = await import('/src/core/parts/partOrigin.ts')
+      const { PROJECT_VERSION } = await import('/src/core/project/project.ts')
       const s = window.__oip.store.getState()
       const [a, b] = ['oip.belt-conveyor', 'oip.roller-conveyor'].map((id) => s.bundledPackages.find((p) => p.id === id))
       if (!a || !b) return null
@@ -104,7 +104,7 @@ try {
   const rowB = page.locator(`[data-testid="part-updates-row"][data-package-id="${planted.b}"]`)
   const rowA = page.locator(`[data-testid="part-updates-row"][data-package-id="${planted.a}"]`)
   check('...saying which one this project changed too', (await rowB.innerText()).includes('changed in this project too') && !(await rowA.innerText()).includes('changed in this project too'))
-  // what each update changes (core/partChanges.ts): the dropped signal first, as breaking, then the script
+  // what each update changes (core/parts/partChanges.ts): the dropped signal first, as breaking, then the script
   const impacts = await rowA.locator('[data-testid="part-updates-changes"] [data-impact]').evaluateAll((els) => els.map((e) => e.getAttribute('data-impact')))
   const rowAText = await rowA.innerText()
   check('...and what the update changes, breaking first', impacts[0] === 'breaking' && impacts.includes('behavior') && rowAText.includes('Retired probe signal') && rowAText.includes('script changed'), JSON.stringify(impacts))

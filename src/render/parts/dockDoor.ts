@@ -7,7 +7,7 @@ import {
   SRGBColorSpace,
 } from 'three'
 import type { BufferGeometry, Material, Object3D, Texture } from 'three'
-import { DEG } from '../../core/partGeometry'
+import { DEG } from '../../core/parts/partGeometry'
 import { clonePartModel, gateBuildingLoad, loadPartModel, loadTextureBitmap } from '../gltf'
 import { buildingTexture } from './building'
 
@@ -25,7 +25,7 @@ const OPENINGS_2 = [2.75, 7.25]
 /**
  * door panel rise when open, m. The opening is a real 10 ft (3.05 m) dock door: the panel is 3.11 m tall
  * and its head trim's underside is at 3.08 m, so 3.1 lifts the bottom bar just clear of the opening.
- * Mirrored by core/buildingDocks.ts DOCK_OPENING_HEIGHT.
+ * Mirrored by core/building/buildingDocks.ts DOCK_OPENING_HEIGHT.
  */
 const DOOR_TRAVEL = 3.1
 /** container trailer placement behind a bay */

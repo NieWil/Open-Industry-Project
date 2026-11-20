@@ -3,16 +3,21 @@ import type { IRenderView, RenderStats } from '../../render/api'
 import { renderQuality } from '../../render/quality'
 import { readBenchParams } from '../bench'
 import type { EditorController } from '../controller'
-import { LIMIT_LOAD, rowMs, splitRows, useRenderMeter, useStepMeter } from '../simLoad'
+import { budgetShare, limitOf, rowMs, splitRows, useRenderMeter, useStepMeter } from '../simLoad'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('stats', {
   render: 'render',
+  gpu: 'gpu',
   sim: 'sim',
   cargo: 'cargo',
   limitedBy: 'limited by {what}',
   theSim: 'the sim',
-  rendering: 'rendering',
+  theMainThread: 'the main thread',
+  theGpu: 'the GPU',
+  gpuHint: 'Settings > Graphics > Quality: Reduced draws less',
+  mainThreadHint: 'fewer parts in view, or Settings > Graphics > Quality: Reduced',
+  simHint: 'a lower Physics rate (Scene inspector) or less cargo',
 })
 
 /** a row label's width in the monospace column, so the values line up whatever the label's length */
@@ -40,7 +45,7 @@ export function shouldShowConfigLine(search: string, tier: string): boolean {
 }
 
 /**
- * Whether to add the engineering lines (raw main / gpu / per-step ms, the step rate, draws) under the summary:
+ * Whether to add the engineering lines (the step rate and the draw count) under the summary:
  * `?stats=dev`, or a `?bench` run, whose pasted output is read by whoever is tuning the renderer. A user
  * turning the read-out on in Settings gets the summary only: those numbers need a budget in your head to mean
  * anything, and the summary does that sum for them.
@@ -74,6 +79,10 @@ interface StatsOverlayProps {
 }
 
 const pct = (load: number): string => `${Math.round(load * 100)}%`
+const busy = (load: number | null): string => (load === null ? '-' : pct(load))
+/** a frame's ms, against the refresh interval (null only before there is a view) */
+// i18n-ok: unit
+const frameMs = (ms: number, refreshMs: number | null): string => (refreshMs === null ? `${ms.toFixed(1)} ms` : `${ms.toFixed(1)} / ${refreshMs.toFixed(1)} ms`)
 
 export function StatsOverlay({ frameStats, controller, view, running, simHz, timeScale }: StatsOverlayProps) {
   const [, setTick] = useState(0)
@@ -85,35 +94,37 @@ export function StatsOverlay({ frameStats, controller, view, running, simHz, tim
 
   const renderStats: FrameRenderStats = view
     ? view.getStats()
-    : { drawCalls: 0, drawPath: null, triangles: 0, cpuMs: 0, cpuTotalMs: 0, frames: 0, gpuMs: null, missedFrames: 0, backend: null, matrixLiveParts: 0, textures: 0, geometries: 0 }
+    : { drawCalls: 0, drawPath: null, triangles: 0, cpuMs: 0, cpuTotalMs: 0, frames: 0, gpuMs: null, gpuTotalMs: null, gpuFrames: 0, refreshMs: null, missedFrames: 0, backend: null, matrixLiveParts: 0, textures: 0, geometries: 0 }
   const cargo = running && controller ? controller.boxCount : 0
 
-  // Both sides are measured the same way: cumulative counters window-diffed against real time (simLoad.ts). So fps
-  // is the true rate, hitches included, and each load is a thread's busy share: render = the main thread producing
-  // frames, sim = the sim worker (parts, PLC, physics and all, so not `physics`: that is one row of it). At 100% that
-  // side is what holds the picture or the sim back. Each line also
-  // carries the ms it comes from, which is what compares across monitors, rates, scenes and machines; a percentage
-  // moves with the budget. The GPU's time stays out of the verdict (simLoad.ts renderWindow says why).
+  // Every side is measured the same way: cumulative counters window-diffed against real time (simLoad.ts), so fps is
+  // the true rate, hitches included. render = the main thread producing frames, gpu = the GPU drawing them (WebGPU
+  // timestamps; "-" where there are none), sim = the sim worker (parts, PLC, physics and all, so not `physics`: that
+  // is one row of it). Each line's percentage is its time against its budget (simLoad.ts budgetShare): a frame
+  // against the display's refresh interval, a step against the time it has at this rate and speed. Over 100% is
+  // too slow, by that much. The ms beside it are what compare across monitors, rates, scenes and machines.
   const frame = useRenderMeter(view)
   const dt = frameStats.current.dtEma
   // until the first window lands (half a second after mount), the view's own averaged interval
   const fps = frame.fps ?? (dt > 0 ? 1 / dt : 0)
-  const render = frame.load
+  // the frame budget: the display's refresh interval (frameMeter.ts RefreshEstimate), or the frame interval before there is a view
+  const refreshMs = renderStats.refreshMs
+  const frameBudgetMs = refreshMs ?? (fps > 0 ? 1000 / fps : null)
+  const render = frame.load === null ? null : budgetShare(frame.msPerFrame, frameBudgetMs)
+  const gpu = budgetShare(frame.gpuMsPerFrame, frameBudgetMs)
   const step = useStepMeter(controller, running)
-  const sim = running ? step.load : null
-  const limitedBy =
-    sim !== null && sim >= LIMIT_LOAD && sim >= (render ?? 0)
-      ? t(M.theSim)
-      : render !== null && render >= LIMIT_LOAD
-        ? t(M.rendering)
-        : null
-  // where the worker's time went, always while running: a share that grows is visible before it limits anything
-  const simSplit = sim !== null ? splitRows(step.split, step.msPerStep) : null
   // the step's budget at the rate this run steps at (a rate edited mid-run applies on the next one) and the speed
   // asked for: the time a step must fit in to keep up. Without the speed, 8x would read `1.24 / 16.7 ms` beside 59%,
   // two numbers that disagree, because the real budget there is 2.1 ms.
   const runHz = running && controller ? (controller.sim.runHz ?? simHz) : simHz
   const stepBudgetMs = 1000 / (runHz * timeScale)
+  // paused, the worker takes no steps: its last ms per step is kept, but it costs nothing
+  const sim = !running || step.load === null ? null : step.load === 0 ? 0 : (budgetShare(step.msPerStep, stepBudgetMs) ?? step.load)
+  const limit = limitOf({ render, gpu, sim }, frame.fps, refreshMs)
+  const limitedBy = limit === 'sim' ? t(M.theSim) : limit === 'render' ? t(M.theMainThread) : limit === 'gpu' ? t(M.theGpu) : null
+  const limitHint = limit === 'sim' ? t(M.simHint) : limit === 'render' ? t(M.mainThreadHint) : limit === 'gpu' ? t(M.gpuHint) : null
+  // where the worker's time went, always while running: a share that grows is visible before it limits anything
+  const simSplit = sim !== null ? splitRows(step.split, step.msPerStep) : null
 
   return (
     <div className="stats-overlay" data-testid="stats-overlay">
@@ -131,15 +142,22 @@ export function StatsOverlay({ frameStats, controller, view, running, simHz, tim
           {renderQuality.singlePass || renderStats.backend !== 'WebGPU' ? '1-pass' : '2-pass'}
         </div>
       )}
-      {/* fps is capped by the display's refresh rate, so it says nothing about headroom; the two load lines do */}
+      {/* fps is capped by the display's refresh rate, so it says nothing about headroom; the lines under it do */}
       {/* i18n-ok: metric abbreviation */}
       <div>fps     {fps.toFixed(0).padStart(5)}</div>
       {render !== null && (
         <div>
           {t(M.render).padEnd(LABEL_WIDTH)}
           {pct(render).padStart(5)}
-          {/* i18n-ok: unit */}
-          {frame.msPerFrame !== null && <span className="stats-overlay-note">  {frame.msPerFrame.toFixed(1)} ms</span>}
+          {frame.msPerFrame !== null && <span className="stats-overlay-note">  {frameMs(frame.msPerFrame, refreshMs)}</span>}
+        </div>
+      )}
+      {/* the GPU's share and its ms per frame; "-" where the GPU isn't measured (WebGL, no timestamp queries) */}
+      {render !== null && (
+        <div data-testid="stats-gpu">
+          {t(M.gpu).padEnd(LABEL_WIDTH)}
+          {(gpu !== null ? pct(gpu) : '-').padStart(5)}
+          {frame.gpuMsPerFrame !== null && <span className="stats-overlay-note">  {frameMs(frame.gpuMsPerFrame, refreshMs)}</span>}
         </div>
       )}
       {/* only while running: the worker only reports while stepping. ms per step against its budget at this run's rate */}
@@ -172,12 +190,12 @@ export function StatsOverlay({ frameStats, controller, view, running, simHz, tim
         {cargo.toFixed(0).padStart(5)}
       </div>
       {limitedBy && <div className="stats-overlay-warn">{t(M.limitedBy, { what: limitedBy })}</div>}
+      {limitHint && <div className="stats-overlay-note">{limitHint}</div>}
       {SHOW_DETAILS && (
         <div className="stats-overlay-details">
-          {/* gpu = render-pass time via WebGPU timestamp queries (absent on WebGL). Unverified as a per-frame
-              number: an async resolve may span several frames (simLoad.ts renderWindow), so it stays here */}
-          {/* i18n-ok: metric abbreviation */}
-          {renderStats.gpuMs !== null && <div>gpu  {renderStats.gpuMs.toFixed(2).padStart(6)}</div>}
+          {/* how busy each side is per real second, for profiling; the summary's percentages are against budgets */}
+          {/* i18n-ok: metric labels */}
+          <div>{`busy main ${busy(frame.load)} gpu ${busy(frame.gpuLoad)}${running && step.load !== null ? ` sim ${busy(step.load)}` : ''}`}</div>
           {/* i18n-ok: metric label and unit */}
           <div>rate {String(runHz).padStart(6)} Hz</div>
           {/* `rec` marks a frame that re-recorded the render bundles (or was held unbundled) - its draw

@@ -1,7 +1,7 @@
 import { Group, Mesh, MeshBasicMaterial, Vector3 } from 'three'
 import type { BufferGeometry } from 'three'
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js'
-import { collisionProxy, shapeCornersLocal } from '../../core/collisionShapes'
+import { collisionProxy, shapeCornersLocal } from '../../core/geometry/collisionShapes'
 import type { PartInstance } from '../../core/types'
 import { applyPartRotation } from '../parts/common'
 

@@ -15,6 +15,8 @@
 // types a table names exist is the ST checker's business: the program types live in source that is
 // often mid-edit, and a table naming one still being typed has to load.
 
+import { isControllerName } from './io/controllerTag'
+
 /** A periodic task. */
 export interface ControllerTask {
   /** an identifier, unique among the tasks (case-insensitive, like every IEC name) */
@@ -23,6 +25,13 @@ export interface ControllerTask {
   intervalMs: number
   /** IEC's convention: 0 is the highest; tasks due together run in this order */
   priority: number
+  /**
+   * The controller that runs it, and the program instances on it (SceneJSON.plcs, core/scene/scenePlcs.ts); absent
+   * means the default one. Each controller the simulator runs compiles the same program with only its own tasks and
+   * instances, so it runs them on memory and I/O of its own, and its I/O is the parts' tags that name it
+   * (`Cell2::%IX0.0`). IEC calls a controller a resource, and a resource owns its tasks.
+   */
+  plc?: string
 }
 
 /** One running instance of a PROGRAM type, or the one that runs the code outside every PROGRAM. */
@@ -37,6 +46,12 @@ export interface ControllerProgram {
   type?: string
   /** the task that runs it; absent means it runs continuously, once per physics step after the periodic tasks */
   task?: string
+  /**
+   * The controller that runs an instance on no task (ControllerTask.plc); absent means the default one. An instance on
+   * a task runs on that task's controller, so it names none. The instance that runs the code outside every PROGRAM is
+   * the default controller's.
+   */
+  plc?: string
 }
 
 export interface Controller {
@@ -73,7 +88,8 @@ export function validateController(raw: unknown, at = 'controller'): { ok: true;
     if (typeof t.name !== 'string' || !IDENT.test(t.name)) errors.push(`${w}.name must be ${IDENT_RULE}`)
     if (!isWhole(t.intervalMs, 1)) errors.push(`${w}.intervalMs must be a whole number of milliseconds, 1 or more`)
     if (!isWhole(t.priority, 0)) errors.push(`${w}.priority must be a whole number, 0 or more (0 is the highest)`)
-    if (errors.length === before) tasks.push({ name: t.name as string, intervalMs: t.intervalMs as number, priority: t.priority as number })
+    if (t.plc !== undefined && (typeof t.plc !== 'string' || !isControllerName(t.plc))) errors.push(`${w}.plc must name a controller, or be left out for the default one`)
+    if (errors.length === before) tasks.push({ name: t.name as string, intervalMs: t.intervalMs as number, priority: t.priority as number, ...(t.plc !== undefined ? { plc: t.plc as string } : {}) })
   })
 
   const programs: ControllerProgram[] = []
@@ -91,11 +107,19 @@ export function validateController(raw: unknown, at = 'controller'): { ok: true;
     if (p.task !== undefined && (typeof p.task !== 'string' || !IDENT.test(p.task))) {
       errors.push(`${w}.task must name a task (${IDENT_RULE}), or be left out for a program that runs continuously`)
     }
+    if (p.plc !== undefined && (typeof p.plc !== 'string' || !isControllerName(p.plc))) {
+      errors.push(`${w}.plc must name a controller (a letter or underscore, then letters, digits and underscores), or be left out for the default one`)
+    } else if (p.plc !== undefined && p.type === undefined) {
+      errors.push(`${w} runs the code outside every PROGRAM, which only the default controller runs, so it names no controller`)
+    } else if (p.plc !== undefined && p.task !== undefined) {
+      errors.push(`${w} runs on task ${String(p.task)}, so it runs on that task's controller and names none of its own`)
+    }
     if (errors.length === before) {
       programs.push({
         name: p.name as string,
         ...(p.type !== undefined ? { type: p.type as string } : {}),
         ...(p.task !== undefined ? { task: p.task as string } : {}),
+        ...(p.plc !== undefined ? { plc: p.plc as string } : {}),
       })
     }
   })

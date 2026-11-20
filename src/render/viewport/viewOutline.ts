@@ -2,7 +2,7 @@
 // tier, the author-mode rig-link highlight, and the per-instance selection tiers.
 
 import type { Object3D } from 'three'
-import { subtreeIds } from '../../core/hierarchy'
+import { subtreeIds } from '../../core/scene/hierarchy'
 import type { RenderView } from './view'
 
 /** the outline membership's own state (`view.outlineState`) */

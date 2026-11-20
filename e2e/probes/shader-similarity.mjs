@@ -158,7 +158,7 @@ function analyse(simThreshold) {
   const ws = (s) => s.replace(/\s+/g, ' ').trim()
   const canon = {
     // three mints a fresh id per node instance, so a generated struct/var name differing is a
-    // keying artifact, not a different shader. NodeBuffer_ is already normalized by pipelineDedup.
+    // keying artifact, not a different shader (NodeBuffer_<id> is three 0.186 and earlier).
     ids: (s) => s.replace(/NodeBuffer_\d+/g, 'NodeBuffer_N').replace(/\bnodeUniform(?:s)?_?\d+\b/g, 'nodeUniform_N'),
     // ...and then: two shaders identical except for literal constants are one shader plus a uniform.
     nums: (s) => s.replace(/\b\d+\.\d+(?:e[-+]?\d+)?\b/gi, '#f').replace(/\b\d+u?\b/g, '#i'),
@@ -305,7 +305,7 @@ function analyse(simThreshold) {
     // --- the instance-capacity ladder and what each candidate saves ---
     // three declares the instanceMatrix uniform as `array<mat4x4<f32>, CAP>` inside the WGSL, so two
     // structurally identical banks at different capacities are two different shaders and two cold
-    // compiles. pipelineDedup.ts refuses to normalise CAP away (a shader may never be bound a buffer
+    // compiles. No cache key may merge CAP away (a shader may never be bound a buffer
     // smaller than it declares), so the only sound fix is to allocate fewer distinct capacities. This
     // simulates candidate ladders so the saving is known before the work.
     const CAP_RE = /array<\s*mat4x4<f32>,\s*(\d+)\s*>/g

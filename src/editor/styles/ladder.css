@@ -1,5 +1,5 @@
 /*
-  The ladder view (components/LadderView.tsx).
+  The ladder view (components/plc/LadderView.tsx).
 
   One number holds the drawing together: every series is laid out from its TOP, and its wire runs
   30px below that (an 18px tag line, then the middle of a 24px symbol). A branch path is a series, a
@@ -90,6 +90,12 @@
 .ld-btn:hover:not(:disabled) {
   border-color: var(--accent);
 }
+/* a toggle that is on (the find bar's Replace row) */
+.ld-btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .ld-btn:disabled {
   opacity: 0.45;
   cursor: default;
@@ -384,7 +390,7 @@
 }
 /* The series of a rung. It wraps: a rung longer than the view carries on underneath instead of
    running off the side (so every rung is as wide as the view, and its outputs stand against the rail you can SEE).
-   The rows are joined by LadderView `linkWraps`, which draws into .ld-links. A single branch wider than the view cannot
+   The rows are joined by `linkWraps` (useLadderSheet.ts), which draws into .ld-links. A single branch wider than the view cannot
    wrap, so the rung GROWS to it - `min-width: min-content` here and on every box up to .ld-rung: the widest thing that
    cannot wrap - and the sheet scrolls sideways to a right rail that stands after it. With `min-width: 0` the branch
    overflowed instead: the rail stood at the view's edge, through the branch, and .ld-rung's content-visibility (which
@@ -582,6 +588,28 @@
 .ld-coil.on {
   background: rgba(63, 185, 80, 0.28);
 }
+/* an operand held by a force (the Watch dock): its name in the warning colour and an F badge beside it, so a rung
+   running on a forced value says so where it is read. The badge is drawn over the cell's left edge, in the tag's
+   padding, rather than in the flow: a force set or released then moves nothing on the sheet. */
+.ld-cell.forced .ld-tag {
+  position: relative;
+  color: var(--warn);
+}
+.ld-forced-badge {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+  min-width: 7px;
+  height: 11px;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: var(--warn);
+  color: #1f2023;
+  font: bold 9px/11px ui-monospace, monospace;
+  text-align: center;
+  z-index: 1;
+}
 .ld-cell.ld-boxed {
   flex-direction: row;
   align-items: flex-start;
@@ -635,9 +663,17 @@
   margin-left: auto;
   padding-left: 8px;
   color: var(--ld-on);
-  /* right-aligned in the room LadderView keeps for it (`roomFor`), so the digits stay put as a value changes */
+  /* right-aligned in the room the view keeps for it (`roomFor`, useLadderWatch.ts), so the digits stay put as a value changes */
   text-align: right;
   box-sizing: content-box;
+}
+.ld-live.forced {
+  position: relative;
+  color: var(--warn);
+}
+/* in the value's left padding, so the value keeps its place */
+.ld-live.forced .ld-forced-badge {
+  left: 4px;
 }
 .ld-input {
   min-width: 60px;

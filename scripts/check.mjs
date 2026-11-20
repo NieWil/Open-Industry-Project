@@ -32,6 +32,8 @@ const steps = [
   ['built parts match their part.js sources', 'npm run build-parts -- --check'],
   ['baked wall lighting is current', 'npm run bake-walls -- --check'],
   ['example project tests', 'npm run test-project -- examples/projects/start-stop-motor'],
+  // asks the npm registry, so it needs the network
+  ['no high-severity advisories in shipped packages', 'node scripts/audit-deps.mjs'],
 ]
 if (!quick) {
   // the collab server is its own package; install it once if this checkout never has

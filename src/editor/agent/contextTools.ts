@@ -1,10 +1,12 @@
 // The tools for working beside a person (docs/agent-tools.md): what they are looking at, and what has become of the
 // agent's own edits. "This conveyor" or "the rung I'm on" needs the first. The second lets the agent learn that the
-// person reverted its work, rather than building on edits that are gone.
+// person reverted its work, rather than building on edits that are gone. sync_folder is the same question for edits
+// the agent made as files in the project folder: whether they are in the editor yet.
 
-import { getPackage } from '../../core/partRegistry'
+import { getPackage } from '../../core/parts/partRegistry'
 import type { SdkPart } from '../../core/types'
-import { readPlcReading } from '../plcReading'
+import { readPlcReading } from '../program/plcReading'
+import { syncFolderAndReport } from '../project/projectFolderSync'
 import { reviewChanges } from './agentReview'
 import { round, type AgentTool } from './toolKit'
 
@@ -51,6 +53,30 @@ export const getContext: AgentTool = {
             }
           : null,
       lastAnswer: activity?.answer ?? null,
+    }
+  },
+}
+
+export const syncFolder: AgentTool = {
+  name: 'sync_folder',
+  description:
+    "Bring the project folder and the editor into step now, and answer once it is done: call it after writing files " +
+    "in the project's folder, before the next tool, instead of waiting for the once-a-second poll. `loaded` lists the " +
+    'files that came into the editor (empty: nothing had changed). `stoppedRun` is true when loading them stopped the ' +
+    'run: a change to the scene, the program or a part rebuilds the scene, so `run` again after it. `conflict` lists ' +
+    'files changed both in the folder and in the editor, which nothing moves until the person picks a side; ' +
+    "`folderError` is why the folder did not load (often a file still being written). Edits made with this door's " +
+    'tools are written to the folder too, a moment after.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  run: async ({ store }) => {
+    const report = await syncFolderAndReport()
+    if (report === null) return { folder: null, note: 'this project is not kept in a folder' }
+    const { folderPath, folderConflict, folderError } = store.getState()
+    return {
+      folder: folderPath,
+      ...report,
+      ...(folderConflict && folderConflict.length > 0 ? { conflict: folderConflict } : {}),
+      ...(folderError ? { folderError } : {}),
     }
   },
 }

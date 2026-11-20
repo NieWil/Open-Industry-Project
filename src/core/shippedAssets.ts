@@ -4,9 +4,9 @@
 //
 // A part's asset names its bytes by hash, so a project's copy of a built-in pins them: a later app that re-exports
 // the AGV ships a new file under a new hash, the previous one stays served, and the copy says "update available" instead
-// of quietly drawing the new model (the fingerprint covers the hash, core/partOrigin.ts).
+// of quietly drawing the new model (the fingerprint covers the hash, core/parts/partOrigin.ts).
 
-import type { PartAsset, PartPackage } from './partPackage'
+import type { PartAsset, PartPackage } from './parts/partPackage'
 import { SHIPPED_PART_ASSETS } from './shippedPartAssets'
 
 /** where the app serves a baked part asset: content-addressed, so cacheable for good */

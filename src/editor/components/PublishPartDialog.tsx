@@ -2,7 +2,7 @@
 // listed library, as a pull request to the parts repository under the author's own GitHub account.
 //
 // The checks that need no network run first, on this machine, from the same rules the parts repository's CI applies
-// (core/partSubmission.ts): the id's namespace, every asset inside the part, models and textures in the limits. CI then
+// (core/parts/partSubmission.ts): the id's namespace, every asset inside the part, models and textures in the limits. CI then
 // runs the part at each of its settings in a capped process (scripts/check-submission.mjs), and a person reviews it.
 // The dialog then shows where the submission stands: in review, changes requested with what was said, or listed.
 //
@@ -13,12 +13,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { createPortal } from 'react-dom'
-import { partToOippartBytes } from '../../core/partArchive'
-import type { PartPackage } from '../../core/partPackage'
-import { partFingerprint } from '../../core/partOrigin'
-import { namespaceProblem, RIGHTS_LINE, SUBMISSION_LIMITS, submissionProblems } from '../../core/partSubmission'
+import { partToOippartBytes } from '../../core/parts/partArchive'
+import type { PartPackage } from '../../core/parts/partPackage'
+import { partFingerprint } from '../../core/parts/partOrigin'
+import { namespaceProblem, RIGHTS_LINE, SUBMISSION_LIMITS, submissionProblems } from '../../core/parts/partSubmission'
 import { dialogHost } from '../dialogHost'
-import type { EditorStore } from '../store'
+import type { EditorStore } from '../store/store'
 import { finishSignIn, publicOrgs, readNamespaces, savedSession, signOut, startSignIn, submissionStatus, submitPart } from '../publish/github'
 import type { DeviceCode, GitHubSession, SubmissionStatus } from '../publish/github'
 import { changedSince, pullRequestText, saveSubmissionRecord, submissionFiles, submissionRecord } from '../publish/submission'
@@ -112,9 +112,11 @@ export function PublishPartDialog({ store, pkg, thumbnail, onClose, onRenamed }:
   // the checks that need no network
   useEffect(() => {
     let live = true
-    void partToOippartBytes(pkg).then((bytes) => {
-      if (live) setLocal(submissionProblems(pkg, { partFileBytes: bytes.length }).map((p) => p.message))
-    })
+    void partToOippartBytes(pkg)
+      .then((bytes) => {
+        if (live) setLocal(submissionProblems(pkg, { partFileBytes: bytes.length }).map((p) => p.message))
+      })
+      .catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)))
     return () => {
       live = false
     }

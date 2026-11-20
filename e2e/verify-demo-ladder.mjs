@@ -64,7 +64,7 @@ try {
   const chips = await page.locator(':is([data-testid="org-pou"], [data-testid="org-top"])').evaluateAll((els) => els.map((e) => `${e.querySelector('.org-name')?.textContent}:${e.getAttribute('data-lang')}`))
   // Main, the top-level code (the code outside every POU, which declares the variables the scene is wired to), then the
   // program and its two function blocks (the truck, and the light curtains' muting sequence)
-  expect(chips.join(',') === 'Main:ST,Palletizer:LD,PalletTruck:ST,MutingSeq:ST', `the top-level code, a ladder program and two ST function blocks (${chips.join(', ')})`)
+  expect(chips.join(',') === 'Top-level code:ST,Palletizer:LD,PalletTruck:ST,MutingSeq:ST', `the top-level code, a ladder program and two ST function blocks (${chips.join(', ')})`)
   expect((await page.locator('[data-testid="plc-view-text"], [data-testid="plc-view-ladder"]').count()) === 0, 'no Text/Ladder switch: no POU mixes the two')
   expect((await page.locator('[data-testid="org-pou"][data-unscheduled]').count()) === 0, 'no idle program')
   expect((await page.locator('[data-testid="ladder-idle"]').count()) === 0, 'and no notice about one')

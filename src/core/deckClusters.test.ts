@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { computeDeckClusters } from './deckClusters'
-import { clearPackages, registerPackage } from './partRegistry'
-import type { PartPackage } from './partPackage'
+import { clearPackages, registerPackage } from './parts/partRegistry'
+import type { PartPackage } from './parts/partPackage'
 import type { SdkPart, PartInstance } from './types'
-import { PACKAGE_FORMAT } from './partPackage'
+import { PACKAGE_FORMAT } from './parts/partPackage'
 
 // Only belt-like custom/SDK parts merge their decks (computeDeckClusters → isMergeable → custom && isBeltLike).
 // A belt-like SDK part has segments + half-pulley ends, so the generic merge cases (butt / gap / perpendicular /

@@ -1,6 +1,6 @@
 import { Group, Matrix4, Object3D, Quaternion, Scene, Vector3 } from 'three'
 import { describe, expect, it } from 'vitest'
-import type { PartPackage } from '../../../core/partPackage'
+import type { PartPackage } from '../../../core/parts/partPackage'
 import { buildRigGizmo } from './rigGizmo'
 
 type RigGeo = Extract<PartPackage['geometry'], { kind: 'rig' }>
@@ -218,5 +218,74 @@ describe('rig gizmo IK keeping the tool orientation', () => {
 
   it('gives J6 a ring of its own', () => {
     expect(arm6([0, 0, 0]).gizmo.api.layout().joints.map((j) => j.label)).toEqual(['J1', 'J2', 'J3', 'J4', 'J5', 'J6'])
+  })
+})
+
+// An arm whose last three axes do not meet at one point (an offset wrist), seven joints long, with a finger branching
+// off beside its tool frame: the shapes of imported robot arms. Dimensions are made up.
+function offsetArm() {
+  const part = new Group()
+  const links = new Map<string, Group>()
+  const link = (name: string, parent: Object3D, offset: [number, number, number]): Group => {
+    const g = new Group()
+    g.position.set(...offset)
+    parent.add(g)
+    links.set(name, g)
+    return g
+  }
+  const l1 = link('l1', part, [0, 0.1, 0])
+  const l2 = link('l2', l1, [0, 0.1, 0.12])
+  const l3 = link('l3', l2, [0, 0.4, 0])
+  const l4 = link('l4', l3, [0.35, 0, -0.1])
+  const l5 = link('l5', l4, [0.08, 0, 0.06])
+  const l6 = link('l6', l5, [0, -0.08, 0.05])
+  const l7 = link('l7', l6, [0.06, 0, 0])
+  link('tcp', l7, [0.1, 0, 0])
+  link('finger', l7, [0.08, 0.02, 0])
+  const joints = [
+    { name: 'j1', link: 'l1', type: 'revolute', axis: [0, 1, 0], min: -3, max: 3 },
+    { name: 'j2', link: 'l2', type: 'revolute', axis: [0, 0, 1], min: -2.5, max: 2.5 },
+    { name: 'j3', link: 'l3', type: 'revolute', axis: [0, 0, 1], min: -2.5, max: 2.5 },
+    { name: 'j4', link: 'l4', type: 'revolute', axis: [1, 0, 0], min: -3, max: 3 },
+    { name: 'j5', link: 'l5', type: 'revolute', axis: [0, 0, 1], min: -3, max: 3 },
+    { name: 'j6', link: 'l6', type: 'revolute', axis: [0, 1, 0], min: -3, max: 3 },
+    { name: 'j7', link: 'l7', type: 'revolute', axis: [1, 0, 0], min: -3, max: 3 },
+    { name: 'grip', link: 'finger', type: 'prismatic', axis: [0, 1, 0], min: 0, max: 0.04 },
+  ] as RigGeo['joints']
+  const pose: Record<string, number> = {}
+  const applyJoints = (p: Record<string, number>): void => {
+    Object.assign(pose, p)
+    for (const j of joints) {
+      const g = links.get(j.link)!
+      if (j.type === 'revolute') g.quaternion.setFromAxisAngle(new Vector3(...j.axis), p[j.name] ?? 0)
+    }
+  }
+  const geo = { kind: 'rig', posable: true, tool: 'tcp', links: [], joints } as unknown as RigGeo
+  const gizmo = buildRigGizmo(geo, part, links, applyJoints, {})!
+  return { gizmo, part, tcp: links.get('tcp')!, pose }
+}
+
+describe('rig gizmo on an imported arm', () => {
+  it('drags the named tool, moving only the joints above it, and rings every joint', () => {
+    const { gizmo, part, tcp, pose } = offsetArm()
+    expect(gizmo.api.layout().joints.map((j) => j.label)).toEqual(['J1', 'J2', 'J3', 'J4', 'J5', 'J6', 'J7', 'J8'])
+    part.updateWorldMatrix(true, true)
+    expect(gizmo.api.layout().ee.distanceTo(tcp.getWorldPosition(new Vector3()))).toBeLessThan(1e-9)
+    gizmo.api.solveIK(tcp.getWorldPosition(new Vector3()).add(new Vector3(-0.1, -0.15, 0.1)), true)
+    expect(pose.grip ?? 0).toBe(0)
+  })
+
+  it('holds the tool orientation through a drag on an offset wrist', () => {
+    const { gizmo, part, tcp } = offsetArm()
+    gizmo.api.setRigPose!({ j2: 0.4, j3: -0.9, j5: 0.6, j6: 0.3 })
+    part.updateWorldMatrix(true, true)
+    gizmo.api.beginIK!()
+    const q0 = tcp.getWorldQuaternion(new Quaternion())
+    const from = tcp.getWorldPosition(new Vector3())
+    const target = from.clone().add(new Vector3(0.05, -0.08, 0.06))
+    for (let s = 1; s <= 10; s++) gizmo.api.solveIK(from.clone().lerp(target, s / 10))
+    part.updateWorldMatrix(true, true)
+    expect(tcp.getWorldPosition(new Vector3()).distanceTo(target)).toBeLessThan(0.002)
+    expect(q0.angleTo(tcp.getWorldQuaternion(new Quaternion()))).toBeLessThan(0.01)
   })
 })

@@ -1,7 +1,7 @@
 import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
-import { clearPackages } from '../core/partRegistry'
-import { validateScene } from '../core/scene'
+import { clearPackages } from '../core/parts/partRegistry'
+import { validateScene } from '../core/scene/scene'
 import { SCENE_VERSION } from '../core/types'
 import { buildPackage } from './buildPackage'
 import { SimWorld } from './world'
@@ -103,7 +103,7 @@ describe('the walking pilot blocks a sensor beam', () => {
     expect(w.frame().tags?.cp_1?.dist).toBeCloseTo(0.7, 3)
     const [r, g, b] = beam!.color
     const max = Math.max(r, g, b)
-    expect(max < 0.25 || r + g + b - max - Math.min(r, g, b) > max * 0.6).toBe(true) // the Color Sensor's "none"
+    expect(max < 0.25 || r + g + b - max - Math.min(r, g, b) > max * 0.6).toBe(true) // no primary dominates
     w.dispose()
   })
 

@@ -4,9 +4,9 @@
 
 import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
-import { clearPackages } from '../core/partRegistry'
-import { resolvedBeamRange } from '../core/rigPose'
-import { validateScene } from '../core/scene'
+import { clearPackages } from '../core/parts/partRegistry'
+import { resolvedBeamRange } from '../core/rig/rigPose'
+import { validateScene } from '../core/scene/scene'
 import { SCENE_VERSION } from '../core/types'
 import { buildPackage } from './buildPackage'
 import { SimWorld } from './world'

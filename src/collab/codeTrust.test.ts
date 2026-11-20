@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartPackage } from '../core/partPackage'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartPackage } from '../core/parts/partPackage'
 import {
-  blockedRoomCount,
-  forgetBlockedRooms,
   forgetTrustedRooms,
   INERT_BEHAVIOR,
-  isRoomCodeBlocked,
   isRoomCodeTrusted,
   markRoomOpening,
   ownCodeAmong,
@@ -15,11 +12,10 @@ import {
   rememberRoomCodeTrust,
   roomOpenDidNotFinish,
   roomOpenFinished,
-  setRoomCodeBlocked,
   trustedRoomCount,
 } from './codeTrust'
 import type { FirstPartyCode } from './codeTrust'
-import { PACKAGE_FORMAT } from '../core/partPackage'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 
 const SHIPPED_BELT = 'definePart({ step(ctx) { ctx.setSurfaceVelocity(1) } })'
 
@@ -175,7 +171,7 @@ describe('code this browser wrote, remembered past a reload', () => {
     }))
 })
 
-describe("naming other people's code (the sandbox notice)", () => {
+describe("naming other people's code", () => {
   it('lists a stranger’s package whether held or running, and never the app’s own or this browser’s', () => {
     const theirs = pkg('acme.spiral', 'definePart({ step() {} })', 'Spiral')
     const mine = pkg('me.part', 'definePart({ step() {} /* mine */ })', 'Mine')
@@ -184,37 +180,16 @@ describe("naming other people's code (the sandbox notice)", () => {
     const held = new PackageGate(firstParty)
     held.noteOwn(mine.behavior)
     held.review([theirs, mine, builtIn])
-    expect(held.getForeign()).toEqual([{ id: 'acme.spiral', name: 'Spiral', runs: 'nothing' }])
+    expect(held.getForeign()).toEqual(['acme.spiral'])
 
     const running = new PackageGate(firstParty, true) // the room runs sandboxed: trusted from the start
     running.noteOwn(mine.behavior)
     running.review([theirs, mine, builtIn])
     expect(running.getHeld()).toEqual([])
-    expect(running.getForeign()).toEqual([{ id: 'acme.spiral', name: 'Spiral', runs: 'own-code' }])
+    expect(running.getForeign()).toEqual(['acme.spiral'])
   })
 
-  it('a Block is remembered per doc name, and can be undone', () => {
-    const store = new Map<string, string>()
-    const prev = (globalThis as { localStorage?: unknown }).localStorage
-    ;(globalThis as { localStorage?: unknown }).localStorage = {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => void store.set(k, v),
-    }
-    try {
-      expect(isRoomCodeBlocked('r-abc')).toBe(false)
-      setRoomCodeBlocked('r-abc', true)
-      setRoomCodeBlocked('r-abc', true) // no duplicate
-      expect(isRoomCodeBlocked('r-abc')).toBe(true)
-      expect(isRoomCodeBlocked('r-other')).toBe(false)
-      expect(JSON.parse(store.get('oip-web/blocked-rooms')!)).toEqual(['r-abc'])
-      setRoomCodeBlocked('r-abc', false)
-      expect(isRoomCodeBlocked('r-abc')).toBe(false)
-    } finally {
-      ;(globalThis as { localStorage?: unknown }).localStorage = prev
-    }
-  })
-
-  it('Settings can count and forget every Allow and every Block', () => {
+  it('Settings can count and forget every Allow', () => {
     const store = new Map<string, string>()
     const prev = (globalThis as { localStorage?: unknown }).localStorage
     ;(globalThis as { localStorage?: unknown }).localStorage = {
@@ -226,18 +201,11 @@ describe("naming other people's code (the sandbox notice)", () => {
       expect(trustedRoomCount()).toBe(0)
       rememberRoomCodeTrust('r-a')
       rememberRoomCodeTrust('r-b')
-      setRoomCodeBlocked('r-c', true)
       expect(trustedRoomCount()).toBe(2)
-      expect(blockedRoomCount()).toBe(1)
 
       forgetTrustedRooms()
       expect(trustedRoomCount()).toBe(0)
       expect(isRoomCodeTrusted('r-a')).toBe(false)
-      expect(isRoomCodeBlocked('r-c')).toBe(true) // the two answers are forgotten separately
-
-      forgetBlockedRooms()
-      expect(blockedRoomCount()).toBe(0)
-      expect(isRoomCodeBlocked('r-c')).toBe(false)
     } finally {
       ;(globalThis as { localStorage?: unknown }).localStorage = prev
     }

@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
-import { validateScene } from '../core/scene'
+import { validateScene } from '../core/scene/scene'
 import { SCENE_VERSION } from '../core/types'
 import { buildPackage } from './buildPackage'
 import type { PackageManifest } from './buildPackage'
@@ -24,7 +24,7 @@ function turntableWorld(): SimWorld {
   const res = validateScene({
     version: SCENE_VERSION,
     packages: [pkg],
-    parts: [{ id: 'tt', type: 'part', packageId: manifest.id, position: [0, 1, 0], rotationY: 0, params: { enableComms: true, angleTag: 'Ang', enableTag: 'En', doneTag: 'Done', rotationSpeedDeg: 20 } }],
+    parts: [{ id: 'tt', type: 'part', packageId: manifest.id, position: [0, 1, 0], rotationY: 0, params: { angleTag: 'Ang', enableTag: 'En', doneTag: 'Done', rotationSpeedDeg: 20 } }],
   })
   if (!res.ok) throw new Error(`scene invalid: ${res.errors.join('; ')}`)
   return new SimWorld(Jolt, res.scene)
@@ -35,6 +35,8 @@ describe('turntable enable', () => {
     const w = turntableWorld()
     const deg = (): number => (w.frame().joints?.['tt']?.['rotate'] ?? 0) / D2R
     const done = (): unknown => w.frame().tags?.['tt']?.['Done']
+    // a program drives the enable tag: it counts only while driven
+    w.setBehaviorDrivenTags(['En'])
     const run = (inputs: Record<string, number | boolean>, steps: number): void => {
       w.setBehaviorInputTags(inputs)
       for (let s = 0; s < steps; s++) w.step()
@@ -60,6 +62,16 @@ describe('turntable enable', () => {
     run({ Ang: 90, En: true }, 10 * 60)
     expect(deg()).toBeCloseTo(90, 3)
     expect(done()).toBe(true)
+    w.dispose()
+  })
+
+  it('a named enable tag no program drives does not hold the deck, like every run-style tag', () => {
+    const w = turntableWorld()
+    const deg = (): number => (w.frame().joints?.['tt']?.['rotate'] ?? 0) / D2R
+    // En reads FALSE, but nothing drives it, so the deck is enabled and turns to the commanded angle
+    w.setBehaviorInputTags({ Ang: 90, En: false })
+    for (let s = 0; s < 10 * 60; s++) w.step()
+    expect(deg()).toBeCloseTo(90, 3)
     w.dispose()
   })
 })

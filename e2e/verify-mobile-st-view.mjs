@@ -1,8 +1,8 @@
 // Verifies the PLC program is readable on a touch device, and editable only on a desktop one.
 //
 // The controller attaches the ST program on Play in every layout (controller.run), but the panel
-// that shows it is desktop-only, so without the Logic tab a phone (for example, one opening a shared
-// /app/ link) runs the logic with no way to see it. The Logic tab is the same StEditor, mounted in a
+// that shows it is desktop-only, so without the PLC tab a phone (for example, one opening a shared
+// /app/ link) runs the logic with no way to see it. The PLC tab is the same StEditor, mounted in a
 // bottom sheet with `viewOnly`.
 //
 // Asserts four things that can regress independently:
@@ -88,8 +88,8 @@ async function main() {
     phone.on('pageerror', (e) => errors.push('PAGEERR ' + String(e)))
     expect(await phone.locator('.app.phone').count() === 1, 'phone tier active at 390x844')
 
-    const tab = phone.locator('.mobile-tab', { hasText: 'Logic' })
-    expect(await tab.count() === 1, 'the tab bar offers Logic')
+    const tab = phone.locator('.mobile-tab', { hasText: 'PLC' })
+    expect(await tab.count() === 1, 'the tab bar offers PLC')
     expect(await phone.locator('.mobile-drawer.st').count() === 0, 'the sheet is closed until tapped')
 
     await tab.click()
@@ -200,7 +200,7 @@ async function main() {
     const desk = await openApp(browser, { width: 1400, height: 900 })
     desk.on('pageerror', (e) => errors.push('PAGEERR ' + String(e)))
     expect(await desk.locator('.mobile-tabbar').isVisible().catch(() => false) === false, 'no mobile tab bar on desktop')
-    expect(await desk.locator('.mobile-drawer.st').count() === 0, 'no Logic sheet on desktop')
+    expect(await desk.locator('.mobile-drawer.st').count() === 0, 'no PLC sheet on desktop')
     const deskCode = desk.locator('.cm-content').first()
     await showPlcEditor(desk, { timeout: 20000 })
     expect(await deskCode.getAttribute('contenteditable') === 'true', 'the docked panel is still editable')

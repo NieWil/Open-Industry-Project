@@ -2,16 +2,17 @@
 
 import { useCallback, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
-import type { PartDef, SdkPart } from '../../../core/types'
-import { partDiagnosticsFor, partDiagnosticsRev, subscribePartDiagnostics } from '../../../core/partDiagnostics'
-import { getPackage, packageCategory, PART_CATEGORIES } from '../../../core/partRegistry'
+import type { SdkPart } from '../../../core/types'
+import { partDiagnosticsFor, partDiagnosticsRev, subscribePartDiagnostics } from '../../../core/parts/partDiagnostics'
+import { getPackage, listPackages } from '../../../core/parts/partRegistry'
+import { categoryOrder, packageCategory, PART_CATEGORIES } from '../../../core/parts/partCategory'
 import { TextField } from './fields'
 import { commandEnabledOn, getCommand, runCommandOn } from '../../commands'
 import { preloadBehaviorEditor } from '../behaviorEditorChunk'
-import type { EditorStore } from '../../store'
+import type { EditorStore } from '../../store/store'
 import type { EditorController } from '../../controller'
-import { CopyIcon, ExportIcon, ExternalLinkIcon, FolderIcon, SceneIcon, ScriptIcon } from '../toolbarIcons'
-import { builtInsUpdated } from '../../storePackages'
+import { CopyIcon, ExportIcon, ExternalLinkIcon, FolderIcon, SceneIcon, ScriptIcon, ShareIcon } from '../toolbarIcons'
+import { builtInsUpdated } from '../../store/storePackages'
 import { builtInUpdateChoices, builtInUpdatedText } from '../builtInUpdate'
 import { editedSinceCopied, variantBase } from '../../../core/builtInVersion'
 import { defineMessages, t } from '../../../core/i18n'
@@ -21,7 +22,7 @@ const M = defineMessages('inspector.rig', {
   lockedWhy: 'A built-in part keeps its name. Save as New Part makes a copy you can name.',
   name: 'Name',
   nameTip: "The part's name: its catalog card, and the type every placed copy shows",
-  categoryTip: 'The catalog tab this part is listed under',
+  categoryTip: 'The catalog tab this part is listed under. Type a new name to start a tab of its own.',
   category: 'Category',
   buildError: 'Latest edit failed validation (the last working version is still active): {error}',
   partFallback: 'part',
@@ -36,10 +37,11 @@ const M = defineMessages('inspector.rig', {
   openExternal: "Open in External Editor: this part's behavior.js from the project folder, in your own editor. What you save there comes back into the app",
   reveal: 'Reveal in Folder: behavior.js in the file manager',
   publish: 'Publish to Part Library: send this part for listing, as a pull request from your GitHub account',
+  putOnShelf: 'Put on Shelf: keep this part on the parts shelf, for other projects to place and update from',
 })
 
 /**
- * Live runtime problems for one placed part (core/partDiagnostics): a step()/geometry() that threw, a
+ * Live runtime problems for one placed part (core/parts/partDiagnostics): a step()/geometry() that threw, a
  * compile failure at attach, an unknown commanded joint/lamp name. The build-time half (validatePart) is
  * `buildError` in PartStatus; this is the sim-run half - a part frozen at its last-good output now
  * explains itself where the author is looking. Subscribes to the diagnostics store (new entries + clears;
@@ -73,7 +75,7 @@ export function PartInfoFields({ packageId, builtIn, controller }: { packageId: 
   // a refused name leaves the field holding what was typed; a new key puts the stored name back
   const [reset, setReset] = useState(0)
   if (!pkg) return null
-  const apply = (patch: { name?: string; category?: PartDef['category'] }): void => {
+  const apply = (patch: { name?: string; category?: string }): void => {
     const why = controller ? controller.setPartInfo(packageId, patch) : t(M.editorNotReady)
     setProblem(why)
     if (why !== '') setReset((n) => n + 1)
@@ -90,20 +92,24 @@ export function PartInfoFields({ packageId, builtIn, controller }: { packageId: 
         disabled={locked}
         onCommit={(v) => apply({ name: v })}
       />
-      <label className="field">
-        <span className="field-label" title={builtIn ? lockedWhy : t(M.categoryTip)}>
-          {t(M.category)}
-        </span>
-        <span className="field-control">
-          <select data-testid="part-category" value={packageCategory(pkg)} disabled={locked} onChange={(e) => apply({ category: e.target.value as PartDef['category'] })}>
-            {PART_CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
+      {/* any name: the categories other parts name are offered, so a typo does not quietly start a new tab */}
+      <TextField
+        key={`category-${reset}`}
+        label={t(M.category)}
+        value={packageCategory(pkg)}
+        tooltip={builtIn ? lockedWhy : t(M.categoryTip)}
+        disabled={locked}
+        list="part-category-names"
+        testid="part-category"
+        extra={
+          <datalist id="part-category-names">
+            {categoryOrder([...PART_CATEGORIES, ...listPackages().map(packageCategory)]).map((c) => (
+              <option key={c} value={c} />
             ))}
-          </select>
-        </span>
-      </label>
+          </datalist>
+        }
+        onCommit={(v) => apply({ category: v })}
+      />
       {problem !== '' && (
         <p className="inspector-hint rig-error" role="status" data-testid="part-info-problem">
           {problem}
@@ -198,6 +204,7 @@ export function PartActions({ part, focused }: { part: SdkPart; focused: boolean
       {commandEnabledOn('part.reveal', target) && action('part.reveal', <FolderIcon />, t(M.reveal))}
       {commandEnabledOn('part.publish', target) &&
         action('part.publish', <ExportIcon />, t(M.publish))}
+      {commandEnabledOn('part.putOnShelf', target) && action('part.putOnShelf', <ShareIcon />, t(M.putOnShelf))}
     </>
   )
 }

@@ -1,4 +1,4 @@
-// The physics step rate is a setting of the machine (EditorState.simHz, core/project.ts ProjectMachine.simHz), set in
+// The physics step rate is a setting of the machine (EditorState.simHz, core/project/project.ts ProjectMachine.simHz), set in
 // the Inspector with nothing selected and kept wherever the scene is kept.
 //
 // These pin the seams a user goes through, each of which could quietly change or drop the rate and leave a
@@ -6,11 +6,11 @@
 // just a line whose timing no longer matches its tests: the project autosave, a project load, a scene file, New, a collab room, a view-only link, and the demo preview.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { EditorStore } from './store'
-import { loadSceneText, newSimulation, sceneFileText } from './sceneFile'
-import { assembleProject, PROJECT_KEY } from './projectFile'
-import { validateProject } from '../core/project'
-import type { ProjectJSON } from '../core/project'
+import { EditorStore } from './store/store'
+import { loadSceneText, newSimulation, sceneFileText } from './project/sceneFile'
+import { assembleProject, PROJECT_KEY } from './project/projectFile'
+import { validateProject } from '../core/project/project'
+import type { ProjectJSON } from '../core/project/project'
 import { DEFAULT_SIM_HZ, SCENE_VERSION } from '../core/types'
 import type { PartInstance, SceneJSON } from '../core/types'
 

@@ -2,8 +2,13 @@
 // views every access goes through (docs/plc-typed-storage.md, "The arena"). Addresses are bytes; a place's layout
 // (layout.ts) aligns it to its own size, so `I32[addr >> 2]` is exact.
 
+import { WATCH_KIND } from '../../core/watchTable'
 import type { ScalarType, TagValue } from '../types'
 import type { ScalarLayout } from './layout'
+
+/** the most code units handed to String.fromCharCode in one call: its arguments go on the stack */
+const STR_CHUNK = 4096
+const unitsToString = String.fromCharCode.apply.bind(String.fromCharCode) as (thisArg: null, units: number[]) => string
 
 export class Arena {
   readonly buffer: ArrayBuffer
@@ -66,8 +71,11 @@ export class Arena {
     const at = addr >> 1
     const n = this.U16[at]!
     if (n === 0) return ''
+    // the whole text in one call. Joined a character at a time, reading the status strings a line's drive blocks
+    // build every scan took a twentieth of a large program's scan.
+    if (n <= STR_CHUNK) return unitsToString(null, this.U16.subarray(at + 1, at + 1 + n) as unknown as number[])
     let s = ''
-    for (let i = 1; i <= n; i++) s += String.fromCharCode(this.U16[at + i]!)
+    for (let i = 0; i < n; i += STR_CHUNK) s += unitsToString(null, this.U16.subarray(at + 1 + i, at + 1 + Math.min(n, i + STR_CHUNK)) as unknown as number[])
     return s
   }
 
@@ -79,6 +87,19 @@ export class Arena {
     for (let i = 0; i < n; i++) this.U16[at + 1 + i] = s.charCodeAt(i)
   }
 
+  /** The text of the STRING at `src` into the STRING at `dst` of capacity `cap`, cut to fit: what strPut(dst, cap,
+   *  strAt(src)) leaves, with no text built. A short text goes unit by unit: with copyWithin for every copy, a large
+   *  program whose strings are mostly short or empty ran no faster than it did through text. */
+  strCopy(dst: number, cap: number, src: number): void {
+    const s = src >> 1
+    const d = dst >> 1
+    const n = Math.min(this.U16[s]!, cap)
+    this.U16[d] = n
+    if (s === d) return
+    if (n <= 32) for (let i = 1; i <= n; i++) this.U16[d + i] = this.U16[s + i]!
+    else this.U16.copyWithin(d + 1, s + 1, s + 1 + n)
+  }
+
   /** `aggregate := 0` at `addr`: each [offset, bytes] run of `ranges` (layout.ts clearRanges) zeroed */
   clear(addr: number, ranges: readonly number[]): void {
     for (let i = 0; i < ranges.length; i += 2) this.U8.fill(0, addr + ranges[i]!, addr + ranges[i]! + ranges[i + 1]!)
@@ -87,6 +108,23 @@ export class Arena {
   /** Copy `bytes` from `src` to `dst` (a whole array or struct of one type: the checker allows nothing else). */
   copy(dst: number, src: number, bytes: number): void {
     if (dst !== src) this.U8.copyWithin(dst, src, src + bytes)
+  }
+}
+
+/** How {@link Arena.load} reads a scalar type, as a watch layout names it (core/watchTable.ts): the two must agree,
+ *  which watchPlan.test.ts holds them to. */
+export function watchKindOf(t: ScalarType): number {
+  switch (t) {
+    case 'BOOL': return WATCH_KIND.BOOL
+    case 'SINT': return WATCH_KIND.I8
+    case 'USINT': case 'BYTE': return WATCH_KIND.U8
+    case 'INT': return WATCH_KIND.I16
+    case 'UINT': case 'WORD': return WATCH_KIND.U16
+    case 'DINT': return WATCH_KIND.I32
+    case 'UDINT': case 'DWORD': return WATCH_KIND.U32
+    case 'REAL': return WATCH_KIND.F32
+    case 'LREAL': case 'TIME': case 'DATE': case 'TOD': case 'DT': return WATCH_KIND.F64
+    case 'STRING': return WATCH_KIND.STRING
   }
 }
 

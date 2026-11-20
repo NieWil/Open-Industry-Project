@@ -1,38 +1,62 @@
-import { partCreditText } from '../partCredit'
-import { lazy, Suspense, useRef, useState } from 'react'
+import { partCreditText } from '../parts/partCredit'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { versionedAssetUrl } from '../../core/assetVersions'
 import { PART_DEFS } from '../../core/types'
 import type { PartDef, PartType } from '../../core/types'
-import { packageThumbFile } from '../../core/partPackage'
-import { getPackage, packageCategory } from '../../core/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
+import { packageThumbFile } from '../../core/parts/partPackage'
+import { getPackage } from '../../core/parts/partRegistry'
+import { categoryOrder, isStandardCategory, packageCategory, sameCategory } from '../../core/parts/partCategory'
+import type { ShelfStatus } from '../../core/parts/partShelf'
 import type { EditorController } from '../controller'
-import type { EditorState } from '../store'
-import { downloadPart } from '../partFile'
-import { shippedAssetBytes, warmShippedAssets } from '../shippedAssetCache'
+import type { EditorState } from '../store/store'
+import { downloadPart } from '../parts/partFile'
+import { shippedAssetBytes, warmShippedAssets } from '../parts/shippedAssetCache'
 import { preloadBehaviorEditor } from './behaviorEditorChunk'
 import { ScriptIcon } from './toolbarIcons'
 import { commandEnabledOn, runCommand, runCommandOn } from '../commands'
 import { ExportIcon, ImportIcon, PartGlyph, PencilIcon, TrashIcon } from './toolbarIcons'
-import { builtInsUpdated } from '../storePackages'
-import { builtInUpdateChoices, builtInUpdatedText } from './builtInUpdate'
 import { PartUpdatesNotice } from './PartUpdatesNotice'
 import { UNLISTED_BUILT_INS, editedSinceCopied, sameAsBuiltIn } from '../../core/builtInVersion'
 import { ContextMenu } from './inspector/menu'
-import { getShelfApi } from '../partShelf'
+import type { MenuItem } from './inspector/menu'
+import { copyFromShelf, getShelfApi, statusInProject } from '../parts/partShelf'
+import { useShelf } from '../parts/shelfListing'
+import { reviewUpdate, usePartUpdates, type PartUpdate } from '../parts/partUpdates'
+import { CatalogPlaceButton } from './CatalogPlaceButton'
+import { getOipPartsApi } from '../desktop/desktopPartsBridge'
+import { importPartsFolder } from '../parts/packageSource'
 import { defineMessages, t, type MessageId } from '../../core/i18n'
+import { importPartFiles, partFilesOf } from '../parts/importPartFiles'
+import { readPartDrop, receivePartDrops, type PartDrop } from '../parts/partDrop'
+import { isModelFile, isRobotArchive, isUrdfFile, MODEL_ACCEPT, newPartFromModel } from '../parts/modelPartImport'
+import { RobotOptionsDialog } from './RobotOptionsDialog'
 
 const M = defineMessages('catalog', {
-  replaceLoaded: 'A part “{name}” is already loaded. Replace it with the one from “{file}”?',
-  importErrorLine: '{file}: {error}',
-  importFailed: "Couldn't import:\n{errors}",
   title: 'Parts',
   viewOnly: 'View only: editing is disabled',
   viewOnlyLink: 'View only: editing is disabled on this link',
-  partEditorInRoom: 'The Part Editor is unavailable in a shared room',
   newPartTitle: 'New blank part:a single box you can reshape, add nodes to, and script (the same portable format the built-ins use)',
   newPart: '＋ New part',
-  importTitle: 'Import a shared part file (.oippart or .part.json) into this project',
+  importTitle: 'Import shared part files into this project, or make a new part from a model (.glb, STEP or USD) or a robot (a URDF file, or a .zip of its folder)',
+  importTitleDesktop: 'Import shared part files or a folder of parts into this project, or make a new part from a model or a robot (a URDF file, or a .zip of its folder)',
+  importModel: 'A model…',
+  importModelTitle: 'Make a new part from a model: a .glb, a STEP file from CAD, or a USD model (.usd, .usda, .usdc, .usdz)',
+  oneModelAtATime: 'A model opens as a new part of its own, so one is imported at a time: {file} was imported.',
+  importRobot: 'A robot (unzipped folder)…',
+  importRobotFile: 'A robot (.zip or URDF file)…',
+  importRobotFileTitle:
+    "Make a new part from a robot description: pick a .zip of the robot's folder, which brings its meshes, or its .urdf or .xacro file together with the files it names.",
+  importRobotTitle:
+    "Make a new part from a robot description: pick the folder holding its .urdf or .xacro file and its meshes (STL, COLLADA or OBJ). The folder, or a .zip of it, can also be dropped on this panel or the 3D view. Its links and joints become the part's nodes and joints.",
+  whichUrdf: 'Import {file}',
+  // i18n-ok: {arg} and {value} are a xacro argument's name and value, as the file spells them
+  whichArg: '{arg}: {value}',
+  importFiles: 'Part files…',
+  importFilesTitle: 'Import shared part files (.oippart or .part.json) into this project',
+  importFolder: 'A folder of parts…',
+  importFolderTitle: "Import every part in a folder, such as another project's parts folder, into this project",
   importPart: 'Import part',
   getPartsTitle: 'Get parts from the part libraries: containers, machines and more, added to this project',
   getParts: '⬇ Get parts',
@@ -40,8 +64,6 @@ const M = defineMessages('catalog', {
   catDevices: 'Devices',
   catProducts: 'Products',
   catStructure: 'Structure',
-  shelfTitle: 'Parts kept outside any project, for every project to place and update from',
-  shelf: 'Shelf',
   placingTouch: 'Tap the viewport to place · tap the card again to finish',
   placingMouse: 'Click or drag to the viewport · Alt: no snap · Esc: done',
   search: 'Search parts',
@@ -50,12 +72,13 @@ const M = defineMessages('catalog', {
   credited: '{name} · {credit}',
   customPart: '{name} · custom part',
   buildError: 'build error',
-  updatedTitle: '{text} Click to choose which to use.',
-  updated: 'Updated',
+  updateFromApp: 'The app has a newer “{name}” than this project. Click to see what changes.',
+  updateFromLibrary: '“{library}” has a newer “{name}” than this project. Click to see what changes.',
+  updateFromShelf: 'The shelf has a newer “{name}” than this project. Click to see what changes.',
+  updateEditedToo: "This project changed its own copy too, and updating discards those changes.",
   editInPartEditor: 'Edit “{name}” in the Part Editor',
   download: 'Download “{name}” as a part file to share',
   editBehavior: 'Edit the behavior script of “{name}”',
-  deleteInRoom: 'Deleting parts is unavailable in a shared room',
   openForEditing: 'This part is open for editing. Close it first',
   revertTitle: "Go back to the app's version of “{name}”",
   deleteTitle: 'Delete “{name}” from this project',
@@ -64,23 +87,89 @@ const M = defineMessages('catalog', {
   revertConfirmLost: "Replace this project's “{name}” with the app's current version? This project's changes to it are discarded. Every placed copy changes.",
   deleteConfirm: "Delete the custom part “{name}”? This can't be undone.",
   noMatch: 'No parts match “{query}”.',
+  shelfReadFailed: 'The parts shelf could not be read: {error}',
+  shelfUnreadable: {
+    one: '{count} part on the parts shelf could not be read, so it is not listed.',
+    other: '{count} parts on the parts shelf could not be read, so they are not listed.',
+  },
+  showFolderTitle: 'Show the shelf folder',
+  showFolder: 'Show folder',
+  onShelf: 'Shelf',
+  onShelfTitle: "“{name}” is on the shelf, and this project has the shelf's version.",
+  notInProjectTitle: '“{name}” is on the shelf. Placing it copies it into this project.',
+  shelfVersion: 'Shelf version',
+  shelfVersionTitle: "The shelf keeps its own version of the app's “{name}”. This card places the app's. Click to use the shelf's in this project.",
+  fromShelf: '{name} · from the shelf. Placing it copies it into this project.',
+  update: 'Update',
+  putOnShelf: 'Put on shelf',
+  editedHereTitle: "This project has changed “{name}” since it came from the shelf. Click to put this project's version on the shelf.",
+  renameOurs: 'Rename ours…',
+  sameIdTitle:
+    "This project has its own part with the same id as the shelf's “{name}”, and they are not the same part. Click to give this project's a new id, so both can be used.",
+  putOwnTitle: 'Put “{name}” on the shelf, so other projects can place it',
+  putUpToDate: '“{name}” is on the shelf as it is here',
+  putSameId: "The shelf has a different part with this id. Rename this project's first.",
 })
 
-// The Shelf tab loads when it opens: the shelf is the desktop app's alone, so it does not belong in the first frame.
-// Lazying it kept the eager-JS budget (scripts/lib/eager-js.mjs) from a raise. Part libraries are reached through Get
-// parts (components/GetPartsWindow.tsx), not a tab here: the dock shows what this project can place.
-const CatalogShelf = lazy(() => import('./CatalogShelf').then((m) => ({ default: m.CatalogShelf })))
+// Part libraries are reached through Get parts (components/GetPartsWindow.tsx), not a tab here: the dock shows what
+// this project can place. The shelf's parts are placeable here, so they sit in their category tabs beside the rest.
 
-type Category = PartDef['category']
-// catalog tab order; tabs with nothing to show are hidden (see `tabs` in Catalog)
-const CATEGORIES: Category[] = ['Equipment', 'Devices', 'Products', 'Structure']
-// each tab's heading; the category itself is a key parts match on
-const CATEGORY_LABEL: Record<Category, MessageId> = {
+// each standard tab's heading; a category a part names itself is shown as the part spells it
+const CATEGORY_LABEL: Record<PartDef['category'], MessageId> = {
   Equipment: M.catEquipment,
   Devices: M.catDevices,
   Products: M.catProducts,
   Structure: M.catStructure,
 }
+
+function categoryLabel(category: string): string {
+  return isStandardCategory(category) ? t(CATEGORY_LABEL[category]) : category
+}
+
+/**
+ * What a card's shelf part is to this project. 'shelfVersion': the shelf keeps its own version of an app built-in that
+ * the project uses unchanged, or not yet. The card still places the app's, since one person's "Put on shelf" must not
+ * change what a built-in's card places in every project; the badge offers the shelf's.
+ */
+type CardShelfStatus = ShelfStatus | 'shelfVersion'
+
+/**
+ * The badge a card carries for what its shelf part is to this project, and what it says when hovered. A newer version
+ * on the shelf is the card's "Update" badge, the same for every source (editor/parts/partUpdates.ts), so it has none.
+ */
+function shelfBadge(status: CardShelfStatus, name: string): { label: string; title: string; tone: 'quiet' | 'act' | 'warn' } | null {
+  switch (status) {
+    case 'shelfVersion':
+      return { label: t(M.shelfVersion), title: t(M.shelfVersionTitle, { name }), tone: 'act' }
+    case 'notInProject':
+      return { label: t(M.onShelf), title: t(M.notInProjectTitle, { name }), tone: 'quiet' }
+    case 'upToDate':
+      return { label: t(M.onShelf), title: t(M.onShelfTitle, { name }), tone: 'quiet' }
+    case 'updateAvailable':
+    case 'changedInBoth':
+      return null
+    case 'editedHere':
+      return { label: t(M.putOnShelf), title: t(M.editedHereTitle, { name }), tone: 'act' }
+    case 'sameIdDifferentPart':
+      return { label: t(M.renameOurs), title: t(M.sameIdTitle, { name }), tone: 'warn' }
+  }
+}
+
+/** what a card's "Update" badge says when hovered: where the newer version is, and what taking it costs */
+function updateTitle(u: PartUpdate): string {
+  const name = u.name
+  const where =
+    u.source === 'app'
+      ? t(M.updateFromApp, { name })
+      : u.source === 'library'
+        ? t(M.updateFromLibrary, { name, library: u.from ?? '' })
+        : t(M.updateFromShelf, { name })
+  return u.edited ? `${where} ${t(M.updateEditedToo)}` : where
+}
+
+// the shelf's buttons: loaded on the first one pressed, since the shelf is the desktop app's alone
+const shelfActions = () => import('../parts/shelfActions')
+const shelfFailed = (e: unknown): void => console.warn('[oip] shelf action failed', e)
 
 // Tablets show the catalog but have no Alt/Esc/wheel - word the placing hint for touch.
 // Evaluated once at startup; guarded for non-DOM test envs where matchMedia is absent.
@@ -114,44 +203,146 @@ function numberHint(def: PartDef): string {
 }
 
 export function Catalog({ state, controller, thumbnails, packageThumbnails, pendingThumbnails, onThumbnailMissing, onPackageThumbnailMissing }: CatalogProps) {
-  const [category, setCategory] = useState<Category>('Equipment')
-  // the Shelf tab (CatalogShelf.tsx): only where the shell has a parts shelf, the desktop app
+  const [category, setCategory] = useState('Equipment')
+  // the parts shelf (docs/parts-shelf.md): null where the shell has none, the browser
+  const shelf = useShelf()
   const shelfApi = getShelfApi()
-  // the Shelf tab in place of a category (desktop)
-  const [onShelf, setOnShelf] = useState(false)
   const [query, setQuery] = useState('')
-  // the "Updated" badge's menu: which version of an updated built-in this project uses (builtInUpdate.ts)
-  const [updateMenu, setUpdateMenu] = useState<{ x: number; y: number; id: string; name: string } | null>(null)
-  const updatedBuiltIns = builtInsUpdated(state)
-  // has this project changed its copy of a built-in (what taking the app's version would discard)?
-  const editedHere = (id: string): boolean => {
-    const copy = state.userPackages.find((p) => p.id === id)
-    return copy !== undefined && editedSinceCopied(copy)
-  }
+  // a small menu: a card's right-click (Put on shelf), or Import part's two choices on the desktop
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  // the shelf part a placement was started from, while that placement lasts (see `pinned` below)
+  const [placingFromShelf, setPlacingFromShelf] = useState<string | null>(null)
+  // newer versions of this project's parts, from every source; a card offers the first of its own (partUpdates.ts)
+  const updates = usePartUpdates(state)
+  const updateById = new Map<string, PartUpdate>()
+  for (const u of updates) if (!updateById.has(u.id)) updateById.set(u.id, u)
   const importRef = useRef<HTMLInputElement>(null)
+  const importModelRef = useRef<HTMLInputElement>(null)
+  const importRobotRef = useRef<HTMLInputElement>(null)
+  const importRobotFileRef = useRef<HTMLInputElement>(null)
+  // where Import part's menu opened, so a follow-up choice (which URDF of a folder) opens in the same place
+  const menuAt = useRef({ x: 0, y: 0 })
+  // a xacro robot's on/off arguments being asked about before it imports
+  const [robotOptions, setRobotOptions] = useState<{ files: ReadonlyMap<string, Blob>; root: string; args: Record<string, string>; switches: Record<string, boolean> } | null>(null)
   const q = query.trim().toLowerCase()
   const searching = q !== ''
-  const showShelf = onShelf && shelfApi !== null
-  const onSource = showShelf
+  const store = controller?.store ?? null
+  const editable = !state.readOnly && store !== null
 
   // import shared part files (.oippart, or the older .part.json) into the library (the file-level counterpart of the scene Load
   // button); reached from the header button (multi-select) and by dropping files anywhere on the dock
+  // A model file becomes a new part of its own, opened to convert it (parts/modelPartImport.ts); part files import.
   const importFiles = async (files: File[]): Promise<void> => {
     if (!controller || state.readOnly || files.length === 0) return
-    const errors: string[] = []
-    for (const file of files) {
-      const error = await controller.importPart(new Uint8Array(await file.arrayBuffer()), (name) =>
-        window.confirm(t(M.replaceLoaded, { name, file: file.name })),
-      )
-      if (error) errors.push(t(M.importErrorLine, { file: file.name, error }))
+    const parts = partFilesOf(files.filter((f) => !isModelFile(f.name)))
+    // a .zip is a robot's folder in one file; part files picked with it still import
+    const zip = files.find((f) => isRobotArchive(f.name))
+    if (zip) {
+      if (parts.length > 0) await importPartFiles(controller, parts)
+      const { noUrdfZipMessage, zipFiles } = await import('../parts/urdfPartImport')
+      const read = await zipFiles(zip)
+      if ('error' in read) alert(read.error)
+      else await importRobotFiles(read.files, noUrdfZipMessage(zip.name))
+      return
     }
-    if (errors.length > 0) alert(t(M.importFailed, { errors: errors.join('\n') }))
+    // a .urdf or .xacro takes the other files picked with it as its meshes and includes, found by name; alone it imports its primitives and
+    // the summary asks for the folder. Part files picked with it still import.
+    const robots = files.filter((f) => isUrdfFile(f.name))
+    if (robots.length > 0) {
+      if (parts.length > 0) await importPartFiles(controller, parts)
+      const picked = new Map(files.map((f) => [f.name, f]))
+      // Several picked together: the robot is the one that builds something, not a macro library picked as its
+      // include, which is how a picked folder is read. One alone is taken as it is, so its own error is the one shown.
+      const roots = robots.length > 1 ? await (await import('../parts/urdfPartImport')).urdfRootsOf(picked) : []
+      if (roots.length > 1) {
+        setMenu({
+          ...menuAt.current,
+          items: roots.map((root, i) => ({ label: t(M.whichUrdf, { file: root }), testid: `catalog-import-urdf-${i}`, onClick: () => void importRobot(picked, root) })),
+        })
+        return
+      }
+      await importRobot(picked, roots[0] ?? robots[0]!.name)
+      return
+    }
+    const models = files.filter((f) => isModelFile(f.name))
+    if (parts.length > 0) await importPartFiles(controller, parts)
+    if (models.length === 0) return
+    newPartFromModel(controller, models[0]!)
+    if (models.length > 1) alert(t(M.oneModelAtATime, { file: models[0]!.name }))
+  }
+  // the robot importer (its three.js mesh loaders, the URDF reader and the GLB writer) loads only when a robot is
+  // imported: most sessions never do, and it would cost every first frame
+  // A xacro description whose argument names a model the folder lacks (UR's ur_type) asks which, and imports again;
+  // one with on/off arguments that change the robot (a hand) asks about those once (`asked`), then imports.
+  const importRobot = async (files: ReadonlyMap<string, Blob>, root: string, args: Record<string, string> = {}, asked = false): Promise<void> => {
+    if (!controller || state.readOnly) return
+    const { newPartFromUrdf } = await import('../parts/urdfPartImport')
+    const { message, choose, switches } = await newPartFromUrdf(controller, files, root, args, !asked)
+    if (switches) {
+      setRobotOptions({ files, root, args, switches })
+      return
+    }
+    if (choose) {
+      setMenu({
+        ...menuAt.current,
+        items: choose.choices.map((value, i) => ({
+          label: t(M.whichArg, { arg: choose.arg, value }),
+          testid: `catalog-import-arg-${i}`,
+          onClick: () => void importRobot(files, root, { ...args, [choose.arg]: value }, asked),
+        })),
+      })
+      return
+    }
+    if (message) alert(message)
+  }
+  // a robot's folder (picked, dropped or unpacked from a .zip): its URDF, or a choice when the top of the folder has
+  // several (a description package often holds one per model of a robot family). `none` is said when it has none.
+  const importRobotFiles = async (files: ReadonlyMap<string, Blob>, none: string): Promise<void> => {
+    const { urdfRootsOf } = await import('../parts/urdfPartImport')
+    const roots = await urdfRootsOf(files)
+    if (roots.length === 0) {
+      alert(none)
+      return
+    }
+    if (roots.length === 1) {
+      void importRobot(files, roots[0]!)
+      return
+    }
+    setMenu({
+      ...menuAt.current,
+      items: roots.map((root, i) => ({ label: t(M.whichUrdf, { file: root }), testid: `catalog-import-urdf-${i}`, onClick: () => void importRobot(files, root) })),
+    })
+  }
+  const onPickRobotFolder = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const list = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    if (list.length === 0) return
+    const { folderFiles, noUrdfMessage } = await import('../parts/urdfPartImport')
+    await importRobotFiles(folderFiles(list), noUrdfMessage(list[0]!.webkitRelativePath.split('/')[0] ?? ''))
+  }
+  // folders dropped on the dock are read as a picked robot folder is
+  const importDroppedFolders = async (dirs: readonly FileSystemEntry[]): Promise<void> => {
+    if (!controller || state.readOnly) return
+    const { droppedFolderFiles, noUrdfMessage } = await import('../parts/urdfPartImport')
+    await importRobotFiles(await droppedFolderFiles(dirs), noUrdfMessage(dirs[0]!.name))
   }
   const onImportFile = (e: ChangeEvent<HTMLInputElement>): void => {
     const files = Array.from(e.target.files ?? [])
     e.target.value = ''
     void importFiles(files)
   }
+  // a drop on the dock, or one the viewport handed over: folders are a robot's, anything else goes by its file type
+  const importDrop = (drop: PartDrop): void => {
+    // a follow-up choice (which of several robot files) opens where the drop landed
+    menuAt.current = drop.at
+    if (drop.dirs.length > 0) void importDroppedFolders(drop.dirs)
+    else void importFiles(drop.files)
+  }
+  const importDropRef = useRef(importDrop)
+  useEffect(() => {
+    importDropRef.current = importDrop
+  })
+  useEffect(() => receivePartDrops((drop) => importDropRef.current(drop)), [])
   // drop-import affordance: depth-counted so enter/leave churn over child elements doesn't flicker it
   const dragDepth = useRef(0)
   const [dropping, setDropping] = useState(false)
@@ -175,34 +366,80 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
   // built-in: its committed thumbnail, its bare name, nothing to delete. Only the project's own versions shadow.
   const bundledById = new Map(state.bundledPackages.map((p) => [p.id, p]))
   const ownVersions = state.userPackages.filter((p) => !sameAsBuiltIn(p, bundledById.get(p.id)))
-  // an unlisted built-in (core/partCatalog UNLISTED_BUILT_INS) stays out unless the project changed its own version
-  const customById = new Map([...state.bundledPackages.filter((p) => !UNLISTED_BUILT_INS.has(p.id)), ...ownVersions].map((p) => [p.id, p]))
+  // Shelf parts this project has no copy of are placed from the shelf, which copies them in at the press. One card per
+  // id: a shelf part of a built-in's id is the built-in's card, which places the app's and offers the shelf's.
+  const shelfParts = shelf?.listing?.parts ?? []
+  const shelfById = new Map(shelfParts.map((p) => [p.id, p]))
+  const userIds = new Set(state.userPackages.map((p) => p.id))
+  // The shelf card a placement started from stays until the placement ends. Pressing it copies the part in, which
+  // would otherwise swap it for the project's card mid-gesture, and the drag's pointer capture would go with it.
+  const placingId = state.mode === 'placing' && state.placingType === 'part' ? state.placingPackageId : null
+  if (placingFromShelf !== null && placingFromShelf !== placingId) setPlacingFromShelf(null)
+  const pinned = placingFromShelf !== null && placingFromShelf === placingId ? placingFromShelf : null
+  const fromShelf = shelfParts.filter((p) => (!userIds.has(p.id) || p.id === pinned) && !bundledById.has(p.id))
+  const fromShelfIds = new Set(fromShelf.map((p) => p.id))
+  // an unlisted built-in (core/parts/partCatalog UNLISTED_BUILT_INS) stays out unless the project changed its own version
+  const customById = new Map(
+    [...state.bundledPackages.filter((p) => !UNLISTED_BUILT_INS.has(p.id)), ...ownVersions].filter((p) => !fromShelfIds.has(p.id)).map((p) => [p.id, p]),
+  )
   // Pristine first-party bundled packages (by object identity, so a user/folder copy that shadows a bundled
   // id, and takes precedence in customById, is excluded): only these have a committed /thumbnails/pkg/*.webp; every
   // other package renders its card in-browser. Identity, not id, because a shadow's content differs from the
   // baked image.
   const bundledSet = new Set(state.bundledPackages)
-  // tabs with nothing to show are hidden; loaded packages count too, so a category populated only by
-  // packages (no built-in defs) still gets its tab
-  const tabs = CATEGORIES.filter(
-    (c) =>
-      Object.values(PART_DEFS).some((d) => d.category === c && !d.noCatalog) ||
-      [...customById.values()].some((p) => packageCategory(p) === c),
-  )
+
+  const listedDefs = Object.values(PART_DEFS).filter((d) => !d.noCatalog)
+  const listedCustom = [...customById.values()]
+  // a tab per category something here names (the standard four first, then the rest alphabetically); none is empty
+  const tabs = categoryOrder([...listedDefs.map((d) => d.category), ...listedCustom.map(packageCategory), ...fromShelf.map(packageCategory)])
   // the remembered tab can disappear (e.g. the last package in a category was removed) - fall back
-  const activeCategory = tabs.includes(category) ? category : (tabs[0] ?? 'Equipment')
+  const activeCategory = tabs.find((c) => sameCategory(c, category)) ?? tabs[0] ?? 'Equipment'
   // search spans every category; otherwise the active tab decides what shows.
   // noCatalog types (the Group node, the generic 'part') are never placed directly from the palette.
-  const defs = Object.values(PART_DEFS).filter(
-    (def) =>
-      !def.noCatalog &&
-      (searching
-        ? def.label.toLowerCase().includes(q) || def.type.toLowerCase().includes(q)
-        : def.category === activeCategory),
+  const matchesPackage = (pkg: PartPackage): boolean =>
+    searching ? pkg.name.toLowerCase().includes(q) || pkg.id.toLowerCase().includes(q) : sameCategory(packageCategory(pkg), activeCategory)
+  const defs = listedDefs.filter((def) =>
+    searching ? def.label.toLowerCase().includes(q) || def.type.toLowerCase().includes(q) : def.category === activeCategory,
   )
-  const customCards = [...customById.values()].filter((pkg) =>
-    searching ? pkg.name.toLowerCase().includes(q) || pkg.id.toLowerCase().includes(q) : packageCategory(pkg) === activeCategory,
-  )
+  const customCards = listedCustom.filter(matchesPackage)
+  const shelfCards = fromShelf.filter(matchesPackage)
+
+  // a project part's "Put on shelf": the context menu's item, enabled where it would put something new on the shelf
+  const putItem = (pkg: PartPackage, status: CardShelfStatus | null): MenuItem => ({
+    label: t(M.putOnShelf),
+    testid: 'shelf-put',
+    disabled: !editable || status === 'upToDate' || status === 'sameIdDifferentPart',
+    title: status === 'upToDate' ? t(M.putUpToDate, { name: pkg.name }) : status === 'sameIdDifferentPart' ? t(M.putSameId) : t(M.putOwnTitle, { name: pkg.name }),
+    onClick: () => runCommandOn('part.putOnShelf', { packageId: pkg.id }),
+  })
+  const onShelfBadge = (pkg: PartPackage, status: CardShelfStatus): void => {
+    if (!store) return
+    const shelfPart = shelfById.get(pkg.id)
+    if (status === 'editedHere') {
+      const mine = state.userPackages.find((p) => p.id === pkg.id)
+      if (mine) void shelfActions().then((a) => a.putPartOnShelf(store, mine)).catch(shelfFailed)
+    } else if (shelfPart && status === 'sameIdDifferentPart') void shelfActions().then((a) => a.renameOursForShelf(store, shelfPart)).catch(shelfFailed)
+    else if (shelfPart) void shelfActions().then((a) => a.updateFromShelf(store, shelfPart, status)).catch(shelfFailed)
+  }
+  const badgeElement = (pkg: PartPackage, status: CardShelfStatus) => {
+    const badge = shelfBadge(status, pkg.name)
+    if (!badge) return null
+    return badge.tone === 'quiet' ? (
+      <span className={`catalog-card-badge is-${badge.tone}`} data-testid="shelf-badge" title={badge.title}>
+        {badge.label}
+      </span>
+    ) : (
+      <button
+        className={`catalog-card-badge is-${badge.tone}`}
+        data-testid={status === 'editedHere' ? 'shelf-put' : status === 'sameIdDifferentPart' ? 'shelf-rename' : 'shelf-use'}
+        disabled={!editable}
+        title={badge.title}
+        onClick={() => onShelfBadge(pkg, status)}
+      >
+        {badge.label}
+      </button>
+    )
+  }
 
   return (
     <div
@@ -223,27 +460,15 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
         setDropping(false)
         if (state.readOnly || !dragHasFiles(e)) return
         e.preventDefault()
-        void importFiles(
-          Array.from(e.dataTransfer.files).filter(
-            (f) => /\.(json|oippart)$/i.test(f.name) || f.type === 'application/json',
-          ),
-        )
+        importDrop(readPartDrop(e))
       }}
     >
       <div className="dock-header">
         <span className="dock-title">{t(M.title)}</span>
         <button
           className="catalog-author"
-          // a new part opens in the Part Editor, which a room refuses (store.enterPackageEdit): in a room the click
-          // would only add a part nobody can open
-          disabled={state.readOnly || state.collab}
-          title={
-            state.readOnly
-              ? t(M.viewOnly)
-              : state.collab
-                ? t(M.partEditorInRoom)
-                : t(M.newPartTitle)
-          }
+          disabled={state.readOnly}
+          title={state.readOnly ? t(M.viewOnly) : t(M.newPartTitle)}
           onClick={() => controller?.createBlankPart()}
         >
           {t(M.newPart)}
@@ -251,8 +476,26 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
         <button
           className="catalog-author"
           disabled={state.readOnly || !controller}
-          title={state.readOnly ? t(M.viewOnly) : t(M.importTitle)}
-          onClick={() => importRef.current?.click()}
+          data-testid="catalog-import"
+          title={state.readOnly ? t(M.viewOnly) : getOipPartsApi() ? t(M.importTitleDesktop) : t(M.importTitle)}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect()
+            menuAt.current = { x: r.left, y: r.bottom }
+            setMenu({
+              x: r.left,
+              y: r.bottom,
+              items: [
+                { label: t(M.importFiles), title: t(M.importFilesTitle), testid: 'catalog-import-files', onClick: () => importRef.current?.click() },
+                // the desktop also imports a folder of parts (packageSource.ts), where a browser cannot read one
+                ...(getOipPartsApi() && store
+                  ? [{ label: t(M.importFolder), title: t(M.importFolderTitle), testid: 'catalog-import-folder', onClick: () => void importPartsFolder(store) }]
+                  : []),
+                { label: t(M.importModel), title: t(M.importModelTitle), testid: 'catalog-import-model', onClick: () => importModelRef.current?.click() },
+                { label: t(M.importRobotFile), title: t(M.importRobotFileTitle), testid: 'catalog-import-robot-file', onClick: () => importRobotFileRef.current?.click() },
+                { label: t(M.importRobot), title: t(M.importRobotTitle), testid: 'catalog-import-robot', onClick: () => importRobotRef.current?.click() },
+              ],
+            })
+          }}
         >
           <ImportIcon size="1em" /> {t(M.importPart)}
         </button>
@@ -266,35 +509,34 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
         >
           {t(M.getParts)}
         </button>
-        <input ref={importRef} type="file" accept=".oippart,.json,application/json" multiple hidden onChange={onImportFile} />
-        <div className="catalog-tabs">
+        <input ref={importRef} type="file" accept={`.oippart,.json,application/json,${MODEL_ACCEPT},.urdf,.xacro,.zip`} multiple hidden onChange={onImportFile} />
+        <input ref={importModelRef} type="file" accept={MODEL_ACCEPT} hidden onChange={onImportFile} data-testid="catalog-import-model-input" />
+        <input ref={importRobotFileRef} type="file" accept=".zip,.urdf,.xacro" multiple hidden onChange={onImportFile} data-testid="catalog-import-robot-file-input" />
+        {/* webkitdirectory is not in React's input attributes; every browser and Electron read it */}
+        <input ref={importRobotRef} type="file" hidden onChange={(e) => void onPickRobotFolder(e)} data-testid="catalog-import-robot-input" {...{ webkitdirectory: '' }} />
+        {/* the row scrolls sideways when the categories outgrow it; the wheel scrolls it, since its scrollbar is hidden */}
+        <div
+          className="catalog-tabs segmented"
+          role="group"
+          onWheel={(e) => {
+            if (e.deltaY !== 0 && e.currentTarget.scrollWidth > e.currentTarget.clientWidth) e.currentTarget.scrollLeft += e.deltaY
+          }}
+        >
           {tabs.map((c) => (
             <button
               key={c}
-              className={`catalog-tab${!searching && !onSource && c === activeCategory ? ' active' : ''}`}
+              className={`catalog-tab${!searching && c === activeCategory ? ' active' : ''}`}
               data-tutorial={`catalog-${c}`}
+              data-category={c}
+              title={isStandardCategory(c) ? undefined : c}
               onClick={() => {
                 setQuery('')
                 setCategory(c)
-                setOnShelf(false)
               }}
             >
-              {t(CATEGORY_LABEL[c])}
+              {categoryLabel(c)}
             </button>
           ))}
-          {shelfApi && (
-            <button
-              className={`catalog-tab${showShelf ? ' active' : ''}`}
-              data-testid="catalog-tab-shelf"
-              title={t(M.shelfTitle)}
-              onClick={() => {
-                setQuery('')
-                setOnShelf(true)
-              }}
-            >
-              {t(M.shelf)}
-            </button>
-          )}
         </div>
         {/* the hint ellipsizes when the row is short of room (.catalog-placing-hint), so each carries its text as a title */}
         {state.readOnly ? (
@@ -325,12 +567,27 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
       {/* the app has newer versions of parts this project holds copies of: Update all / Review (docs/part-sources.md) */}
       <PartUpdatesNotice state={state} controller={controller} />
       <div className="catalog-strip">
-        {showShelf && shelfApi && (
-          <Suspense fallback={null}>
-            <CatalogShelf state={state} controller={controller} api={shelfApi} query={q} packageThumbnails={packageThumbnails} />
-          </Suspense>
+        {/* a shelf part that could not be read is missing from its tab; say so where it would be */}
+        {shelfApi && shelf && (shelf.error !== null || (shelf.listing?.problems.length ?? 0) > 0) && (
+          <div className="catalog-shelf-bar" data-testid="shelf-problems">
+            <span
+              className="catalog-shelf-problems"
+              title={shelf.listing?.problems.map((p) => `${p.dir}: ${p.message}`).join('\n') ?? ''}
+            >
+              {(() => {
+                // the folder itself (an offline share, a lost permission) is not a part that failed
+                const folderProblem = shelf.listing?.problems.find((p) => p.dir === shelf.listing?.root)
+                if (shelf.error !== null) return t(M.shelfReadFailed, { error: shelf.error })
+                if (folderProblem) return t(M.shelfReadFailed, { error: folderProblem.message })
+                return t(M.shelfUnreadable, { count: shelf.listing?.problems.length ?? 0 })
+              })()}
+            </span>
+            <button className="catalog-author" onClick={() => void shelfApi.reveal()} title={t(M.showFolderTitle)}>
+              {t(M.showFolder)}
+            </button>
+          </div>
         )}
-        {!onSource && defs.map((def) => {
+        {defs.map((def) => {
           const active = state.mode === 'placing' && state.placingType === def.type
           // a view-only link disables placement entirely (the card is inert, greyed out)
           const blocked =
@@ -398,7 +655,7 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
             </button>
           )
         })}
-        {!onSource && customCards.map((pkg) => {
+        {customCards.map((pkg) => {
           const active = state.mode === 'placing' && state.placingType === 'part' && state.placingPackageId === pkg.id
           const blocked = state.readOnly
           // a failed save keeps the last-good package registered; flag the card so the author knows the
@@ -411,10 +668,28 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
           const shadowsBundled = userCopy && bundledById.has(pkg.id)
           const lost = ownCopy !== undefined && editedSinceCopied(ownCopy)
           const editingThis = state.packageEdit?.packageId === pkg.id
+          const shelfPart = shelfById.get(pkg.id)
+          const update = updateById.get(pkg.id)
+          // a shelf version of a built-in the project uses unchanged, or not yet: offered, never placed in its stead
+          const builtIn = bundledById.get(pkg.id)
+          const plainBuiltIn = builtIn !== undefined && (ownCopy === undefined)
+          const shelfStatus: CardShelfStatus | null = !shelfPart
+            ? null
+            : plainBuiltIn && !sameAsBuiltIn(shelfPart, builtIn)
+              ? 'shelfVersion'
+              : statusInProject(state, shelfPart)
+          // only a part this project made or changed is worth putting on the shelf; a stock built-in is in every project
+          const canShelve = shelf !== null && ownCopy !== undefined
           return (
             <div
               key={`pkg:${pkg.id}`}
               className={`catalog-card catalog-card-prefab catalog-card-custom${userCopy ? ' catalog-card-deletable' : ''}`}
+              data-shelf-status={shelfStatus ?? (canShelve && shelf.listing ? 'notOnShelf' : undefined)}
+              onContextMenu={(e) => {
+                if (!canShelve) return
+                e.preventDefault()
+                setMenu({ x: e.clientX, y: e.clientY, items: [putItem(ownCopy, shelfStatus)] })
+              }}
             >
             <button
               className={`catalog-card-main${active ? ' active' : ''}${buildError ? ' has-build-error' : ''}`}
@@ -430,7 +705,7 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
                       // the phrase actually means to a reader: a part they imported or authored - provenance
                       // nothing else on the card shows. A first-party package gets its bare name: the tooltip is
                       // still useful because the label ellipsizes, but its category is just the tab you are on.
-                      // A library copy says who made it (editor/partCredit.ts).
+                      // A library copy says who made it (editor/parts/partCredit.ts).
                       bundledSet.has(pkg) ? pkg.name : pkg.credit ? t(M.credited, { name: pkg.name, credit: partCreditText(pkg) }) : t(M.customPart, { name: pkg.name })
               }
               onClick={(e) => keyboardPlace(e, 'part', pkg.id)}
@@ -478,29 +753,30 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
               </span>
               <span className="catalog-card-label">{pkg.name}</span>
             </button>
-            {/* this project's version of a built-in the app has changed since (core/builtInVersion.ts) */}
-            {updatedBuiltIns.has(pkg.id) && controller && (
-              <button
-                className="catalog-card-updated"
-                data-testid="catalog-builtin-updated"
-                disabled={state.readOnly}
-                title={t(M.updatedTitle, { text: builtInUpdatedText(pkg.name, editedHere(pkg.id)) })}
-                onClick={(e) => setUpdateMenu({ x: e.clientX, y: e.clientY, id: pkg.id, name: pkg.name })}
-              >
-                {t(M.updated)}
-              </button>
+            {/* always-visible badges, stacked in the corner: what to decide about this part, not hover tools */}
+            {(update || shelfStatus) && (
+              <span className="catalog-card-badges">
+                {/* a newer version where the part came from: the app, a part library or the shelf */}
+                {update && controller && (
+                  <button
+                    className={`catalog-card-badge is-${update.edited ? 'warn' : 'act'}`}
+                    data-testid="part-update"
+                    data-source={update.source}
+                    disabled={state.readOnly}
+                    title={updateTitle(update)}
+                    onClick={() => void reviewUpdate(controller, update)}
+                  >
+                    {t(M.update)}
+                  </button>
+                )}
+                {/* what the shelf's part of this id is to this project (docs/parts-shelf.md) */}
+                {shelfStatus && badgeElement(pkg, shelfStatus)}
+              </span>
             )}
             <button
               className="catalog-card-edit"
-              // store.enterPackageEdit refuses in a room (its throwaway instance would reach every peer)
-              disabled={state.readOnly || state.collab}
-              title={
-                state.readOnly
-                  ? t(M.viewOnly)
-                  : state.collab
-                    ? t(M.partEditorInRoom)
-                    : t(M.editInPartEditor, { name: pkg.name })
-              }
+              disabled={state.readOnly}
+              title={state.readOnly ? t(M.viewOnly) : t(M.editInPartEditor, { name: pkg.name })}
               onClick={() => controller?.editPartPackage(pkg.id)}
             >
               <PencilIcon size="1em" />
@@ -511,7 +787,9 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
               onClick={() => {
                 const part = getPackage(pkg.id) ?? pkg
                 // a built-in copy's model travels in the file as its bytes, not as a path into this app
-                void warmShippedAssets([part]).then(() => downloadPart(part, { assetBytes: shippedAssetBytes }))
+                void warmShippedAssets([part])
+                  .then(() => downloadPart(part, { assetBytes: shippedAssetBytes }))
+                  .catch((e: unknown) => console.warn('[oip] exporting the part failed', e))
               }}
             >
               <ExportIcon size="1em" />
@@ -530,13 +808,11 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
             {userCopy && (
               <button
                 className="catalog-card-remove"
-                disabled={state.readOnly || state.collab || editingThis}
+                disabled={state.readOnly || editingThis}
                 title={
                   state.readOnly
                     ? t(M.viewOnly)
-                    : state.collab
-                      ? t(M.deleteInRoom)
-                      : editingThis
+                    : editingThis
                         ? t(M.openForEditing)
                         : shadowsBundled
                           ? t(M.revertTitle, { name: pkg.name })
@@ -565,16 +841,39 @@ export function Catalog({ state, controller, thumbnails, packageThumbnails, pend
             </div>
           )
         })}
-        {!onSource && defs.length === 0 && customCards.length === 0 && (
+        {/* shelf parts this project has no copy of: pressing the card copies the part in, then places it */}
+        {shelfCards.map((pkg) => (
+          <div key={`shelf:${pkg.id}`} className="catalog-card catalog-card-prefab catalog-card-shelf" data-shelf-status="notInProject">
+            <CatalogPlaceButton
+              pkg={pkg}
+              blocked={!editable}
+              title={state.readOnly ? t(M.viewOnly) : t(M.fromShelf, { name: pkg.name })}
+              state={state}
+              controller={controller}
+              image={pkg.thumbnail ?? shelf?.listing?.thumbnails.get(pkg.id)}
+              beforePlace={() => {
+                setPlacingFromShelf(pkg.id)
+                if (store && statusInProject(store.getState(), pkg) === 'notInProject') copyFromShelf(store, pkg)
+              }}
+            />
+            <span className="catalog-card-badges">{badgeElement(pkg, 'notInProject')}</span>
+          </div>
+        ))}
+        {searching && defs.length === 0 && customCards.length === 0 && shelfCards.length === 0 && (
           <p className="catalog-hint">{t(M.noMatch, { query })}</p>
         )}
       </div>
-      {updateMenu && controller && (
-        <ContextMenu
-          x={updateMenu.x}
-          y={updateMenu.y}
-          items={builtInUpdateChoices(controller, updateMenu.id, updateMenu.name, editedHere(updateMenu.id))}
-          onClose={() => setUpdateMenu(null)}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      {robotOptions && (
+        <RobotOptionsDialog
+          file={robotOptions.root.split('/').pop() ?? robotOptions.root}
+          switches={robotOptions.switches}
+          onClose={() => setRobotOptions(null)}
+          onImport={(changed) => {
+            const { files, root, args } = robotOptions
+            setRobotOptions(null)
+            void importRobot(files, root, { ...args, ...changed }, true)
+          }}
         />
       )}
     </div>

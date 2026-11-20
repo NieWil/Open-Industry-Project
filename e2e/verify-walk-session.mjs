@@ -16,7 +16,7 @@
 // The crosshair is stubbed (view.pilotLookParts / pilotLookDockLeaf) rather than aimed: what is under test is
 // what a press routes to, not the raycast (verify-pilot-idle-use.mjs and verify-pilot-dock-door.mjs aim).
 // Run: node e2e/verify-walk-session.mjs [--headed]
-/* global process, console, window, localStorage, location, performance, requestAnimationFrame */
+/* global process, console, window, localStorage, location, performance, requestAnimationFrame, sessionStorage */
 import { startServer } from './_server.mjs'
 import { chromium } from 'playwright'
 
@@ -44,20 +44,21 @@ async function main() {
     // a first-ever visitor on the landing page's "See it run" link
     await page.goto(URL)
     await waitForApp(page)
-    await page.evaluate(() => { localStorage.clear(); localStorage.setItem('oip-web/tutorial-done', '1') })
+    // the tab's own open-project pointer is in sessionStorage (libraryDb.ts): clear it too, or the demo tab keeps the first visit's project
+    await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); localStorage.setItem('oip-web/tutorial-done', '1') })
     await page.goto(`${URL}?scene=demo`)
     await waitForApp(page)
     await waitForAssets(page)
     await page.waitForTimeout(1500)
 
     /** everything that says whether the demo has been forked, or anything edited */
-    const status = () => page.evaluate(() => {
+    const status = () => page.evaluate(async () => {
       const s = window.__oip.store.getState()
       return {
         demoSession: s.demoSession,
         notice: s.demoForkNotice !== null,
         canUndo: window.__oip.store.canUndo,
-        doc: localStorage.getItem('oip-web/project'),
+        doc: (await window.__oip.savedProject()),
         url: location.search,
       }
     })

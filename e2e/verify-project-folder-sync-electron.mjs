@@ -1,5 +1,5 @@
 // End-to-end check that on the desktop a project is stored in its folder, kept in sync both ways
-// (src/editor/projectFolderSync.ts, docs/projects.md). Launches the real Electron shell (real preload,
+// (src/editor/project/projectFolderSync.ts, docs/projects.md). Launches the real Electron shell (real preload,
 // real IPC, real fs writes and the real guarded-write path) with a throwaway profile, and drives it:
 //
 //   1. an app-only project's first real edit gives it a folder in the default projects folder, which,

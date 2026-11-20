@@ -1,6 +1,6 @@
 import type { Object3D } from 'three'
 import type { PartInstance, PartType } from '../../core/types'
-import type { ResolvedContext } from '../../core/sceneResolve'
+import type { ResolvedContext } from '../../core/scene/sceneResolve'
 import { isSpeculativeWarm } from '../gltf'
 import { dressMetals } from '../metalEnvironment'
 import { createBuildingVisual } from './building'

@@ -1,4 +1,4 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 // A loaded pallet must stay on the deck it rides.
 //
 // A pallet stands on nine 0.1 m blocks under a load many times its own mass. With Jolt's default solver
@@ -13,9 +13,9 @@ import type { PackageManifest } from '../core/partPackage'
 import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
 import { CARGO_KIND_PALLET } from '../core/frame'
-import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/partPackage'
-import { registerPackage } from '../core/partRegistry'
-import { createSdkPart } from '../core/scene'
+import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/parts/partPackage'
+import { registerPackage } from '../core/parts/partRegistry'
+import { createSdkPart } from '../core/scene/scene'
 import { MAX_SIM_HZ, MIN_SIM_HZ, SCENE_VERSION } from '../core/types'
 import type { PartInstance, SimRate } from '../core/types'
 import { buildPackage } from './buildPackage'
@@ -55,19 +55,20 @@ const PALLET_REST_Y = DECK_Y + 0.0675 // deck top + half the 0.135 m pallet
 const START_Z = 2.5
 
 /**
- * A pallet carrying `load` kg in fifteen cases, riding a running 8 m roller deck for 4 s at `hz`. Returns how
- * far below its resting height the pallet ever got. `withoutOverride` clears the pallet's solver override
- * after build - the control that shows what the override is holding back.
+ * A pallet carrying `load` kg in fifteen cases, riding a running 8 m roller deck for 4 s at `hz`, set down `shift` m
+ * further along the deck than START_Z. Returns how far below its resting height the pallet ever got.
+ * `withoutOverride` clears the pallet's solver override after build - the control that shows what the override is
+ * holding back.
  */
-function loadedPallet(hz: SimRate, load: number, withoutOverride = false): number {
+function loadedPallet(hz: SimRate, load: number, withoutOverride = false, shift = 0): number {
   const deck = createSdkPart(ROLLER_PKG, 'deck', [0, DECK_Y, 0], Math.PI / 2)
   Object.assign(deck.params, { length: 8, width: 1.35, standHeight: DECK_Y, speed: 0.4, leftGuard: false, rightGuard: false })
-  const pallet = createSdkPart(PALLET_PKG, 'pallet', [0, PALLET_REST_Y, START_Z], 0)
+  const pallet = createSdkPart(PALLET_PKG, 'pallet', [0, PALLET_REST_Y, START_Z + shift], 0)
   const parts: PartInstance[] = [deck, pallet]
   for (let course = 0; course < 3; course++) {
     const flip = course % 2 === 1 ? -1 : 1
     for (const c of LAYER) {
-      const box = createSdkPart(BOX_PKG, `c${parts.length}`, [flip * c.dx, PALLET_REST_Y + 0.2675 + course * CASE_H, START_Z + flip * c.dz], ((c.turned ? -1 : 0) + (flip < 0 ? 2 : 0)) * (Math.PI / 2))
+      const box = createSdkPart(BOX_PKG, `c${parts.length}`, [flip * c.dx, PALLET_REST_Y + 0.2675 + course * CASE_H, START_Z + shift + flip * c.dz], ((c.turned ? -1 : 0) + (flip < 0 ? 2 : 0)) * (Math.PI / 2))
       box.params.mass = load / 15
       parts.push(box)
     }
@@ -100,6 +101,19 @@ describe('a loaded pallet on a running roller deck', () => {
     // 75-1000 Hz stays at ~0.5 cm. The line is set against the failure, which stalls the pallet at 13 cm or worse.
     expect(loadedPallet(hz, 1500)).toBeLessThan(4)
   }, 60000)
+
+  it('holds 1500 kg at 60 Hz from wherever it is set down', SLOW, () => {
+    // 60 Hz is the marginal rate, and whether a load sinks there depends on where the pallet's blocks meet the
+    // rollers when the contacts first load. One start position can pass by luck: with 40 velocity iterations 9 of
+    // these 24 sank 4.2-6.2 cm (and 1-3 of 48 placements 2 mm apart went through the deck). So the claim is checked
+    // over 10 cm of placements.
+    const sunk: string[] = []
+    for (let k = 0; k < 24; k++) {
+      const cm = loadedPallet(MIN_SIM_HZ, 1500, false, k * 0.0042)
+      if (cm >= 4) sunk.push(`${(k * 4.2).toFixed(1)} mm: ${cm.toFixed(1)} cm`)
+    }
+    expect(sunk).toEqual([])
+  })
 
   it('sinks without the solver override, so the test above is watching the real failure', SLOW, () => {
     // measured at 1050 kg with blocks that stop at the deck's underside: 13.0 cm, the blocks all the way in and the

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { evalPartGeometry } from '../../core/geometryEval'
-import { instantiatePartScript, resolvePartParams } from '../../core/partScript'
-import type { InstanceTransform, MeshPart, ParamValue } from '../../core/partApi'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import { instantiatePartScript, resolvePartParams } from '../../core/parts/partScript'
+import type { InstanceTransform, MeshPart, ParamValue } from '../../core/parts/partApi'
 import { examplePart, examplePartIds } from './examplePart'
 
 // No mirrored instances: a catalog-wide shading invariant.

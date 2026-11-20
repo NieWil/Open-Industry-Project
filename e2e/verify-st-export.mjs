@@ -353,12 +353,50 @@ END_CONFIGURATION`
     const pouRows = page.locator(':is([data-testid="org-pou"], [data-testid="org-top"]) .org-name')
     check('a multi-POU program is listed in the organizer', (await pouRows.count()) === 2, `pouRows=${await pouRows.count()}`)
     check('the organizer names the program body and the function block',
-      (await pouRows.allTextContents()).join(',') === 'Main,Seal',
+      (await pouRows.allTextContents()).join(',') === 'Top-level code,Seal',
       (await pouRows.allTextContents()).join(','))
     await page.locator('[data-testid="org-pou"]').first().click()
     await page.waitForTimeout(250)
     const activeLine = (await page.locator('.cm-activeLine').first().textContent().catch(() => '')) ?? ''
     check('clicking a block puts the cursor in it', /FUNCTION_BLOCK Seal/.test(activeLine), activeLine.slice(0, 40))
+
+    // ---- several controllers: each PLC's own file ----
+    console.log('--- one file per controller ---')
+    await page.evaluate(() => {
+      const st = window.__oip.store
+      st.commitProgram('Two controllers', {
+        source: 'FUNCTION_BLOCK Hold\nVAR_INPUT\n  x : BOOL;\nEND_VAR\nVAR_OUTPUT\n  q : BOOL;\nEND_VAR\nq := x;\nEND_FUNCTION_BLOCK\n\n' +
+          'FUNCTION_BLOCK Unused\nVAR\n  n : INT;\nEND_VAR\nn := n + 1;\nEND_FUNCTION_BLOCK\n\n' +
+          'PROGRAM Line\nVAR_INPUT\n  Eye : BOOL;\nEND_VAR\nVAR_OUTPUT\n  Run : BOOL;\nEND_VAR\nVAR\n  h : Hold;\nEND_VAR\nh(x := NOT Eye);\nRun := h.q;\nEND_PROGRAM\n\n' +
+          'VAR_INPUT\n  Start : BOOL;\nEND_VAR\nVAR_OUTPUT\n  Lamp : BOOL;\nEND_VAR\nLamp := Start;\n',
+        controller: {
+          tasks: [{ name: 'MainTask', intervalMs: 10, priority: 10 }, { name: 'Cell2Task', intervalMs: 20, priority: 10, plc: 'Cell2' }],
+          programs: [{ name: 'Main', task: 'MainTask' }, { name: 'LineB', type: 'Line', task: 'Cell2Task' }],
+        },
+      })
+      st.addNamedPlc('Cell2')
+      st.setPlcRunsOn('Cell2', 'app')
+    })
+    const cell2Head = page.locator('[data-testid="org-plc"][data-plc="Cell2"] [data-testid="org-plc-head"]')
+    await cell2Head.waitFor({ timeout: 10000 })
+    await cell2Head.click({ button: 'right' })
+    const [cell2Dl] = await Promise.all([page.waitForEvent('download', { timeout: 45000 }), page.locator('[data-testid="org-export-st"]').click()])
+    const cell2Text = await (async () => {
+      const chunks = []
+      for await (const c of await cell2Dl.createReadStream()) chunks.push(c)
+      return Buffer.concat(chunks).toString('utf8')
+    })()
+    check("Cell2's node exports Cell2's program: its task, its instance and the block it calls",
+      /cell2/i.test(cell2Dl.suggestedFilename()) && /TASK Cell2Task/.test(cell2Text) && /PROGRAM LineB WITH Cell2Task : Line/.test(cell2Text) && /FUNCTION_BLOCK Hold/.test(cell2Text),
+      `${cell2Dl.suggestedFilename()}: ${cell2Text.length} chars`)
+    check("...and nothing it does not run: no MainTask, no default controller's own code, no unused block",
+      !/MainTask/.test(cell2Text) && !/Lamp := Start/.test(cell2Text) && !/FUNCTION_BLOCK Unused/.test(cell2Text), cell2Text.slice(0, 120).replace(/\n/g, ' '))
+    const main = await download(page, 'Export PLC Program (.st)')
+    const mainReport = (await page.locator('[data-testid="st-file-report"]').innerText().catch(() => '')) ?? ''
+    check("the File menu exports the default controller's program, and says Cell2 exports from its own node",
+      /TASK MainTask/.test(main.text) && !/Cell2Task/.test(main.text) && /Lamp := Start/.test(main.text) && /Cell2 has its own file/.test(mainReport),
+      `${main.name}; ${mainReport.replace(/\s+/g, ' ').slice(0, 160)}`)
+    check('...leaving out the blocks the default controller does not use, by name', /Left out .*Unused/.test(mainReport) && !/FUNCTION_BLOCK Unused/.test(main.text), mainReport.replace(/\s+/g, ' ').slice(0, 200))
 
     // ---- a program that does not compile must not export ----
     await setDoc(page, 'VAR a : INT; END_VAR\na := Missing;')

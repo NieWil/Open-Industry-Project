@@ -459,5 +459,5 @@ definePart({
       { mesh: plates, material: 'rackLabel' },
     ])
   },
-  step() {},
+  react() {},
 })

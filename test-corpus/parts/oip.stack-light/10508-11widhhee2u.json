@@ -1,0 +1,653 @@
+{
+  "format": 6,
+  "id": "oip.stack-light",
+  "name": "Stack Light",
+  "params": {
+    "segments": {
+      "type": "number",
+      "default": 3,
+      "min": 1,
+      "max": 8,
+      "step": 1,
+      "label": "Tiers",
+      "desc": "How many lamp tiers are stacked. Colours are fixed and cycle bottom-up: green, amber, red, blue, white."
+    },
+    "value": {
+      "type": "number",
+      "bits": "segments",
+      "default": 1,
+      "min": 0,
+      "max": 255,
+      "step": 1,
+      "label": "Lit tiers",
+      "group": "Start state",
+      "desc": "Which tiers are lit, one box per tier, the BOTTOM tier first (bit 0 of the bitmask the tag carries: 1 lights green, 2 amber, 3 both). Bits above the segment count are masked off. A program driving the tag below replaces this value."
+    },
+    "tag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "INT",
+      "autoWhenDriven": true,
+      "setpointFor": "value",
+      "default": "",
+      "label": "Lamp bitmask tag",
+      "group": "Comms",
+      "desc": "The program writes the lit-tier bitmask here. While it drives the tag it OWNS the light, so the Value field above becomes a read-only readout and a hand Use is refused with \"In auto - PLC controlled\"."
+    }
+  },
+  "behavior": "// Stack Light — a parametric 1-8 segment signal tower. Each segment is an emissive lens lamp; one integer\n// bitmask lights them — bit i (LSB = the bottom segment) lights segment i+1, colours cycling bottom-up\n// green → amber → red → blue → white. The bitmask comes from a PLC INT tag while a program actually DRIVES it\n// (ctx.tagDriven); any other time the authored 'value' param drives the same lamps. Bits above the\n// segment count are masked off. Use/click is a LAMP TEST: every tier lights briefly, then the pattern returns.\n//\n// The tower: a black housing (foot + stem + base collar + seam rings + floating cap under a low cone roof)\n// carrying 1-8 tinted lens tiers around a pale inner core. 'segments' drives the tower height: the cap, core,\n// seam rings and the hidden collision shell all track it.\n//\n// Per-tier links (not array-links): each lens needs its own emissive colour + lamp name, which an array's\n// shared shape can't express, so all 8 are built and the unused ones collapse out of sight (see `tier`).\n// That costs no draws: the host folds same-shape lamp links into ONE instanced lamp bank\n// (src/render/parts/lampBank.ts), so the 8 tiers are a single draw however many are in use.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// ---- geometry (primitive cylinders) ------------------------------------------------------------------------\nconst MAX_SEGS = 8\nconst DEF_SEGS = 3\n\nconst LAMPS = ['seg1', 'seg2', 'seg3', 'seg4', 'seg5', 'seg6', 'seg7', 'seg8']\n// How long a lamp test holds. Keep it under half a second: the stopped editor's C preview (sim/idlePose.ts\n// recordPress) stops watching a press after 30 still ticks, and a test still lit then reads as a LATCH, which\n// the preview answers with a second press.\nconst LAMP_TEST_S = 0.4\nlet test = 0 // seconds of lamp test left\n\ndefinePart({\n  interactive: true, // Use/click runs a lamp test\n  lamps: LAMPS,\n  params: {\n    segments: { type: 'number', default: DEF_SEGS, min: 1, max: MAX_SEGS, step: 1, label: 'Tiers', desc: 'How many lamp tiers are stacked. Colours are fixed and cycle bottom-up: green, amber, red, blue, white.' },\n    value: { type: 'number', bits: 'segments', default: 1, min: 0, max: 255, step: 1, label: 'Lit tiers', group: 'Start state', desc: 'Which tiers are lit, one box per tier, the BOTTOM tier first (bit 0 of the bitmask the tag carries: 1 lights green, 2 amber, 3 both). Bits above the segment count are masked off. A program driving the tag below replaces this value.' },\n    // autoWhenDriven: this tag COMMANDS the lamps (the step's auto gate reads it), so a program driving it\n    // owns the device — the pilot prompt shows \"In auto - PLC controlled\" instead of a dead \"Use\".\n    tag: { type: 'tag', dir: 'in', stType: 'INT', autoWhenDriven: true, setpointFor: 'value', default: '', label: 'Lamp bitmask tag', group: 'Comms', desc: 'The program writes the lit-tier bitmask here. While it drives the tag it OWNS the light, so the Value field above becomes a read-only readout and a hand Use is refused with \"In auto - PLC controlled\".' },\n  },\n  step(ctx) {\n    const segs = Math.min(MAX_SEGS, Math.max(1, Math.round(ctx.params.segments)))\n    const all = (1 << segs) - 1\n    // Output ownership (ctx.tagDriven): the tag lights the lamps only while a controller actually drives it —\n    // gating on the tag NAME instead would pin the tower to a dead tag the moment one was typed. Release falls\n    // back to the authored pattern instead of freezing the last commanded one (right for an indicator).\n    const auto = ctx.tagDriven(ctx.params.tag)\n    // Use = a lamp test, in hand mode only: while a program drives the tag it owns the light, and the press is\n    // refused (\"In auto - PLC controlled\"). It never changes the pattern — that is the Value field's, or the PLC's.\n    if (ctx.used() && !auto) test = LAMP_TEST_S\n    test = Math.max(0, test - ctx.dt)\n    const v = (auto ? ctx.readNumber(ctx.params.tag) : Math.round(ctx.params.value)) & all // mask to the segment count\n    ctx.report('value', v) // the pattern (masked), which is what 'value' means; a lamp test doesn't change it\n    const lit = test > 0 ? all : v\n    for (let i = 0; i < LAMPS.length; i++) ctx.lamps[LAMPS[i]] = i < segs && ((lit >> i) & 1) === 1\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "foot",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.05,
+          "height": 0.012
+        },
+        "offset": [
+          0,
+          0.006,
+          0
+        ],
+        "color": [
+          0.0086,
+          0.0091,
+          0.011
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "stem",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.013,
+          "height": 0.184
+        },
+        "offset": [
+          0,
+          0.104,
+          0
+        ],
+        "color": [
+          0.0086,
+          0.0091,
+          0.011
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "base",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.035,
+          "height": 0.025
+        },
+        "offset": [
+          0,
+          0.2085,
+          0
+        ],
+        "color": [
+          0.0086,
+          0.0091,
+          0.011
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "core",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.029000000000000005,
+          "height": 0.15,
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "segments",
+              "scale": 0.05
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.296,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.025,
+            "add": 0.221
+          }
+        ],
+        "color": [
+          0.792,
+          0.819,
+          0.933
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "seg1",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.035,
+          "height": 0.05
+        },
+        "offset": [
+          0,
+          0.246,
+          0
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              0.0232,
+              0.3372,
+              0.0423
+            ],
+            "offColor": [
+              0.017,
+              0.0623,
+              0.0242
+            ],
+            "opacity": 0.9216
+          }
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "seg2",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.035,
+          "height": 0.05,
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "segments",
+              "scale": 0.05,
+              "add": -0.05,
+              "min": 0.0002,
+              "max": 0.05
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.296,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.221,
+            "max": 0.296
+          }
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              0.8879,
+              0.5089,
+              0.0048
+            ],
+            "offColor": [
+              0.1381,
+              0.0864,
+              0.0189
+            ],
+            "opacity": 0.9216
+          }
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "seg3",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.035,
+          "height": 0.05,
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "segments",
+              "scale": 0.05,
+              "add": -0.1,
+              "min": 0.0002,
+              "max": 0.05
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.346,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.221,
+            "max": 0.346
+          }
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              0.6724,
+              0.0212,
+              0.0212
+            ],
+            "offColor": [
+              0.1079,
+              0.0181,
+              0.0212
+            ],
+            "opacity": 0.9216
+          }
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "seg4",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.035,
+          "height": 0.0002,
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "segments",
+              "scale": 0.05,
+              "add": -0.15,
+              "min": 0.0002,
+              "max": 0.05
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.371,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.221,
+            "max": 0.396
+          }
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              0.0212,
+              0.1274,
+              0.6724
+            ],
+            "offColor": [
+              0.0167,
+              0.033,
+              0.1124
+            ],
+            "opacity": 0.9216
+          }
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "seg5",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.035,
+          "height": 0.0002,
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "segments",
+              "scale": 0.05,
+              "add": -0.2,
+              "min": 0.0002,
+              "max": 0.05
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.371,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.221,
+            "max": 0.446
+          }
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              0.807,
+              0.807,
+              0.807
+            ],
+            "offColor": [
+              0.1267,
+              0.1281,
+              0.1312
+            ],
+            "opacity": 0.9216
+          }
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "seg6",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.035,
+          "height": 0.0002,
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "segments",
+              "scale": 0.05,
+              "add": -0.25,
+              "min": 0.0002,
+              "max": 0.05
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.371,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.221,
+            "max": 0.496
+          }
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              0.0232,
+              0.3372,
+              0.0423
+            ],
+            "offColor": [
+              0.017,
+              0.0623,
+              0.0242
+            ],
+            "opacity": 0.9216
+          }
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "seg7",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.035,
+          "height": 0.0002,
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "segments",
+              "scale": 0.05,
+              "add": -0.3,
+              "min": 0.0002,
+              "max": 0.05
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.371,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.221,
+            "max": 0.546
+          }
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              0.8879,
+              0.5089,
+              0.0048
+            ],
+            "offColor": [
+              0.1381,
+              0.0864,
+              0.0189
+            ],
+            "opacity": 0.9216
+          }
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "seg8",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.035,
+          "height": 0.0002,
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "segments",
+              "scale": 0.05,
+              "add": -0.35,
+              "min": 0.0002
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.371,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.221,
+            "max": 0.596
+          }
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              0.6724,
+              0.0212,
+              0.0212
+            ],
+            "offColor": [
+              0.1079,
+              0.0181,
+              0.0212
+            ],
+            "opacity": 0.9216
+          }
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "ring",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.036500000000000005,
+          "height": 0.006
+        },
+        "offset": [
+          0,
+          0.221,
+          0
+        ],
+        "color": [
+          0.0086,
+          0.0091,
+          0.011
+        ],
+        "collision": "none",
+        "array": {
+          "count": "segments",
+          "step": [
+            0,
+            0.05,
+            0
+          ]
+        }
+      },
+      {
+        "name": "ringTop",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.036500000000000005,
+          "height": 0.006
+        },
+        "offset": [
+          0,
+          0.371,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.221
+          }
+        ],
+        "color": [
+          0.0086,
+          0.0091,
+          0.011
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "cap",
+        "shape": {
+          "kind": "cylinder",
+          "radius": 0.03150000000000001,
+          "height": 0.014
+        },
+        "offset": [
+          0,
+          0.378,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.228
+          }
+        ],
+        "color": [
+          0.0086,
+          0.0091,
+          0.011
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "dome",
+        "shape": {
+          "kind": "cone",
+          "radius": 0.0315,
+          "height": 0.012
+        },
+        "offset": [
+          0,
+          0.391,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.05,
+            "add": 0.241
+          }
+        ],
+        "color": [
+          0.0086,
+          0.0091,
+          0.011
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "shell",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.07300000000000001,
+            0.385,
+            0.07300000000000001
+          ],
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "segments",
+              "scale": 0.05,
+              "add": 0.235
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.1925,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "segments",
+            "scale": 0.025,
+            "add": 0.1175
+          }
+        ],
+        "hidden": true
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 0.07300000000000001,
+      "width": 0.07300000000000001,
+      "top": 0.385
+    }
+  },
+  "category": "Devices",
+  "interactive": true,
+  "materials": [],
+  "sdk": {
+    "level": 6,
+    "of": "v2:9558:77y2xam8zw"
+  }
+}

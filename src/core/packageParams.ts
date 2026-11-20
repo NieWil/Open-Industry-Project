@@ -3,9 +3,9 @@
 // validateScene/normalizePart clamping, and the Inspector). Through this converter, custom parts use the
 // same param pipeline as every built-in type, with no special cases downstream.
 
-import type { ParamSchema } from './partApi'
-import { getPackage } from './partRegistry'
-import type { PartPackage } from './partPackage'
+import type { ParamSchema } from './parts/partApi'
+import { getPackage } from './parts/partRegistry'
+import type { PartPackage } from './parts/partPackage'
 import { PART_DEFS } from './types'
 import type { SdkPart, ParamSpec, PartInstance, VisibleWhen } from './types'
 
@@ -124,6 +124,10 @@ export function schemaToParamSpecs(schema: ParamSchema): ParamSpec[] {
       // to find undriven tags, contested ones, and type clashes.
       if (s.dir === 'in' || s.dir === 'out') spec.dir = s.dir
       if (s.stType === 'BOOL' || s.stType === 'INT' || s.stType === 'DINT' || s.stType === 'REAL') spec.stType = s.stType
+      // the unit the value travels in, shown beside the type (a setpoint tag without one takes its param's, below)
+      if (typeof s.unit === 'string' && s.unit) spec.unit = s.unit
+      // read only while a program drives it: undriven, the part runs on its own setting rather than on a 0
+      if (s.onlyWhenDriven === true || s.autoWhenDriven === true) spec.onlyWhenDriven = true
       // a code tag's meanings, for the field's listing
       if (Array.isArray(s.values)) spec.values = s.values.filter((v) => v && typeof v.value === 'number' && typeof v.label === 'string').map((v) => ({ value: v.value, label: v.label }))
     } else if (s.type === 'partRef') {
@@ -191,12 +195,45 @@ export function schemaToParamSpecs(schema: ParamSchema): ParamSpec[] {
     if (typeof s.desc === 'string' && s.desc) spec.desc = s.desc
     specs.push(spec)
   }
+  // a setpoint tag carries its param's value, so by contract (TagRefParamSpec.setpointFor) it is in that param's unit
+  for (const spec of specs) {
+    if (spec.kind !== 'tagRef' || spec.unit || !spec.setpointFor) continue
+    const target = specs.find((t) => t.key === spec.setpointFor)
+    if (target?.kind === 'number' && target.unit) spec.unit = target.unit
+  }
   return specs
 }
 
-/** The editable ParamSpecs for a custom part backed by `pkg`. */
+// A package's specs by its schema object. A registered package is never changed in place (an edit registers a new
+// one), and every reader of a part's fields asks: the Inspector, the wiring check, and the ladder sheet once per
+// part on every redraw, where working them out afresh for a 420-part line held the page for 0.3 s each time.
+const specsOf = new WeakMap<object, { specs: readonly ParamSpec[]; lists: boolean }>()
+
+const isList = (v: unknown): boolean => typeof v === 'object' && v !== null
+/** a copy of a default that is a list (rows of numbers, wall rules, colours): nothing below it is shared */
+function copyOfDefault<T>(v: T): T {
+  if (Array.isArray(v)) return v.map((x) => copyOfDefault(x)) as T
+  if (isList(v)) return Object.fromEntries(Object.entries(v as object).map(([k, x]) => [k, copyOfDefault(x)])) as T
+  return v
+}
+
+/**
+ * The editable ParamSpecs for a custom part backed by `pkg`. Kept per package, and shared between callers: read
+ * them, never write. A default that is a list is the exception, and is a fresh copy on every call: a part is given
+ * its default as it stands in the spec, and two parts must not come to share one list.
+ */
 export function packageParamSpecs(pkg: PartPackage): ParamSpec[] {
-  return schemaToParamSpecs(pkg.params)
+  const schema = pkg.params as object | undefined
+  if (!schema) return schemaToParamSpecs(pkg.params)
+  let kept = specsOf.get(schema)
+  if (!kept) {
+    // frozen, so a caller that tried to change a shared spec fails where it does so
+    const specs = Object.freeze(schemaToParamSpecs(pkg.params).map((spec) => Object.freeze(spec)))
+    kept = { specs, lists: specs.some((spec) => isList((spec as { default?: unknown }).default)) }
+    specsOf.set(schema, kept)
+  }
+  if (!kept.lists) return kept.specs as ParamSpec[]
+  return kept.specs.map((spec) => (isList((spec as { default?: unknown }).default) ? ({ ...spec, default: copyOfDefault((spec as { default?: unknown }).default) } as ParamSpec) : spec))
 }
 
 /**

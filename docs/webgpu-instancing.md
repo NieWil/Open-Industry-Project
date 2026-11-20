@@ -1,33 +1,27 @@
 # WebGPU instancing: the resize and duplicate hitch
 
-Adding, duplicating or extending an instanced part (a conveyor, for example) can stutter under WebGPU, because three
-compiles a fresh render pipeline for **every** InstancedMesh object. Its vertex WGSL embeds a per-object buffer-struct
-id, so structurally identical banks never share a pipeline. Two mitigations cover it:
+Extending an instanced part (a conveyor, for example) can stutter under WebGPU, because growing a bank past its
+buffer mints a new InstancedMesh, and the buffer capacity is part of its vertex WGSL. **Capacity bucketing**
+(`bucketCapacity`) keeps a resize under its allocated buffer, so no fresh mesh is minted. It works around a coupling in
+three and is unnecessary once three keys render pipelines on structure (see
+[What would make them unnecessary](#what-would-make-them-unnecessary)).
 
-- **Program-cache dedup** (`pipelineDedup.ts`) normalizes that per-object id, so identical banks share one compiled
-  pipeline and adding or duplicating a part costs about what it does under WebGL.
-- **Capacity bucketing** (`bucketCapacity`) keeps a resize under its allocated buffer, so no fresh mesh is minted.
+## How instanced meshes share pipelines under WebGPU
 
-Both work around a coupling in three. They are unnecessary once three keys render pipelines on structure
-(see [What would make them unnecessary](#what-would-make-them-unnecessary)).
+three's `WebGPURenderer` node system renders an InstancedMesh's `instanceMatrix` as a uniform buffer declared in the
+vertex WGSL as `array<mat4x4<f32>, capacity>`. The buffer is named by its index within one shader build
+(`nodeUniform<n>`), not by the mesh. The vertex program is cached by its WGSL string and the render pipeline by the
+program ids (`stageVertex.id + stageFragment.id + backendState`). So two structurally identical banks at the same
+capacity emit the same WGSL and share one program and one pipeline. Consequences:
 
-## The coupling (why every InstancedMesh compiles its own pipeline under WebGPU)
-
-three's `WebGPURenderer` node system renders an InstancedMesh's `instanceMatrix` as a uniform buffer whose WGSL
-struct is named **`NodeBuffer_<node.id>`**: the buffer node's global id, unique per mesh object (see three's
-`createInstanceMatrixNode` and the WGSL builder's `name ? name : 'NodeBuffer_' + id`). The vertex program is
-cached by its WGSL string and the render pipeline by the program id (`stageVertex.id + stageFragment.id +
-backendState`). So two structurally identical instanced meshes emit vertex WGSL that differs only in that struct
-name. That gives a distinct program, a distinct pipeline, and a cold compile for every fresh instanced mesh.
-Consequences:
-
-- **Duplicate, instantiate, paste.** A new part is all fresh meshes, so each bank cold-compiles a pipeline on the draw
-  path. Measured without the mitigations (headed GPU, demo scene), a roller-conveyor duplicate takes about 250 ms and
-  a platform about 1 s, every time. A Diverter (a GLB rig with no instancing) duplicates in about 50 ms because its
-  programs dedupe. So the cost is the instancing, not the part.
+- **Duplicate, instantiate, paste.** A copy of a part already in the scene reuses its banks' pipelines. What remains
+  is the per-object node-to-WGSL **codegen**, which still runs synchronously for every new render object. For heavy
+  parts the incremental pre-warm (`viewWarm.ts` `pumpWarm`) hides it: a freshly added part is held hidden while
+  `compileAsync` runs its codegen off the draw path, then revealed. Measured with the pre-warm, a duplicate hitches
+  about 90 ms (roller) and 120 ms (platform).
 - **Resize, extend.** Growing a bank past its buffer capacity mints a **new** `InstancedMesh` (three also captures
-  `instanceMatrix.array` by reference, so a buffer can't grow in place), and the new object cold-compiles. That is
-  the one-frame hitch when extending a conveyor.
+  `instanceMatrix.array` by reference, so a buffer can't grow in place). A new capacity is a new shader, so the new
+  object cold-compiles. That is the one-frame hitch when extending a conveyor.
 
 Banks are minted in three places:
 
@@ -51,35 +45,9 @@ pipeline is keyed on **shader + vertex format + framebuffer format**, not the bu
 the buffer never invalidates the pipeline, because instance count is a runtime draw parameter, not a pipeline
 property.
 
-## Program-cache dedup (add and duplicate)
-
-`src/render/viewport/pipelineDedup.ts` (`installInstancePipelineDedup(renderer)`) is installed in
-`createWebGPURenderer` right after `renderer.init()`, before any program compiles. It wraps three's internal
-`_pipelines.programs.{vertex,fragment}` maps so their key is normalized: `NodeBuffer_<id>` becomes `NodeBuffer_N`.
-Two shaders that differ only in that per-object struct name map to one cached program and one pipeline, as under
-WebGL. A duplicate of a part already in the scene compiles **0** new bank pipelines. The first instance of a shape
-compiles once and every later copy reuses it.
-
-- **Correct.** The buffer binds by `@group/@binding` (untouched) from each mesh's own bind groups, so sharing a
-  program across distinct instance buffers renders identically. The demo shows no pixel difference between dedup on
-  and `?nopipelinededup`.
-- **Safe merge only.** The id is stripped but not the array size (`array<mat4x4<f32>, capacity>`). Two banks at
-  different capacities keep distinct keys, because merging them would bind a too-small buffer to a shader that
-  reads past it. `bucketCapacity` coarsens capacity so an identical duplicate falls into the same bucket and fully
-  dedupes.
-- **Kill switch.** `?nopipelinededup`. It feature-detects three's map shape and does nothing if a three bump changes
-  it, which degrades to stock per-mesh compiles: slower, never wrong.
-- **Verification.** `e2e/verify-webgpu-duplicate-amortizes.mjs` runs real WebGPU (Dawn) and asserts the second
-  duplicate of a roller conveyor adds at most 4 vertex programs (about 9 with `?nopipelinededup`).
-- **What it does not cover.** The per-object node-to-WGSL **codegen** still runs synchronously on the draw path: the
-  pipeline is reused, but the render object is still built. For heavy parts the incremental pre-warm (`viewWarm.ts`
-  `pumpWarm`) hides that residual: a freshly added part is held hidden while `compileAsync` runs its codegen off the
-  draw path, then revealed. Measured with dedup and pre-warm, a duplicate hitches about 90 ms (roller) and 120 ms
-  (platform), against about 250 ms and 1 s without them.
-
-Binding `instanceMatrix` as a `StorageInstancedBufferAttribute` is not enough on its own: three names the *storage*
-buffer node `NodeBuffer_<id>` too, so the WGSL still differs per object and nothing dedupes. Storage changes
-`var<uniform>` to `var<storage>` but not the naming. The program-cache dedup is what collapses them.
+`e2e/verify-webgpu-duplicate-amortizes.mjs` runs real WebGPU (Dawn) and asserts that the second duplicate of a roller
+conveyor adds at most 4 vertex programs (it adds 0). If a three bump puts a per-object name back into the WGSL, that
+gate fails: every duplicate would then cold-compile its banks (about 14 vertex programs for a roller conveyor).
 
 ## Capacity bucketing (resize)
 
@@ -116,12 +84,12 @@ above).
 
 three keys render pipelines by program id (`Pipelines._getRenderCacheKey` is
 `stageVertex.id + ',' + stageFragment.id + ',' + backend.getRenderCacheKey(renderObject)` in
-`three/src/renderers/common/Pipelines.js`). The mitigations are unneeded if three either:
+`three/src/renderers/common/Pipelines.js`). The capacity workaround is unneeded if three either:
 
 1. keys **render** pipelines on a structural key (shader + binding layout) rather than the mesh, **or**
 2. binds `instanceMatrix` as an **index-read storage buffer** decoupled from the node graph and the object id.
 
-Then `growBank`'s mint-fresh branch, `bucketCapacity` and `pipelineDedup` can all go. Because every per-part bank
+Then `growBank`'s mint-fresh branch and `bucketCapacity` can both go. Because every per-part bank
 grows through `InstanceBank`, removing the mint branch is a one-file change. Related upstream issues:
 
 - [mrdoob/three.js#32099](https://github.com/mrdoob/three.js/issues/32099): an InstancedMesh's instance count is

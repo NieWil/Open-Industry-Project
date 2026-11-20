@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { PartPattern } from '../../../core/partPackage'
+import type { PartPattern } from '../../../core/parts/partPackage'
 import { patternColourAt, patternKey, patternPixels } from './patternTexture'
 
 // A pattern is right when its texels are exactly the declared linear colours (no colour-space conversion on the

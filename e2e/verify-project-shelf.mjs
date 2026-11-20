@@ -132,7 +132,7 @@ const libraryDocs = (page) =>
               index.result.map((meta) => ({
                 id: meta.id,
                 name: meta.name,
-                parts: (payloads.result.find((p) => p.id === meta.id)?.project.scene?.parts ?? [])
+                parts: (((r) => r && (r.project ?? JSON.parse(r.text)))(payloads.result.find((p) => p.id === meta.id))?.scene?.parts ?? [])
                   .filter((p) => p.id.startsWith('shelf_'))
                   .map((p) => p.name),
               })),
@@ -259,6 +259,36 @@ async function main() {
     expect((await page.title()) === `Line A - ${APP_TITLE}`, `back in Line A (${await page.title()})`)
     expect((await tabs(page)) === 'Sorter', `with its part intact (${await tabs(page)})`)
 
+    console.log('--- the project menu lists the other projects, one click from open ---')
+    // read from the library when the menu opens, so the rows arrive after the menu does
+    const recentRows = async () => {
+      await page.getByTestId('project-menu').click({ force: true })
+      await waitFor(page, () => document.querySelectorAll('[role="menu"] [data-recent-project]').length > 0)
+      return page.evaluate(() => [...document.querySelectorAll('[role="menu"] > *')].map((e) => 
+        e.hasAttribute('data-recent-project')
+          ? `recent:${e.textContent}`
+          : (e.getAttribute('data-command') ?? (e.getAttribute('role') === 'separator' ? '|' : e.textContent)),
+      ))
+    }
+    let menu = await recentRows()
+    expect(
+      menu.filter((r) => r.startsWith('recent:')).join() === 'recent:Line B',
+      `Line A's menu lists Line B and not itself (${menu.filter((r) => r.startsWith('recent:'))})`,
+    )
+    const at = menu.indexOf('recent:Line B')
+    expect(
+      menu.slice(at - 2, at + 2).join() === '|,Recent projects,recent:Line B,|',
+      `as a block of its own under a heading (${menu.slice(at - 2, at + 2)})`,
+    )
+    await clickAndReload(page, page.locator('[data-recent-project]'))
+    expect((await page.title()) === `Line B - ${APP_TITLE}`, `the row opened Line B (${await page.title()})`)
+    expect((await tabs(page)) === '', 'with its own (empty) scene')
+    menu = await recentRows()
+    expect(menu.filter((r) => r.startsWith('recent:')).join() === 'recent:Line A', 'from there the menu lists Line A')
+    await clickAndReload(page, page.locator('[data-recent-project]'))
+    expect((await page.title()) === `Line A - ${APP_TITLE}`, `and its row leads back (${await page.title()})`)
+    expect((await tabs(page)) === 'Sorter', `to Line A with its part (${await tabs(page)})`)
+
     console.log('--- delete, and survive a reload ---')
     await openShelf(page)
     await page.locator('.projects-action[aria-label="Delete Line B"]').click({ force: true })
@@ -344,8 +374,8 @@ async function main() {
     // validateProject refuses a whole document for one bad piece. This one is a project test with no time to
     // run in (a bad hand edit). Boot must not fall back to the legacy scene key, save that at once, and let the
     // library file it over the same record.
-    const refused = await page.evaluate(() => {
-      const doc = JSON.parse(localStorage.getItem('oip-web/project'))
+    const refused = await page.evaluate(async () => {
+      const doc = JSON.parse((await window.__oip.savedProject()))
       doc.tests = [{ name: 'gone', duration: 0, checks: [{ tag: 'Run', at: 0.5, equals: true }] }]
       const raw = JSON.stringify(doc)
       localStorage.setItem('oip-web/project', raw)
@@ -356,7 +386,7 @@ async function main() {
     await waitFor(page, () => !!document.querySelector('[data-testid="unopened-project-banner"]'))
     const text = (await banner()) ?? ''
     expect(/Line A/.test(text) && /duration must be a positive/.test(text), `the banner names the project and why (${text.slice(0, 90)}...)`)
-    const stored = () => page.evaluate(() => localStorage.getItem('oip-web/project'))
+    const stored = () => page.evaluate(async () => (await window.__oip.savedProject()))
     expect((await stored()) === refused, 'booting did not save over it')
     await addPart(page, 'shelf_edited', 'Edited')
     expect((await stored()) === refused, 'nor did an edit')

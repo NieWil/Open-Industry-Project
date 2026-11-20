@@ -21,7 +21,9 @@
 //     2x scene with twice the cargo, runs no scene-change consumer whose parts it did not touch (the
 //     sensor-beam re-probe), writes nothing, and leaves every consumer's audit clean
 //     (docs/scene-change-consumers.md). Without that, a robot tool-size drag runs two whole-scene cargo
-//     builds and every sensor's beam re-cast per move, ~22 ms on the demo.
+//     builds and every sensor's beam re-cast per move, ~22 ms on the demo. A box moved in a beam
+//     re-casts only the sensors whose beams it crosses: a full pass is 25 casts x every cargo row, ~3.4 ms
+//     per move on the demo. A moved sensor re-casts only its own beams.
 // Frame times are measured and printed for a human, and only enforced when OIP_INTERACTION_MS is set
 // on a machine known to be quiet.
 //
@@ -354,28 +356,44 @@ try {
       const store = window.__oip.store
       const view = window.__oip.view
       const start = store.getState().scene
-      const pkg = kind === 'robot tool size' ? 'oip.six-axis-robot' : kind === 'rack length' ? 'oip.rack' : 'oip.roller-conveyor'
+      const pkg = kind === 'robot tool size' ? 'oip.six-axis-robot' : kind === 'rack length' ? 'oip.rack' : kind === 'box pose' ? 'oip.box' : kind === 'sensor pose' ? 'oip.diffuse-sensor' : 'oip.roller-conveyor'
       const target = start.parts.find((p) => p.packageId === pkg)
       if (!target) return null
+      // the box stream's first step puts the box into a sensor's beam, half a metre out along a cast the last stopped
+      // probe made, and the rest nudge it along there, so every step has a beam to re-cast
+      let beamAt = null
+      for (const casts of view.beamCasts.values()) {
+        if (casts.length >= 7 && casts[6] >= 0.6) {
+          beamAt = [casts[0] + 0.5 * casts[3], casts[1] + 0.5 * casts[4], casts[2] + 0.5 * casts[5]]
+          break
+        }
+      }
+      if (kind === 'box pose' && !beamAt) return null
       const step = (p, i) =>
         kind === 'robot tool size' ? { ...p, params: { ...p.params, toolSizeX: 0.5 + 0.02 * i } }
           : kind === 'conveyor speed' ? { ...p, params: { ...p.params, speed: 1 + 0.01 * i } }
             : kind === 'rack length' ? { ...p, params: { ...p.params, length: p.params.length + 0.01 * i } }
-              : { ...p, position: [p.position[0] + 0.002 * i, p.position[1], p.position[2]] }
+              : kind === 'box pose' ? { ...p, position: [beamAt[0] + 0.002 * i, beamAt[1], beamAt[2]] }
+                : kind === 'sensor pose' ? { ...p, position: [p.position[0], p.position[1] + 0.002 * i, p.position[2]] }
+                : { ...p, position: [p.position[0] + 0.002 * i, p.position[1], p.position[2]] }
       const ctrl = window.__oip.controller
       const resize = kind === 'rack length'
       if (resize) {
         ctrl.drag = { kind: 'resize', pointerId: 1, start, id: target.id, handle: { axis: 'x', sign: 1 }, moved: true }
         ctrl.syncPoolDragEject()
       }
-      // real probe passes (every sensor's beam re-cast), whatever scheduled them: the consumer or a new cargo frame
+      // full probe passes (every sensor's beam re-cast), whatever scheduled them, and single sensors re-probed, by a
+      // full pass or by a partial one (runPartialBeamProbes)
       if (!window.__oipBeamPasses) {
-        window.__oipBeamPasses = { n: 0 }
+        window.__oipBeamPasses = { n: 0, sensors: 0 }
         const run = view.runBeamProbes.bind(view)
         view.runBeamProbes = () => { window.__oipBeamPasses.n++; run() }
+        const probe = view.probeSensor.bind(view)
+        view.probeSensor = (...a) => { window.__oipBeamPasses.sensors++; probe(...a) }
       }
       const beams = () => window.__oipBeamPasses.n
       const beams0 = beams()
+      const sensors0 = window.__oipBeamPasses.sensors
       const ms = []
       for (let i = 1; i <= steps; i++) {
         const scene = { ...start, parts: start.parts.map((p) => (p.id === target.id ? step(p, i) : p)) }
@@ -385,17 +403,22 @@ try {
         await new Promise((res) => requestAnimationFrame(res))
       }
       const beamsRan = beams() - beams0
+      const sensorsProbed = window.__oipBeamPasses.sensors - sensors0
+      const sensorCount = view.registries.probeTickRefs.length
+      // mid-stream, before the revert: a fresh full probe must agree with every beam the stream left on screen
+      await new Promise((res) => requestAnimationFrame(res))
+      const beamAudit = view.sceneConsumers.audit().filter((c) => c.name === 'sceneConsumer:sensorBeams' && !c.ok).map((c) => c.reason)
       // end as a cancelled drag does (drag.ts cancelDrag): drop the drag, then revert. That one store change
       // returns the rack to the pool and syncs the reverted shape, which re-bakes it
       if (resize) ctrl.drag = null
       store.setTransient(start)
       ms.sort((a, b) => a - b)
-      return { ms: +ms[Math.floor(ms.length / 2)].toFixed(2), beamsRan }
+      return { ms: +ms[Math.floor(ms.length / 2)].toFixed(2), beamsRan, sensorsProbed, sensorCount, beamAudit, cargoRows: view.idleCargoFrame?.count ?? 0 }
     }, { kind, steps: STREAM_STEPS })
     const probe = await readProbe(page)
     return r && { ...r, writes: probe.writes }
   }
-  const STREAM_KINDS = ['robot tool size', 'conveyor speed', 'conveyor pose', 'rack length']
+  const STREAM_KINDS = ['robot tool size', 'conveyor speed', 'conveyor pose', 'rack length', 'box pose', 'sensor pose']
   const streams = async (scale) => {
     const out = { scale, parts: await page.evaluate(() => window.__oip.store.getState().scene.parts.length) }
     for (const k of STREAM_KINDS) out[k] = await stream(k)
@@ -458,7 +481,7 @@ try {
     console.log(` streamed edits, ${s.scale} (${s.parts} parts): ms per step (median of ${STREAM_STEPS})`)
     for (const k of STREAM_KINDS) {
       const r = s[k]
-      console.log(r ? `  ${k.padEnd(22)} ${String(r.ms).padStart(6)}ms  beam re-probes=${r.beamsRan}  writes=${r.writes}` : `  ${k.padEnd(22)} (no such part in the scene)`)
+      console.log(r ? `  ${k.padEnd(22)} ${String(r.ms).padStart(6)}ms  beam re-probes=${r.beamsRan}  sensors re-probed=${r.sensorsProbed}/${r.sensorCount * STREAM_STEPS}  writes=${r.writes}` : `  ${k.padEnd(22)} (no such part in the scene)`)
     }
   }
   console.log('')
@@ -482,13 +505,42 @@ try {
       continue
     }
     check(`streaming "${k}" writes nothing to storage`, [s1, s2, s3].every((s) => s[k].writes === 0), [s1, s2, s3].map((s) => s[k].writes).join(' / '))
+    check(`streaming "${k}" leaves every sensor beam as a fresh probe would draw it`, [s1, s2, s3].every((s) => s[k].beamAudit.length === 0),
+      [s1, s2, s3].flatMap((s) => s[k].beamAudit).join('; '))
+    // A box move rebuilds the idle cargo frame (core/frame buildAuthoredCargoFrame, once in the view and once for the
+    // controller's idle poses), so its cost follows the cargo rows, not the scene. What it must not do is grow faster
+    // than them: the unit-load walks were loads x parts, 13.9 -> 35.7 -> 91.8 ms here before they shared one index.
+    if (k === 'box pose') {
+      const perRow = (s) => s[k].ms / Math.max(1, s[k].cargoRows)
+      const budget = perRow(s1) * SCALE_TOLERANCE
+      check('streaming "box pose" costs no more per cargo row as the scene and its cargo grow',
+        [s2, s3].every((s) => s[k].ms <= perRow(s1) * s[k].cargoRows * SCALE_TOLERANCE + SCALE_FLOOR_MS),
+        [s1, s2, s3].map((s) => `${s[k].ms}ms / ${s[k].cargoRows} rows`).join(' → ') + ` (budget ${(budget * 1000).toFixed(1)} µs per row)`)
+      continue
+    }
     const budget = s1[k].ms * SCALE_TOLERANCE + SCALE_FLOOR_MS
     check(`streaming "${k}" does not get more expensive as the scene and its cargo grow`, s2[k].ms <= budget && s3[k].ms <= budget,
       `${s1[k].ms}ms at ${s1.parts} parts → ${s2[k].ms}ms at ${s2.parts} → ${s3[k].ms}ms at ${s3.parts} with 2x cargo (budget ${budget.toFixed(1)}ms)`)
   }
   // neither part draws a beam, and neither change moves a sensor or the cargo: the beam consumer must not run
   for (const k of ['robot tool size', 'conveyor speed']) {
-    if (s1[k]) check(`streaming "${k}" re-probes no sensor beam`, [s1, s2, s3].every((s) => s[k].beamsRan === 0), [s1, s2, s3].map((s) => s[k].beamsRan).join(' / '))
+    if (s1[k]) check(`streaming "${k}" re-probes no sensor beam`, [s1, s2, s3].every((s) => s[k].beamsRan === 0 && s[k].sensorsProbed === 0),
+      [s1, s2, s3].map((s) => `${s[k].beamsRan} passes, ${s[k].sensorsProbed} sensors`).join(' / '))
+  }
+  // a box in a beam moves: only the sensors whose beams it crosses re-cast, never a full pass over every sensor
+  if (s1['box pose']) {
+    const box = [s1, s2, s3].map((s) => s['box pose'])
+    check('streaming "box pose" re-probes no full sensor pass', box.every((r) => r.beamsRan === 0), box.map((r) => r.beamsRan).join(' / '))
+    check('streaming "box pose" re-probes some sensors, never all of them each step',
+      box.every((r) => r.sensorsProbed > 0 && r.sensorsProbed < r.sensorCount * STREAM_STEPS),
+      box.map((r) => `${r.sensorsProbed}/${r.sensorCount * STREAM_STEPS}`).join(' / '))
+  }
+  // a sensor moves: only it re-casts, once per step, never a full pass over every sensor
+  if (s1['sensor pose']) {
+    const sensor = [s1, s2, s3].map((s) => s['sensor pose'])
+    check('streaming "sensor pose" re-probes no full sensor pass', sensor.every((r) => r.beamsRan === 0), sensor.map((r) => r.beamsRan).join(' / '))
+    check('streaming "sensor pose" re-probes only the moved sensor, once per step',
+      sensor.every((r) => r.sensorsProbed > 0 && r.sensorsProbed <= STREAM_STEPS), sensor.map((r) => `${r.sensorsProbed}/${STREAM_STEPS} steps`).join(' / '))
   }
   check('after streamed edits, every scene-change consumer and the pool audit clean at idle', [s1, s2, s3].every((s) => s.audit.length === 0),
     [s1, s2, s3].flatMap((s) => s.audit).join('; '))

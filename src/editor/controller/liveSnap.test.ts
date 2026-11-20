@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SnapCandidate } from '../../core/snapFeatures'
+import type { SnapCandidate } from '../../core/snap/snapFeatures'
 import { SNAP_MIN_SWITCH_MS } from '../../core/types'
 import { chooseLiveSnap, joinKey } from './liveSnap'
 

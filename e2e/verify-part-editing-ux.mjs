@@ -13,7 +13,7 @@
 //   E. A problem with a line number in the behavior editor's list jumps to that line.
 //   F. The Catalog ✎ is disabled in a shared room, where opening a part's own scene is refused.
 //   G. A joint's name can be changed, but only while the script never mentions it. A rename does not
-//      rewrite the script (core/partPackage.ts behaviorMentions says why), and a joint the script still
+//      rewrite the script (core/parts/partPackage.ts behaviorMentions says why), and a joint the script still
 //      commands by its old name stops moving with no error.
 //   N. In the Part Editor, the copy's Name and Category are the part's own (the copy's own name would be dropped on
 //      Back). A blank name is refused with a reason, the change is an undo step, and a built-in's are read-only.
@@ -127,10 +127,19 @@ try {
   check('N  the session copy\'s Name field shows the part\'s name', (await partName.inputValue().catch(() => '')) === (await page.evaluate((id) => window.__oip.getPackage(id).name, blankId)))
   await partName.fill('Lift Table')
   await partName.press('Enter')
-  await page.locator('[data-testid="part-category"]').selectOption('Devices')
+  // a standard name typed in another case is stored as the app spells it
+  await page.locator('[data-testid="part-category"]').fill('devices')
+  await page.locator('[data-testid="part-category"]').press('Enter')
   const info = await page.evaluate((id) => ({ name: window.__oip.getPackage(id).name, category: window.__oip.getPackage(id).category, lib: window.__oip.store.getState().userPackages.find((p) => p.id === id)?.name }), blankId)
   check('N  Name renames the part, in the registry and the library', info.name === 'Lift Table' && info.lib === 'Lift Table', JSON.stringify(info))
   check('N  Category moves it to another catalog tab', info.category === 'Devices', JSON.stringify(info))
+  // any other name is a category of its own, with a tab of its own
+  await page.locator('[data-testid="part-category"]').fill('Lift Tables')
+  await page.locator('[data-testid="part-category"]').press('Enter')
+  check('N  a new category name is kept as typed', (await page.evaluate((id) => window.__oip.getPackage(id).category, blankId)) === 'Lift Tables')
+  await page.waitForSelector('.catalog-tab[data-category="Lift Tables"]', { timeout: 3000 }).catch(() => {})
+  check('N  ...and gets a catalog tab of its own', (await page.locator('.catalog-tab[data-category="Lift Tables"]').count()) === 1)
+  await page.evaluate(() => window.__oip.store.undo())
   check('N  the Scene dock header follows', ((await page.locator('.scene-tree-head').innerText().catch(() => '')) ?? '').includes('Lift Table'))
   await partName.fill('  ')
   await partName.press('Enter')
@@ -233,17 +242,14 @@ try {
   }
   await page.evaluate(() => window.__oip.store.exitPartFocus())
 
-  // ── F: Catalog ✎ in a room ─────────────────────────────────────────────────────────────────────
+  // ── F: Catalog ✎ in a room (what it does there with two people: verify-shared-part-editor.mjs) ──────────────────
   const editBtn = page.locator('.catalog-card-edit').first()
   check('F  the catalog is on screen with ✎ buttons', (await editBtn.count()) > 0)
   check('F  ✎ is enabled solo', await editBtn.isEnabled())
   await page.evaluate(() => window.__oip.store.setCollabMode(true))
-  check('F  ✎ is disabled in a room', await editBtn.isDisabled())
-  check('F  ...with the reason', ((await editBtn.getAttribute('title')) ?? '').includes('shared room'))
-  // a new part opens in the Part Editor, so it is refused in a room too, rather than adding a part nobody can open
+  check('F  ✎ is enabled in a shared project too', await editBtn.isEnabled())
   const newBtn = page.locator('button.catalog-author', { hasText: 'New part' })
-  check('F  + New part is disabled in a room', await newBtn.isDisabled())
-  check('F  ...with the reason', ((await newBtn.getAttribute('title')) ?? '').includes('shared room'))
+  check('F  + New part is enabled in a shared project', await newBtn.isEnabled())
   // last, because a tokenizer compiles lazily and its rejection can arrive well after the editor opened
   check('S  the whole run hit no SES error', !sesErrors.length, sesErrors[0])
   await page.evaluate(() => window.__oip.store.setCollabMode(false))

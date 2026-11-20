@@ -4,7 +4,7 @@ import type { Object3D } from 'three'
  * The single write point for per-part pose changes; structureRev.ts is the same for structure. A part
  * visual bumps `userData.poseRev` whenever a content update moves a transform in its subtree without a
  * structural rebuild: the apply() reflow/refresh/rebuild in sdkPart.ts, and the runtime rig mutators
- * that move nodes outside apply() (applyJoints/applySubPoses, squash relax, beam stretch; sdk/rig.ts).
+ * that move nodes outside apply() (applyJoints/applySubPoses, squash relax, beam stretch; sdk/rig.ts and its rig*.ts modules).
  * A frozen (matrix-static) part reports this way so view.ensureFreshPose re-bakes its frozen world
  * matrices instead of rendering them stale.
  *

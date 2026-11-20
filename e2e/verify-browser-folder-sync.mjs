@@ -1,5 +1,5 @@
-// The browser's project folder, kept in sync both ways (src/editor/projectFolderLink.ts hosting the
-// engine in src/editor/projectFolderSync.ts), in a real Chromium, against a real directory handle.
+// The browser's project folder, kept in sync both ways (src/editor/project/projectFolderLink.ts hosting the
+// engine in src/editor/project/projectFolderSync.ts), in a real Chromium, against a real directory handle.
 //
 // The handle comes from the Origin Private File System (navigator.storage.getDirectory), because the
 // picker for a real folder is a native dialog Playwright cannot drive. It is a genuine
@@ -12,7 +12,7 @@
 // timers. Headless Chromium renders this app at ~2 fps, so every task waits behind a ~0.8 s frame and one
 // round over a real handle (a few dozen awaits) takes 8-20 s here, against well under a second at 60 fps.
 // The timers' own behaviour - the write delay, the poll - is pinned on a fake clock in
-// src/editor/projectFolderSync.test.ts; this gate proves what a round does to a real folder.
+// src/editor/project/projectFolderSync.test.ts; this gate proves what a round does to a real folder.
 //
 //   1. Save to Folder writes the project into the folder and keeps it in sync
 //   2. an edit made in the app is written into the folder

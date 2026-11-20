@@ -5,18 +5,18 @@
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
 import { isCargoPart } from '../../core/frame'
 import { clamp, normalizeAngle, quatFromYXZ } from '../../core/math'
-import { subtreeIds } from '../../core/hierarchy'
+import { subtreeIds } from '../../core/scene/hierarchy'
 import { bandSelection } from '../../core/selection'
 import { rotateXZ, yawAboutPivot } from '../../core/transforms'
-import { getPackage } from '../../core/partRegistry'
-import { linkFieldOwnership, restQuatOf } from '../../core/rigPose'
-import type { LinkFieldOwnership, RigParams } from '../../core/rigPose'
-import { resolvePartParams } from '../../core/partScript'
-import type { ParamValue } from '../../core/partApi'
-import { rigInclineRad } from '../../core/partGeometry'
-import type { PartPackage, RigLink } from '../../core/partPackage'
+import { getPackage } from '../../core/parts/partRegistry'
+import { linkFieldOwnership, restQuatOf } from '../../core/rig/rigPose'
+import type { LinkFieldOwnership, RigParams } from '../../core/rig/rigPose'
+import { resolvePartParams } from '../../core/parts/partScript'
+import type { ParamValue } from '../../core/parts/partApi'
+import { rigInclineRad } from '../../core/parts/partGeometry'
+import type { PartPackage, RigLink } from '../../core/parts/partPackage'
 import {
-  beltLikeView,
+  bedView,
   curvedGizmoOf,
   flexPull,
   flexPathOf,
@@ -30,7 +30,7 @@ import {
   resizePart,
   surfaceBelowParam,
   withFlexPose,
-} from '../../core/partGeometry'
+} from '../../core/parts/partGeometry'
 import {
   guardArcRange,
   isolateOnWall,
@@ -42,16 +42,16 @@ import {
   rowsToOpeningSpecs,
   snapArc,
   sweepOpening,
-} from '../../core/guardOpeningEdit'
-import { sceneUnits } from '../../core/sceneUnits'
+} from '../../core/guards/guardOpeningEdit'
+import { sceneDisplayUnits } from '../../core/scene/sceneUnits'
 import { formatLength } from '../../core/units'
 import type { DisplayUnits } from '../../core/units'
 import { FLOOR_SURFACE_Y } from '../../core/types'
 import type { BeltGuardOpeningSpec, SdkPart, PartInstance, SceneJSON } from '../../core/types'
-import type { SnapPose } from '../../core/snapFeatures'
+import type { SnapPose } from '../../core/snap/snapFeatures'
 import type { GizmoConstraint, GizmoHandle, GizmoSnap, GuardOpeningHandle, GuardWallPoint, ResizeHandle, RobotHandle } from '../../render/api'
-import { guardOpeningsTarget } from '../store'
-import type { EditorState } from '../store'
+import { guardOpeningsTarget } from '../store/store'
+import type { EditorState } from '../store/store'
 import type { EditorController } from '../controller'
 
 const BAND_THRESHOLD_PX = 8
@@ -408,12 +408,12 @@ export function moveGuardOpening(ec: EditorController, drag: Drag & { kind: 'gua
   if (!range) return
   const s = ec.store.getState()
   // the grid snap ("Use Snap", Ctrl inverts, Shift subdivides) steps the edges like a move drag steps a position
-  const { specs, index } = guardDragSpecs(drag, v, gizmoSnap(s, e.ctrlKey, e.shiftKey)?.translate, range.lo, range.hi)
+  const { specs, index } = guardDragSpecs(drag, v, gizmoSnap(s, e.ctrlKey || e.metaKey, e.shiftKey)?.translate, range.lo, range.hi)
   drag.moved = true
   drag.last = { specs, index }
   ec.store.setTransient(withOpenings(drag.start, drag.id, specs))
   const o = specs[index]
-  ec.view.setTransformReadout(o ? openingReadout(o.arcStart, o.arcEnd, sceneUnits(s.scene)) : null)
+  ec.view.setTransformReadout(o ? openingReadout(o.arcStart, o.arcEnd, sceneDisplayUnits(s.scene)) : null)
 }
 
 /** the live readout while an opening is dragged: where it starts and ends along the guard, and its width */
@@ -533,7 +533,7 @@ export function posedScene(start: SceneJSON, poses: Map<string, SnapPose>): Scen
  * The single gesture-preview path. Every transient scene a gesture streams, and so what its release
  * commits, is staged here: poses applied + the engaged snap candidate's param overrides folded (a
  * stair's numSteps refit to a deck, a chain transfer adopting the host pitch). Preview == commit is
- * the contract the seam resolvers (core/sceneResolve.ts) depend on: they derive cuts and openings
+ * the contract the seam resolvers (core/scene/sceneResolve.ts) depend on: they derive cuts and openings
  * from whatever scene they are handed, so a gesture that streams a pose without the override fold
  * shows its neighbour effects only on commit (the stair→platform railing bug). Any
  * new gesture must build its transient through this, never through a bare posedScene. Re-rest is
@@ -967,15 +967,15 @@ export function moveResize(ec: EditorController, drag: Drag & { kind: 'resize' }
   }
   // belt path handles: tail (drag_along_t, shifts origin to hold the head) or a
   // segment-end (absolute new length, origin holds and downstream segments follow). Works for the
-  // built-in belt and a belt-like SDK part (the segments live in either shape) via beltLikeView.
+  // built-in belt and a belt-like SDK part (the segments live in either shape) via its path bed.
   if ('belt' in drag.handle) {
-    const before = beltLikeView(part)?.segments ?? []
+    const before = bedView(part, 'path')?.segments ?? []
     const r =
       drag.handle.belt === 'tail'
         ? resizeBeltTail(part, extent)
         : resizeBeltSegmentLength(part, drag.handle.belt, extent)
     const idx = drag.handle.belt === 'tail' ? 0 : drag.handle.belt
-    const after = beltLikeView({ ...part, params: r.params } as unknown as PartInstance)?.segments ?? before
+    const after = bedView({ ...part, params: r.params } as unknown as PartInstance, 'path')?.segments ?? before
     if (before[idx]?.length !== after[idx]?.length) drag.moved = true
     ec.store.setTransient({
       ...drag.start,
@@ -1010,7 +1010,8 @@ export function finishBand(ec: EditorController, drag: Drag & { kind: 'band' }, 
     const hits = ec.view.partsInRect(x0, y0, x1, y1)
     // spawner-born cargo in the band owns no part yet - promote it, exactly as click-select does
     // (one commit for the whole band), so a running line's boxes are band-selectable at all
-    hits.push(...ec.promoteCargoBoxes(ec.view.cargoBodiesInRect(x0, y0, x1, y1)))
+    // (not while drawing another connection's shared run: its cargo is that client's, and nothing here may adopt it)
+    if (!ec.store.getState().liveFollowing) hits.push(...ec.promoteCargoBoxes(ec.view.cargoBodiesInRect(x0, y0, x1, y1)))
     // what those hits mean against the tree (grouped-subtree redirect, dedupe, shift-extend) is
     // selection policy, not pointer plumbing - see core/selection.ts
     const s = ec.store.getState()
@@ -1020,7 +1021,18 @@ export function finishBand(ec: EditorController, drag: Drag & { kind: 'band' }, 
   }
 }
 
-export function cancelActiveDrag(ec: EditorController): void {
+/**
+ * End an open drag or reposition that writes the scene, because the scene was replaced by something other than its
+ * own moves (EditorController.onStoreChange). The new scene stays as it is: nothing is reverted.
+ */
+export function dropOvertakenGesture(ec: EditorController): void {
+  const drag = ec.drag
+  if (drag && 'start' in drag && drag.start !== undefined) cancelActiveDrag(ec, false)
+  if (ec.reposition) ec.cancelReposition(false)
+}
+
+/** `revert: false` ends the drag and leaves the scene as it is now (dropOvertakenGesture) */
+export function cancelActiveDrag(ec: EditorController, revert = true): void {
   const drag = ec.drag
   if (!drag) return
   ec.drag = null
@@ -1032,8 +1044,9 @@ export function cancelActiveDrag(ec: EditorController): void {
   } else if (drag.kind === 'rigGizmo') {
     ec.view.endRobotDrag() // transient pose held by the visual; nothing to revert in the scene…
     // …except a tool-size handle drag's streamed param transients - restore the pre-drag scene (RMB cancel)
-    if (drag.sizeParam !== undefined && drag.start) ec.store.setTransient(drag.start)
-    else ec.noteRigJog(drag.id) // the pose the drag reached stays held: say so
+    if (drag.sizeParam !== undefined && drag.start) {
+      if (revert) ec.store.setTransient(drag.start)
+    } else ec.noteRigJog(drag.id) // the pose the drag reached stays held: say so
   } else if (drag.kind === 'rigNode') {
     ec.view.endGizmoDrag()
     ec.view.setTransformReadout(null)
@@ -1047,7 +1060,7 @@ export function cancelActiveDrag(ec: EditorController): void {
     ec.view.setTransformReadout(null)
     ec.view.showVertexMarkers(null, null)
     ec.vsnap = null
-    ec.store.setTransient(drag.start)
+    if (revert) ec.store.setTransient(drag.start)
   } else {
     if (drag.kind === 'gizmo' || drag.kind === 'rotate') ec.view.endGizmoDrag()
     if (drag.kind === 'gizmo' || drag.kind === 'rotate') setDraggedBodyFrozen(ec, drag.ids, false)
@@ -1058,8 +1071,10 @@ export function cancelActiveDrag(ec: EditorController): void {
     // a cancelled Shift+drag duplicate discards the staged copies and re-selects the originals
     // (drag.start holds the clones); every other drag just reverts its transient scene.
     const dup = drag.kind === 'gizmo' || drag.kind === 'rotate' ? drag.dup : undefined
-    if (dup) ec.store.setTransient(dup.before, dup.origSelection)
-    else ec.store.setTransient(drag.start)
+    if (revert) {
+      if (dup) ec.store.setTransient(dup.before, dup.origSelection)
+      else ec.store.setTransient(drag.start)
+    }
   }
   ec.resetSnap()
 }

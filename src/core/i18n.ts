@@ -189,6 +189,11 @@ export function activeLocale(): string {
   return activeTag
 }
 
+/** A message's English source, whatever the locale (a search that still finds translated text by its English). */
+export function messageSource(id: MessageId): string | undefined {
+  return SOURCES.get(id)
+}
+
 /** Every declared message as id → English source: the extraction output, and the input a translator
  *  (human or on-device) works from. Sorted so a dump is diffable. A plural's forms are listed as
  *  `<id>#one` and `<id>#other`. */

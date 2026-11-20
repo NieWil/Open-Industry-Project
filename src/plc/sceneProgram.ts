@@ -1,6 +1,6 @@
 // A scene program written wholly inside `PROGRAM X … END_PROGRAM` - the form a PLC exports and most ST tutorials teach.
 // A PROGRAM type runs as an instance (the default controller makes one per type, named after it), and an instance's
-// variables are `<instance>.<variable>` (`Main.Extend`). Our binding rule (plc/plcLink.ts soleInstanceAliases): when
+// variables are `<instance>.<variable>` (`Main.Extend`). Our binding rule (plc/link/plcLink.ts soleInstanceAliases): when
 // the controller runs exactly one program instance, its variables are also the bare scene tags (`Extend`), so a part
 // wired to either spelling is connected. With two or more PROGRAMs and no code outside them, no bare name is given
 // (which program's `Extend` would it be?), and the program still loads, validates and runs while a part wired to

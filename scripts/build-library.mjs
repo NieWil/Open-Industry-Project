@@ -21,7 +21,7 @@
 //
 // --listed packs the listed library from the parts repository (docs/part-libraries.md, "Publishing"): parts other
 // people published, which are not in this repository's corpus. Each folder is named by its part id. The rules of
-// core/partSubmission.ts apply, the publisher is read from the id and the namespace file (--namespaces), and each new version's behaviour digest
+// core/parts/partSubmission.ts apply, the publisher is read from the id and the namespace file (--namespaces), and each new version's behaviour digest
 // (sim/partBehaviour.ts) is recorded in the index: oip-web's CI runs every listed version against it
 // (scripts/library-corpus.mjs), which makes it a version every later build keeps.
 //
@@ -88,14 +88,14 @@ const vite = await createServer({
 
 let failed = 0
 try {
-  const { partToOippartBytes, oippartBytesToFolder } = await vite.ssrLoadModule('/src/core/partArchive.ts')
+  const { partToOippartBytes, oippartBytesToFolder } = await vite.ssrLoadModule('/src/core/parts/partArchive.ts')
   const { buildPackage } = await vite.ssrLoadModule('/src/sim/buildPackage.ts')
-  const { partFingerprint, storedPackageHash } = await vite.ssrLoadModule('/src/core/partOrigin.ts')
+  const { partFingerprint, storedPackageHash } = await vite.ssrLoadModule('/src/core/parts/partOrigin.ts')
   const { sha256HexOfBytes } = await vite.ssrLoadModule('/src/core/sha256.ts')
-  const { LIBRARY_INDEX_FORMAT, checkLibraryDownload, validateLibraryIndex } = await vite.ssrLoadModule('/src/core/partLibrary.ts')
-  const { PART_SDK_LEVEL } = await vite.ssrLoadModule('/src/core/partSdk.ts')
-  const { packageThumbFile } = await vite.ssrLoadModule('/src/core/partPackage.ts')
-  const { publisherOf, submissionProblems } = await vite.ssrLoadModule('/src/core/partSubmission.ts')
+  const { LIBRARY_INDEX_FORMAT, checkLibraryDownload, validateLibraryIndex } = await vite.ssrLoadModule('/src/core/parts/partLibrary.ts')
+  const { PART_SDK_LEVEL } = await vite.ssrLoadModule('/src/core/parts/partSdk.ts')
+  const { packageThumbFile } = await vite.ssrLoadModule('/src/core/parts/partPackage.ts')
+  const { publisherOf, submissionProblems } = await vite.ssrLoadModule('/src/core/parts/partSubmission.ts')
   const thumbsDir = join(repo, 'public', 'thumbnails', 'pkg')
   const namespaces = listed ? JSON.parse(readFileSync(namespacesPath, 'utf8')) : null
   // a listed version records what it does alone, measured as the old-parts corpus measures (sim/partBehaviour.ts)
@@ -212,7 +212,7 @@ try {
       continue
     }
     if (listed) {
-      // the listing rules, the same the Publish dialog checks (core/partSubmission.ts), then what it does alone
+      // the listing rules, the same the Publish dialog checks (core/parts/partSubmission.ts), then what it does alone
       const problems = submissionProblems(pkg, { partFileBytes: bytes.length, description })
       const run = problems.length === 0 ? behaviourOf(pkg) : null
       for (const p of [...problems.map((x) => x.message), ...(run?.problems ?? [])]) console.error(`  ✗ ${pkg.id}: ${p}`)

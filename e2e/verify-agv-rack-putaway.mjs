@@ -25,7 +25,7 @@ const { port: PORT, vite } = await startServer()
 // free position of a real rack, and that everything already up there is still there afterwards, wherever the
 // racks stand.
 /** a load's width along the beams (core PALLET_SIZE[0]) and an upright's section: two loads share a bay's beam span
- *  in three equal gaps (src/editor/demoScenes.ts RACK_SPOTS) */
+ *  in three equal gaps (src/editor/demo/demoScenes.ts RACK_SPOTS) */
 const PALLET_W = 1.22
 const UPRIGHT = 0.08
 const SHELF_SPACING = 1.6 // oip.rack's default shelfSpacing

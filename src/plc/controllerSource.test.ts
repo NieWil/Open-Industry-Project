@@ -17,7 +17,7 @@ import {
   extractController,
   runnableSource,
 } from './controller'
-import { exportProgram, toPlcopenXml } from './export'
+import { exportProgram, toPlcopenXml } from './exchange/export'
 import { compile } from './interpreter'
 import { StError } from './types'
 

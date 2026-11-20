@@ -15,7 +15,7 @@ import { tickUniformGroup } from './tickUniformGroup'
  * which sweeps the brushed grain around the symmetric cylinder. The uniform is exposed on
  * userData.spinUniform as on the WebGL path, so rollerSpinTick drives it unchanged.
  *
- * (Sensor-beam holes through a side guard are geometry, core/guardHoles.ts; this shader cuts nothing.)
+ * (Sensor-beam holes through a side guard are geometry, core/guards/guardHoles.ts; this shader cuts nothing.)
  */
 export function createMetalNodeMaterial(spec: MetalSpec, tex: Texture): MeshStandardMaterial {
   const mat = new MeshStandardNodeMaterial()

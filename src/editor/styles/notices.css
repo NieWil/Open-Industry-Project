@@ -63,44 +63,6 @@
   transform: translate(-50%, -100%);
 }
 
-/* "Previewing - only you" badge: a private sim run is visible only to the runner */
-.preview-badge {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 12px;
-  border-radius: 14px;
-  background: rgba(46, 111, 139, 0.92);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  box-shadow: 0 2px 8px light-dark(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.4));
-  pointer-events: none;
-  z-index: 7;
-}
-
-.preview-badge .preview-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #8fe3ff;
-  animation: preview-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes preview-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
 /* "Following X" badge: double-F follow mode is tracking the selection. Sits top-left below the
    viewport toolbar (an information overlay); clicking it stops following. */
 .follow-badge {
@@ -417,38 +379,28 @@
   border-color: #e05252;
 }
 
-/* "Updated" on a catalog card: this project's version of a built-in the app has changed since (builtInUpdate.ts).
-   Always visible (unlike the hover-only card buttons): it is something to decide, not a tool. */
-.catalog-card-updated {
+/* A card's always-visible badges ("Update" from wherever the part came from, and what the shelf's part of that id is
+   to this project), stacked so a part with both shows both. They sit on the image's bottom-left corner: the top edge belongs to the hover tools
+   (✕ ✎ ⤓ </>), which take clicks even while hidden and span nearly the whole card. The image is square inside the
+   card's 6px padding, so its bottom edge is the card's width (container units, catalog-cards.css) less that padding. */
+.catalog-card-badges {
   position: absolute;
-  top: 3px;
-  left: 3px;
-  padding: 1px 4px;
-  font-size: 10px;
-  line-height: 1.3;
-  border: none;
-  border-radius: 3px;
-  color: #fff;
-  background: color-mix(in srgb, var(--accent, #3b82f6) 85%, black);
-  cursor: pointer;
+  top: calc(100cqw - 9px);
+  left: 9px;
+  transform: translateY(-100%);
+  max-width: calc(100% - 18px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
-.catalog-card-updated:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-/* The Catalog's Shelf tab (CatalogShelf.tsx): what a shelf part is to this project, in the same always-visible
-   corner badge as "Updated" above - something to decide, not a hover tool */
 .catalog-card-shelf {
   position: relative;
 }
 
-.catalog-card-shelf-badge {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  max-width: calc(100% - 6px);
+.catalog-card-badge {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -461,25 +413,25 @@
   background: color-mix(in srgb, var(--accent, #3b82f6) 85%, black);
 }
 
-button.catalog-card-shelf-badge {
+button.catalog-card-badge {
   cursor: pointer;
 }
 
-button.catalog-card-shelf-badge:disabled {
+button.catalog-card-badge:disabled {
   cursor: default;
   opacity: 0.6;
 }
 
-.catalog-card-shelf-badge.is-quiet {
+.catalog-card-badge.is-quiet {
   color: var(--text-dim);
   background: rgba(0, 0, 0, 0.45);
 }
 
-.catalog-card-shelf-badge.is-warn {
+.catalog-card-badge.is-warn {
   background: #a5551c;
 }
 
-/* where the shelf is, and the ways to change it: a row across the whole card grid */
+/* shelf parts that could not be read, and the way to their folder: a row across the whole card grid */
 .catalog-shelf-bar {
   grid-column: 1 / -1;
   display: flex;
@@ -491,19 +443,9 @@ button.catalog-card-shelf-badge:disabled {
   color: var(--text-dim);
 }
 
-.catalog-shelf-where {
+.catalog-shelf-problems {
   flex: 1 1 160px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.catalog-shelf-empty {
-  grid-column: 1 / -1;
-}
-
-.catalog-shelf-problems {
   color: #d88a4a;
 }
 

@@ -37,7 +37,7 @@ The surface part never sees the device. This is the same host-resolves contract 
 ## How a match happens
 
 `SnapMount.accepts` is a **live dispatch key**. When a device is dragged near a target,
-`railSocketsOf(target, accepts)` in [snapFeatures.ts](../src/core/snapFeatures.ts) lists every rail socket of
+`railSocketsOf(target, accepts)` in [snapRails.ts](../src/core/snap/snapRails.ts) lists every rail socket of
 that kind the target offers, and the mount is solved against each. The best-ranked one is taken, by the rule of
 [part-snap-connectors.md](part-snap-connectors.md):
 
@@ -73,15 +73,15 @@ engine, as with gizmo handle kinds ([part-gizmos.md](part-gizmos.md#non-goals)).
 
 ## Where it lives in the stack
 
-- **`SnapSurface`** + `SnapSpec.surfaces` on the SDK ([partApi.ts](../src/core/partApi.ts)); declared in the
+- **`SnapSurface`** + `SnapSpec.surfaces` on the SDK ([partApi.ts](../src/core/parts/partApi.ts)); declared in the
   part's manifest (`rig.json`'s `snap`) like `mounts`/`track`, and lifted into the public
   `@oip/part-sdk` `index.d.ts` by `npm run build-part-sdk`.
-- **Validation** in [partPackage.ts](../src/core/partPackage.ts) (`validateSnap`), mirroring the `mounts`
+- **Validation** in [partValidate.ts](../src/core/parts/partValidate.ts) (`validateSnap`), mirroring the `mounts`
   checks: `kind`/`lengthParam`/`widthParam` must be non-empty strings.
-- **Dispatch** in [snapFeatures.ts](../src/core/snapFeatures.ts): `railSocketsOf(target, accepts)` resolves
+- **Dispatch** in [snapFeatures.ts](../src/core/snap/snapFeatures.ts) (`solvePlug`) and [snapRails.ts](../src/core/snap/snapRails.ts): `railSocketsOf(target, accepts)` resolves
   the rail sockets (`railPair`, for a conveyor's guards or a surface), and
   `seatOnRail` seats the mount on the one an approach picks.
-- **Proof** in [snapFeatures.test.ts](../src/core/snapFeatures.test.ts): an unmodified SDK sensor mounts on a
+- **Proof** in [snapFeatures.test.ts](../src/core/snap/snapFeatures.test.ts): an unmodified SDK sensor mounts on a
   non-conveyor rail purely via `accepts` matching, and an unknown `accepts` snaps to nothing.
 
 ## Non-goals
@@ -96,5 +96,5 @@ engine, as with gizmo handle kinds ([part-gizmos.md](part-gizmos.md#non-goals)).
   conveyors. The mover initiates, and a surface-only part is a passive target.
 - **A narrower kind name**: `conveyorGuard` means *"a mountable side rail at `z = ±w/2` along a bed"*, on any
   part, not only a conveyor. Reusing it lets the existing sensor mount on any such rail. `sideRail` is a
-  different word: the rig-link field for a below-deck rail ([partPackage.ts](../src/core/partPackage.ts)
+  different word: the rig-link field for a below-deck rail ([partPackage.ts](../src/core/parts/partPackage.ts)
   `RigLink.sideRail`).

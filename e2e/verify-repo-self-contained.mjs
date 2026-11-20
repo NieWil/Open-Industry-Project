@@ -28,7 +28,7 @@
 // (2) in detail:
 //
 // A tracked module that imports an untracked file builds here and fails in a clone. At one point
-// 16 such modules (src/plc/ladder.ts, src/core/opcUa.ts, src/collab/codeTrust.ts,
+// 16 such modules (src/plc/ladder/ladder.ts, src/core/io/opcUa.ts, src/collab/codeTrust.ts,
 // src/editor/keyHint.ts, scripts/lib/conveyorComms.mjs and more) were reachable from 41 tracked
 // importers while every other check passed, because in a long-lived dirty tree "on disk" and
 // "in the repo" diverge without any warning. tsc cannot catch it: it resolves against the

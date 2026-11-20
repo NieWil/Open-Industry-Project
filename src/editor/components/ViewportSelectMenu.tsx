@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
 import { PART_DEFS } from '../../core/types'
-import { getPackage, packageCategory } from '../../core/partRegistry'
-import type { EditorState, EditorStore } from '../store'
-import { CATEGORY_ICONS } from './SceneTree'
+import { getPackage } from '../../core/parts/partRegistry'
+import { packageCategory } from '../../core/parts/partCategory'
+import type { EditorState, EditorStore } from '../store/store'
+import { categoryIcon } from './SceneTree'
 import { TreeGlyph } from './toolbarIcons'
 import { defineMessages, t } from '../../core/i18n'
 
@@ -77,7 +78,7 @@ export function ViewportSelectMenu({ store, state }: ViewportSelectMenuProps) {
               onClick={() => pick(item.id)}
             >
               <span className="list-select-row">
-                <span className="tree-icon"><TreeGlyph kind={CATEGORY_ICONS[item.type === 'part' ? packageCategory(getPackage(item.packageId ?? '')) : def.category]} /></span>
+                <span className="tree-icon"><TreeGlyph kind={categoryIcon(item.type === 'part' ? packageCategory(getPackage(item.packageId ?? '')) : def.category)} /></span>
                 <span className="list-select-name">{item.name}</span>
               </span>
               <span className="context-shortcut">{typeLabel}</span>

@@ -2,7 +2,6 @@
   "id": "oip.gantry",
   "name": "Gantry",
   "category": "Equipment",
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "links": [

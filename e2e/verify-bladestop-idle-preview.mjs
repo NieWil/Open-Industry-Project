@@ -31,7 +31,7 @@ async function main() {
     const st = window.__oip.store
     const scene = st.getState().scene
     const pkg = st.getState().bundledPackages.find((p) => p.id === 'oip.blade-stop')
-    const parts = [{ id: 'blade_shot', type: 'part', packageId: 'oip.blade-stop', position: [0, 1.2, 0], rotationY: 0, params: { width: 0.5, active, raiseHeight: 0.06, enableComms: false, tag: '' } }]
+    const parts = [{ id: 'blade_shot', type: 'part', packageId: 'oip.blade-stop', position: [0, 1.2, 0], rotationY: 0, params: { width: 0.5, active, raiseHeight: 0.06, tag: '' } }]
     st.loadScene({ ...scene, parts, packages: [...(scene.packages ?? []).filter((p) => p.id !== pkg.id), pkg] })
     st.setState({ selectedIds: [] })
     return !!pkg

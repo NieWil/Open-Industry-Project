@@ -58,7 +58,7 @@ handshake, the same contract as the other snap kinds: the part declares data, an
 ## How a match happens
 
 A `chain` declaration compiles to a `line` plug ([part-snap-connectors.md](part-snap-connectors.md)); the mates
-table (`solvePlug` in [snapFeatures.ts](../src/core/snapFeatures.ts)) solves it against the target's own
+table (`solvePlug` in [snapFeatures.ts](../src/core/snap/snapFeatures.ts)) solves it against the target's own
 `chain` through `snapChain`:
 
 1. Both parts must advertise `chain` in the same `group`, else `null`. Height gate: `|Δy| ≤ tolerance`.
@@ -82,13 +82,13 @@ are guarded separately (see Proof).
 
 ## Proof
 
-[snapFeatures.test.ts](../src/core/snapFeatures.test.ts) drives an SDK barrier through the pinned drops and
+[snapFeatures.test.ts](../src/core/snap/snapFeatures.test.ts) drives an SDK barrier through the pinned drops and
 asserts pose, junction, **and** `paramOverrides` / `targetParamOverrides` across collinear extension and both
 L-corner orientations, plus reach honouring (a fence-tight reach refuses a drop a guard-rail reach takes) and
 cross-group isolation (a guard rail never chains to a fence).
 
 Those all pass on synthetic packages, so two checks cover the **shipped** parts:
-[bundledPackageData.test.ts](../src/editor/bundledPackageData.test.ts) asserts the bundled fence / gate / rail
+[bundledPackageData.test.ts](../src/editor/parts/bundledPackageData.test.ts) asserts the bundled fence / gate / rail
 carry the block and then chains a real gate onto a real fence; [e2e/verify-barrier-chain-snap.mjs](../e2e/verify-barrier-chain-snap.mjs)
 does the same against the registry the **running app** loaded.
 

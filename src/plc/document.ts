@@ -21,8 +21,8 @@
 // in which order, spelled how. Half-written source still has a shape, which is why nothing here
 // throws (an editor holds code that does not compile most of the time).
 
-import { declaredLibraryName, splitLibrary, trailingConfiguration } from './exportText'
-import type { LibraryBlock } from './exportText'
+import { declaredLibraryName, splitLibrary, trailingConfiguration } from './exchange/exportText'
+import type { LibraryBlock } from './exchange/exportText'
 import { identKey } from './program'
 import { KEYWORDS, lex } from './lexer'
 import { sourceWords } from './sourceFacts'

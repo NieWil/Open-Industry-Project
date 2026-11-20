@@ -7,9 +7,9 @@
 // embeddedBehavior.create(), the single eval chokepoint, which buildPackage also goes through.
 //
 // It is lexical, not a full parser: it blanks comments + string/template literals (preserving positions
-// for accurate line/col) and scans the remaining code for banned global identifiers. It is
-// conservative - it can over-reject an unusual identifier (an object key literally named `fetch`) and it
-// can't see fully dynamic reaches (`globalThis['Da'+'te']`, `Math['random']`). It catches the common
+// for accurate line/col) and scans the remaining code for banned global identifiers. A `window`, `document` or
+// `process` the script declares itself (`let window = 0`) is its own and is not flagged. It is conservative - it can
+// over-reject an unusual identifier (an object key literally named `fetch`) and it can't see fully dynamic reaches (`globalThis['Da'+'te']`, `Math['random']`). It catches the common
 // accidental mistakes. The SES sandbox (docs/part-sandbox.md) defends against adversarial code.
 
 export interface DeterminismViolation {
@@ -142,6 +142,22 @@ export function blankNonCode(src: string): string {
 }
 
 const IDENTIFIER = /[A-Za-z_$][A-Za-z0-9_$]*/g
+/** a declaration's name: `let x`, `const x`, `var x`, `function x`, `class x` (also `for (let x of ...)`) */
+const DECLARED = /\b(?:let|const|var|function|class)\s+([A-Za-z_$][A-Za-z0-9_$]*)/g
+
+// The host-reach names a part may declare for itself (`let window = 0`, a weighing window). Only these: the exemption
+// covers the whole script, so a `let Date` in one function would let a real `Date.now()` elsewhere through. The
+// names that make a part run differently each time (clock, randomness, timers, IO) stay banned even when declared.
+const OWNABLE = new Set(['window', 'document', 'process'])
+
+/** the ownable names a script declares for itself, in code with comments and strings blanked */
+function declaredNames(code: string): Set<string> {
+  const names = new Set<string>()
+  DECLARED.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = DECLARED.exec(code))) if (OWNABLE.has(m[1]!)) names.add(m[1]!)
+  return names
+}
 
 // The non-space, non-newline char before `idx` (and its index), used to tell a bare reference from a
 // `.member` access.
@@ -172,6 +188,12 @@ function lineColOf(source: string, index: number): { line: number; column: numbe
   return { line, column: index - last }
 }
 
+/** The host-reach names a part script declares for itself (`let window`): its own bindings, which neither the scan
+ *  nor the runtime's shims (core/parts/partScript.ts) treat as the host's globals. */
+export function declaredNamesOf(source: string): Set<string> {
+  return declaredNames(blankNonCode(source))
+}
+
 /**
  * Scan a custom-part script source for nondeterministic / sandbox-escaping primitives. Returns one
  * violation per banned use (empty array = clean). Used by embeddedBehavior.create() to reject the part
@@ -179,6 +201,7 @@ function lineColOf(source: string, index: number): { line: number; column: numbe
  */
 export function checkDeterminism(source: string): DeterminismViolation[] {
   const code = blankNonCode(source)
+  const own = declaredNames(code)
   const violations: DeterminismViolation[] = []
   IDENTIFIER.lastIndex = 0
   let m: RegExpExecArray | null
@@ -187,7 +210,7 @@ export function checkDeterminism(source: string): DeterminismViolation[] {
     const start = m.index
     const before = prevNonSpace(code, start - 1)
     const isMember = before.char === '.'
-    if (!isMember && name in BANNED_GLOBALS) {
+    if (!isMember && name in BANNED_GLOBALS && !own.has(name)) {
       violations.push({ name, reason: BANNED_GLOBALS[name]!, ...lineColOf(source, start) })
     } else if (name === 'random' && isMember) {
       // confirm the object of `.random` is `Math` (the char before the dot is the object's last char)

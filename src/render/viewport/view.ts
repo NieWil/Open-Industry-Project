@@ -22,12 +22,12 @@ import type { WebGPURenderer } from 'three/webgpu'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { BoxFrame } from '../../core/frame'
 import { buildAuthoredCargoFrame, cargoFramesEqual, isCargoPart, memoizeAuthoredCargoFrame } from '../../core/frame'
-import { castBeamFrame } from '../../core/beamCast'
+import { castBeamFrame, castsCrossRows, changedCargoRows } from '../../core/beamCast'
 import { activeNav, middleDragAction } from '../../core/navigation'
-import { isConveyorLike } from '../../core/partGeometry'
+import { isConveyorLike } from '../../core/parts/partGeometry'
 import type { DisplayUnits } from '../../core/units'
 import { sensorBeamDebug, sensorBeamGroup, syncSensorBeams } from '../sensorBeamOverlay'
-import type { ResolvedContext } from '../../core/sceneResolve'
+import type { ResolvedContext } from '../../core/scene/sceneResolve'
 import type { BuildingPart, PartInstance, SceneJSON } from '../../core/types'
 import { disposeCollisionProxy, refreshCollisionProxy } from './collisionProxyMesh'
 import { DEFAULT_CAMERA_POSE } from '../api'
@@ -84,6 +84,7 @@ import type { OutlineMaskMergeSurface } from './outlineMaskMerge'
 import { ViewXR } from './xr'
 import { renderQuality, createAdaptiveQuality } from '../quality'
 import { HitchCounter } from './frameHitch'
+import { FrameMeter } from './frameMeter'
 import type { AdaptiveQuality } from '../quality'
 import type { PartVisual } from '../parts/registry'
 import { advanceAnimClock, animClockValue } from '../parts/animClock'
@@ -121,6 +122,7 @@ import * as viewCamera from './viewCamera'
 import { CameraNavState } from './viewCamera'
 import * as viewOverlays from './viewOverlays'
 import { ViewOverlayState } from './viewOverlays'
+import type { SubPose } from '../../core/rig/rigPose'
 export type { Entry, IRenderViewTestSurface, MergeCoherenceCheck, MergeCoherenceReport, RenderViewOptions, VRState } from './viewTypes'
 
 /** how close (CSS px) the pointer must come to a guard wall for guard-openings mode to treat it as ON the guard */
@@ -215,6 +217,20 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
   /** what reacts to a scene edit, and which parts each reads (viewSceneConsumers.ts) */
   readonly sceneConsumers = this.createSceneConsumers()
   beamProbeDirty = true
+  // The idle cargo frame changed and nothing else did. The next stopped pass then re-probes only the sensors whose
+  // last casts (beamCasts) enter a changed row, in the frame they were probed against (probedCargoFrame) or the new
+  // one: a full pass costs sensors x every cargo row (~3.4 ms per pointer-move dragging a box in the demo, 25 casts
+  // x 1053 rows), where a beam's answer can only change through a row that moved.
+  private beamCargoDirty = false
+  // the sensor parts a sync edited (a pose or param change, not an add or remove): the same partial pass re-probes
+  // just them, where a full pass re-casts every sensor (~3.5 ms per pointer-move dragging a diffuse sensor in the
+  // demo, ~6.5 ms for a light curtain)
+  private readonly beamSensorsDirty = new Set<string>()
+  private probedCargoFrame: BoxFrame | null = null
+  // per sensor part, the beams its last stopped probe cast (BEAM_CAST_STRIDE values each); empty while running
+  private readonly beamCasts = new Map<string, number[]>()
+  // the list the sensor being probed records its casts into (probeBeam), null outside a recording probe
+  private probeCasts: number[] | null = null
   // sensor part roots currently hidden, so their reveal can re-arm the beam probe (see tick)
   private readonly beamHiddenParts = new WeakSet<object>()
   private lastProbeSimActive = false
@@ -325,7 +341,8 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
   // (RenderStats.cpuTotalMs says why the EMA alone can't give a frame rate or a load)
   private cpuMsTotal = 0
   private framesTotal = 0
-  private gpuMsEma = 0 // WebGPU only: EMA of render-pass GPU time from timestamp queries; stays 0 on WebGL
+  // GPU ms per frame (WebGPU timestamps; empty on WebGL) and the display's refresh interval
+  private readonly frameMeter = new FrameMeter()
   // hitch detection (frameHitch.ts): a rolling median baseline. A running-minimum estimate
   // would count a 120 Hz panel's fast frames as evidence that the app's own healthy 60 fps
   // cadence was janking
@@ -473,6 +490,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     // without a reload. Don't also swap MIDDLE on Shift: that cancels three's swap, so Shift+middle orbits.
     window.addEventListener('keydown', this.onShiftChange)
     window.addEventListener('keyup', this.onShiftChange)
+    window.addEventListener('blur', this.onWindowBlur)
     this.renderer.domElement.addEventListener('pointerdown', this.onShiftChange)
 
     // cancel navigation: snapshot on an orbit/pan drag start so a right-click
@@ -818,6 +836,11 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
         this.ensureFreshPose(entry)
       }
     }
+    // A cargo part with its own body draws through the cargo batch, from visuals the batch keeps: they take the
+    // edited package too. A stopped scene sends no new cargo frame, so the idle one is built again against the
+    // package, which redraws those bodies. Only when the batch holds a shape of it: this runs once per package of
+    // a library being adopted.
+    if (this.boxes.refreshPackage(id)) this.applyIdleCargoFrame()
     // the rebuild swapped in fresh hardware meshes; re-pool so stale (disposed) sources aren't left baked
     this.poolRebuild()
     // force: selection/rig/structure are unchanged, but the rebuilt link meshes the rig-highlight
@@ -993,7 +1016,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     this.routing.handPosed = new Set(partIds)
   }
 
-  applyIdlePose(partId: string, pose: { joints?: Record<string, number>; subPoses?: Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>; lamps?: Record<string, boolean> }): void {
+  applyIdlePose(partId: string, pose: { joints?: Record<string, number>; subPoses?: Record<string, SubPose>; lamps?: Record<string, boolean> }): void {
     // stopped-sim only: while running, applyBoxFrame drives this rig every frame and would fight this pose (unless
     // the rig is hand-posed, when the frames stand aside for it)
     if (this.running && !this.routing.handPosed.has(partId)) return
@@ -1001,7 +1024,14 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     if (!obj) return
     // same appliers the running frame routes to (applyBoxFrame): joints first, then subPose overrides win.
     if (pose.joints) (obj.userData.applyJoints as ((j: Record<string, number>) => void) | undefined)?.(pose.joints)
-    if (pose.subPoses) (obj.userData.applySubPoses as ((p: Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>) => void) | undefined)?.(pose.subPoses)
+    if (pose.subPoses) (obj.userData.applySubPoses as ((p: Record<string, SubPose>) => void) | undefined)?.(pose.subPoses)
+    // a beam on a link this pose moved casts from where the link now stands. Stopped, the beam probe reruns only on
+    // a scene, cargo or registry change, so without this the beam stays drawn where the link was (a lift's deck
+    // eye left at the lower level). Running, the frame's probe pass re-aims it.
+    if (!this.running && (pose.joints || pose.subPoses) && typeof obj.userData.probeTick === 'function') {
+      const ref = this.registries.probeTickRefs.find((r) => r.entry.part.id === partId)
+      if (ref) this.probeSensor(ref, true)
+    }
     if (pose.lamps) {
       const applyLamps = obj.userData.applyLamps as ((l: Record<string, boolean>) => void) | undefined
       if (applyLamps) {
@@ -1033,7 +1063,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     // this batch renders, and re-run the probes against it when it is a new frame (the memo returns
     // the same one while no cargo changed)
     const frame = this.idleCargoMemo(this.idleCargoParts())
-    if (frame !== this.idleCargoFrame) this.beamProbeDirty = true
+    if (frame !== this.idleCargoFrame) this.beamCargoDirty = true
     this.idleCargoFrame = frame
     this.boxes.apply(frame)
   }
@@ -1062,12 +1092,24 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
       },
     })
     // the stopped beam probe reads each sensor's own pose and params (positions are world-space, so a parent's move
-    // rewrites its children) and the cargo frame, whose change applyIdleCargoFrame flags above
+    // rewrites its children) and the cargo frame, whose change applyIdleCargoFrame flags above. An edited sensor is
+    // re-probed alone (runPartialBeamProbes); a sensor added or removed, or a full delta, re-probes them all
     consumers.register({
       name: 'sensorBeams',
       reads: drawsSensorBeam,
-      apply: () => {
-        this.beamProbeDirty = true
+      apply: (delta) => {
+        if (delta.full) {
+          this.beamProbeDirty = true
+          return
+        }
+        for (const [id, { prev, next }] of delta.changed) {
+          if (!(prev && drawsSensorBeam(prev)) && !(next && drawsSensorBeam(next))) continue
+          if (!prev || !next) {
+            this.beamProbeDirty = true
+            return
+          }
+          this.beamSensorsDirty.add(id)
+        }
       },
       audit: () => this.auditSensorBeams(),
     })
@@ -1077,7 +1119,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
   /** Re-probe every sensor beam now and report whether any beam moved: a beam that changes here was stale on screen. */
   private auditSensorBeams(): { ok: boolean; reason: string } {
     // running: beams follow the sim's frames; dirty: a probe is already scheduled for the next frame
-    if (this.running || this.beamProbeDirty) return { ok: true, reason: '' }
+    if (this.running || this.beamProbeDirty || this.beamCargoDirty || this.beamSensorsDirty.size > 0) return { ok: true, reason: '' }
     const before = sensorBeamDebug().beams
     this.runBeamProbes()
     const after = sensorBeamDebug().beams
@@ -1094,10 +1136,50 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
 
   /** one stopped/running beam probe pass over every sensor rig (the per-frame gate in tickBody decides when) */
   private runBeamProbes(): void {
+    // stopped, each sensor's casts are recorded for the next cargo-only pass; running, beams read the worker's hits
+    const record = !(this.running && this.simHasFrame)
+    this.beamCasts.clear()
+    for (const ref of this.registries.probeTickRefs) this.probeSensor(ref, record)
+    this.probedCargoFrame = record ? this.idleCargoFrame : null
+  }
+
+  /**
+   * The stopped pass after a change that only moved cargo (beamCargoDirty) or edited some sensors (beamSensorsDirty):
+   * re-probe the edited sensors, and the sensors whose recorded casts enter a changed cargo row before or after the
+   * change. Every other sensor would cast the same answer. A change in the cargo row count has no row-for-row diff, so
+   * it takes the full pass.
+   */
+  private runPartialBeamProbes(): void {
+    const before = this.probedCargoFrame
+    const after = this.idleCargoFrame
+    const rows = this.beamCargoDirty ? (before && after ? changedCargoRows(before, after) : null) : []
+    if (!rows) {
+      this.runBeamProbes()
+      return
+    }
     for (const ref of this.registries.probeTickRefs) {
-      this.ensureFreshPose(ref.entry)
-      this.probePartId = ref.entry.part.id // routes this part's frame.beamHits in probeBeam
-      if (ref.probeTick(this.probeBeam) === true) markBundleDirtyPart(ref.entry.part.id)
+      const id = ref.entry.part.id
+      const casts = this.beamCasts.get(id)
+      const crossed = rows.length > 0 && casts !== undefined && (castsCrossRows(casts, before!, rows) || castsCrossRows(casts, after!, rows))
+      if (crossed || this.beamSensorsDirty.has(id)) this.probeSensor(ref, true)
+    }
+    this.probedCargoFrame = after
+  }
+
+  private probeSensor(ref: ViewRegistries['probeTickRefs'][number], record: boolean): void {
+    const id = ref.entry.part.id
+    this.ensureFreshPose(ref.entry)
+    this.probePartId = id // routes this part's frame.beamHits in probeBeam
+    let casts: number[] | null = null
+    if (record) {
+      casts = []
+      this.beamCasts.set(id, casts)
+    }
+    this.probeCasts = casts
+    try {
+      if (ref.probeTick(this.probeBeam) === true) markBundleDirtyPart(id)
+    } finally {
+      this.probeCasts = null
     }
   }
 
@@ -1123,8 +1205,9 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     if (!running) {
       this.boxes.clear()
       this.applyIdleCargoFrame()
-      this.resetRunPoses()
-    }
+      if (this.routing.ranSinceStop) this.resetRunPoses()
+      this.routing.ranSinceStop = false
+    } else this.routing.ranSinceStop = true
   }
 
   /**
@@ -1144,7 +1227,10 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     for (const [id, entry] of this.entries) {
       const applyJoints = entry.visual.object.userData.applyJoints as ((j: Record<string, number>) => void) | undefined
       if (!applyJoints && !this.routing.baseDriven.has(id)) continue
-      applyJoints?.({})
+      // a rig drops its subPoses too; applyJoints({}) alone left a setSubPose-driven link where the run put it
+      const resetRunPose = entry.visual.object.userData.resetRunPose as (() => void) | undefined
+      if (resetRunPose) resetRunPose()
+      else applyJoints?.({})
       entry.visual.update(entry.part, this.lastResolved?.get(id))
       this.ensureFreshPose(entry) // re-bake the frozen subtree now (mirrors refreshPackage)
       entry.boundsDirty = true
@@ -1388,7 +1474,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     this.setPointerRay(clientX, clientY)
     // the camera forward seeds the view/axis constraint planes (camera normal);
     // the pixel coords seed the trackball's grab point
-    this.gizmo.beginDrag(handle, this.raycaster.ray, this.camera.getWorldDirection(this.camTmp), { x: clientX, y: clientY })
+    this.gizmo.beginDrag(handle, this.raycaster.ray, this.camera.getWorldDirection(this.camTmp), { x: clientX, y: clientY }, this.camera.orthographic)
   }
 
   gizmoConstrain(target: GizmoConstraint): void {
@@ -1495,8 +1581,8 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     this.handles.endDrag()
   }
 
-  focusOn(ids: readonly string[]): void {
-    viewCamera.focusOn(this, ids)
+  focusOn(ids: readonly string[], opts?: { instant?: boolean }): void {
+    viewCamera.focusOn(this, ids, opts)
   }
 
   startFollow(ids: readonly string[]): void {
@@ -1516,7 +1602,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     viewCamera.updateFollow(this)
   }
 
-  private snapToAxis(dir: Vector3): void {
+  snapToAxis(dir: Vector3): void {
     viewCamera.snapToAxis(this, dir)
   }
 
@@ -1534,6 +1620,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     this.nav.navStartTarget.copy(this.controls.target)
     this.nav.navStartProjection = this.snapshotProjection()
     this.nav.orbitPivot = this.pickOrbitPivot()
+    this.nav.orbitSnap = null
     this.nav.navigating = true
     this.nav.navCancelled = false
     // a chorded right-click fires pointermove (not pointerdown); watch moves for
@@ -1551,6 +1638,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
 
   /** drag released: clear the navigation snapshot and lift any abort freeze */
   private onNavEnd = (): void => {
+    viewCamera.endOrbitSnap(this)
     this.nav.navigating = false
     this.container.removeEventListener('pointermove', this.onNavAbortMove, true)
     if (this.nav.navCancelled) {
@@ -1560,6 +1648,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
   }
 
   private onNavAbortDown = (e: PointerEvent): void => {
+    this.nav.navPointer = { id: e.pointerId, type: e.pointerType }
     if (e.button === 2 && this.nav.navigating && !this.nav.navCancelled) {
       this.cancelNavigation()
       e.preventDefault()
@@ -1568,9 +1657,24 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
   }
 
   private onNavAbortMove = (e: PointerEvent): void => {
+    this.nav.altHeld = e.altKey // orbit snapping follows Alt pressed or released mid-drag
     if (this.nav.navigating && !this.nav.navCancelled && (e.buttons & 2) !== 0) {
       this.cancelNavigation()
+    } else if (this.nav.navigating && e.buttons === 0) {
+      this.endLostNavigation()
     }
+  }
+
+  /**
+   * An orbit or pan drag whose release never arrived (Alt-Tab mid-drag takes the pointerup with it): OrbitControls
+   * still holds the pointer, so the camera went on turning as the mouse hovered and the next press was ignored. Hand
+   * it the release it missed, on the document where it listens. Its end event then runs onNavEnd as usual, which
+   * also re-enables the controls after a right-click cancel. The camera stays where the drag left it.
+   */
+  private endLostNavigation(): void {
+    const p = this.nav.navPointer
+    if (!p) return
+    this.renderer.domElement.ownerDocument.dispatchEvent(new PointerEvent('pointerup', { pointerId: p.id, pointerType: p.type, bubbles: true }))
   }
 
   private onNavAbortKey = (e: KeyboardEvent): void => {
@@ -1637,6 +1741,10 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     const p = this.camera.position
     const t = this.controls.target
     return { px: p.x, py: p.y, pz: p.z, tx: t.x, ty: t.y, tz: t.z }
+  }
+
+  lookPose(): { px: number; py: number; pz: number; tx: number; ty: number; tz: number } {
+    return viewCamera.lookPose(this, this.isNavigating())
   }
 
   private trackCameraSettle(): void {
@@ -1811,9 +1919,11 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
       cpuMs: this.cpuMsEma,
       cpuTotalMs: this.cpuMsTotal,
       frames: this.framesTotal,
-      // 0 means "no resolved sample yet" (first frames) - report null until real data exists,
-      // so the overlay never renders a misleading 0.00 gpu line
-      gpuMs: backend === 'WebGPU' && this.gpuMsEma > 0 ? this.gpuMsEma : null,
+      // null until a frame has been resolved, so the overlay never shows a misleading 0.00
+      gpuMs: this.frameMeter.gpu.frames > 0 ? this.frameMeter.gpu.ema : null,
+      gpuTotalMs: this.frameMeter.gpu.frames > 0 ? this.frameMeter.gpu.totalMs : null,
+      gpuFrames: this.frameMeter.gpu.frames,
+      refreshMs: this.frameMeter.refresh.intervalMs,
       missedFrames: this.hitchCounter.missed,
       backend,
       matrixLiveParts: this.matrices.matrixLiveParts,
@@ -1838,6 +1948,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     this.pilot.dispose()
     window.removeEventListener('keydown', this.onShiftChange)
     window.removeEventListener('keyup', this.onShiftChange)
+    window.removeEventListener('blur', this.onWindowBlur)
     this.renderer.domElement.removeEventListener('pointerdown', this.onShiftChange)
     this.renderer.domElement.removeEventListener('wheel', this.onZoomWheel)
     this.controls.removeEventListener('start', this.onNavStart)
@@ -1896,6 +2007,7 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
       this.beamHit.color.setRGB(h.color[0]!, h.color[1]!, h.color[2]!, SRGBColorSpace)
       return this.beamHit
     }
+    this.probeCasts?.push(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, maxDist)
     const frame = this.idleCargoFrame
     if (!frame || frame.count === 0) return null
     this.beamOriginArr[0] = origin.x
@@ -1922,31 +2034,31 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
   private readonly tick = (now: number): void => {
     const synthetic = this.lastTime === null // first frame / resetFrameClock: dt is a placeholder, not a real interval
     const dt = this.lastTime === null ? 1 / 60 : Math.min((now - this.lastTime) / 1000, 0.1)
-    this.lastTime = now
     if (!synthetic) {
       this.hitchCounter.push(dt)
+      this.frameMeter.refresh.push(now - this.lastTime!)
     }
+    this.lastTime = now
     const cpuStart = performance.now()
     this.tickBody(dt)
     const cpuMs = performance.now() - cpuStart
     this.cpuMsEma = this.cpuMsEma === 0 ? cpuMs : this.cpuMsEma + 0.1 * (cpuMs - this.cpuMsEma)
     this.cpuMsTotal += cpuMs
     this.framesTotal++
-    // GPU frame time (WebGPU only): the backend wrote per-pass timestamps this frame
-    // (trackTimestamp, createRenderer.ts). Resolving is async and completes a frame or two later,
-    // which is fine for an EMA. The pool self-guards against overlapping resolves. WebGL's classic
-    // renderer has no equivalent, so gpuMsEma stays 0 and getStats reports null.
+    // GPU frame time (WebGPU only): the backend wrote per-pass timestamps this frame (trackTimestamp,
+    // createRenderer.ts). They resolve a frame or two later in batches, and each resolved frame is counted
+    // once (frameMeter.ts says why the resolve's return value isn't used). A device without the
+    // timestamp-query feature has no render pool, and WebGL's classic renderer has none at all: the gpu
+    // stats stay empty and the overlay shows "-".
     if (!(this.renderer instanceof WebGLRenderer) && !this.disposed) {
       const gpu = this.renderer
       void gpu
         .resolveTimestampsAsync()
-        .then((ms) => {
-          const val = typeof ms === 'number' && Number.isFinite(ms) ? ms : (gpu.info.render as { timestamp?: number }).timestamp
-          if (typeof val === 'number' && Number.isFinite(val) && val >= 0) {
-            this.gpuMsEma = this.gpuMsEma === 0 ? val : this.gpuMsEma + 0.1 * (val - this.gpuMsEma)
-          }
+        .then(() => {
+          const pool = (gpu.backend as unknown as { timestampQueryPool?: { render?: { timestamps?: Map<string, number> } } }).timestampQueryPool?.render
+          if (pool?.timestamps) this.frameMeter.gpu.collect(pool.timestamps)
         })
-        .catch(() => {}) // timestamp-query unavailable (feature absent) - HUD just shows no gpu line
+        .catch(() => {})
     }
   }
 
@@ -2035,6 +2147,9 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
       this.lastProbeSimActive !== simActive ||
       this.probedRegistryRev !== this.registries.probeRegistryRev
     this.lastProbeSimActive = simActive
+    // only cargo moved or some sensors were edited (a box or sensor drag): re-probe just the sensors that can have
+    // changed (runPartialBeamProbes)
+    const probeSomeBeams = !probeBeams && (this.beamCargoDirty || this.beamSensorsDirty.size > 0)
     // Registry loops, not an every-entry sweep: most parts register no per-frame callback, so
     // this costs O(ticking parts) instead of O(all parts) × 3 megamorphic userData reads per
     // frame (refreshTickRegistries). Frozen parts without callbacks get no blanket
@@ -2068,6 +2183,8 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
       // this registry generation has now been probed; a rebuild later in the frame bumps past it
       // and re-fires the gate next frame
       this.probedRegistryRev = this.registries.probeRegistryRev
+    } else if (probeSomeBeams) {
+      this.runPartialBeamProbes()
     }
     // Beams are instances of the scene-level bank, not children of their parts, so hiding a part does
     // not hide its beam. Mirror it every frame, not only on probe frames: parts are hidden
@@ -2087,6 +2204,10 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     }
     // the probe pass above consumed this frame's dirtiness; the next stopped re-probe waits for a seam
     if (probeBeams) this.beamProbeDirty = false
+    if (probeBeams || probeSomeBeams) {
+      this.beamCargoDirty = false
+      this.beamSensorsDirty.clear()
+    }
     // Moved-stream expiry (poolMovedAt): once every ejected non-drag mover has held still for the
     // quiet period, one rebuild re-pools them all. Wall-clock (not sync-count) so the re-pool
     // can't fire in the middle of a stalled scrub/stream, and it fires without needing another
@@ -2129,6 +2250,8 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     // rewrite the flow-arrow instance buffers if any arrow shape/pose/visibility moved this
     // frame (syncFlowArrow / the toggle); a parked frame is a boolean check
     this.flowArrowBank.flush()
+    // a model that loaded into a cargo shape draws now, though a stopped or paused scene sends no new cargo frame
+    this.boxes.refreshLoadedShapes()
     // late-arriving children (GLB links, roller/chain lanes) join the pool once their burst settles
     this.poolRebuildOnStructureSettled()
     // the owned world-matrix walk: after every mutator above, before the bundle patch + render
@@ -2218,6 +2341,13 @@ export class RenderView implements IRenderView, IRenderViewTestSurface {
     // the ruler's per-axis components are revealed only while Shift is held; the per-frame
     // updateRulerLabel() reads this so the bracket appears/vanishes live (even mid-measure).
     this.overlays.rulerShift = e.shiftKey
+    this.nav.altHeld = e.altKey
+  }
+
+  // Alt+Tab away loses Alt's keyup: drop it so the next orbit doesn't snap
+  private readonly onWindowBlur = (): void => {
+    this.nav.altHeld = false
+    if (this.nav.navigating) this.endLostNavigation()
   }
 
   /** Dynamic-resolution hook: re-point the renderer + composer at a new pixel ratio, clamped to the

@@ -164,6 +164,12 @@ export function stringToCalendar(t: ScalarType, s: string): number {
   return typeof ms === 'number' ? ms : 0
 }
 
+/** The 32-bit integer types. Their product goes through Math.imul: a double product past 2^53 has lost the low bits
+ *  the wrap keeps (16#FFFFFFFF * 16#FFFFFFFF is 1 as a UDINT, 0 as a wrapped double). */
+export function isInt32(t: ScalarType): boolean {
+  return t === 'DINT' || t === 'UDINT' || t === 'DWORD'
+}
+
 /** Coerce a number into its IEC type: integers wrap to their bit width (two's complement),
  *  REAL rounds to single precision. LREAL / BOOL pass through. */
 export function wrap(t: ScalarType, x: number): number {
@@ -608,6 +614,10 @@ export function nsOf(dt: number): number {
   return dt > 0 ? Math.round(dt * 1e9) : 0
 }
 
+// Every standard block keeps its inputs between calls, as a user block's VAR_INPUT does: an input a call leaves out
+// has the value the last call gave it, and FALSE, 0 or T#0s before any call gave one. A block that already keeps an
+// input as an edge's previous value (a trigger's CLK, a counter's CU) uses that. typed/blocks.ts does the same.
+
 // A timer reads the clock. PT and ET are TIME, in milliseconds; each timer notes the
 // controller's clock on the call that starts it and measures `now - start` on every call
 // after. So a timer that is not called on some scans (inside an IF, behind EN on a rung)
@@ -641,9 +651,13 @@ class Ton implements Fb {
   /** the rising edge has been seen, at clock reading `#start` */
   #running = false
   #start = 0
+  #in = false
+  #pt = 0
   call(a: FbArgs, now: number): void {
-    const pt = num(a.PT ?? 0)
-    if (!bool(a.IN ?? false)) {
+    if (a.IN !== undefined) this.#in = bool(a.IN)
+    if (a.PT !== undefined) this.#pt = num(a.PT)
+    const pt = this.#pt
+    if (!this.#in) {
       this.ET = 0
       this.Q = false
       this.#running = false
@@ -670,9 +684,13 @@ class Tof implements Fb {
   /** the falling edge has been seen, at clock reading `#start`; like TON, that scan elapses nothing */
   #timing = false
   #start = 0
+  #in = false
+  #pt = 0
   call(a: FbArgs, now: number): void {
-    const pt = num(a.PT ?? 0)
-    if (bool(a.IN ?? false)) {
+    if (a.IN !== undefined) this.#in = bool(a.IN)
+    if (a.PT !== undefined) this.#pt = num(a.PT)
+    const pt = this.#pt
+    if (this.#in) {
       this.Q = true
       this.ET = 0
       this.#timing = false
@@ -695,12 +713,15 @@ class Tof implements Fb {
 class Tp implements Fb {
   Q = false
   ET = 0
+  /** IN as the last call left it, which is also the input a call that leaves IN out keeps */
   #prev = false
   #timing = false
   #start = 0
+  #pt = 0
   call(a: FbArgs, now: number): void {
-    const pt = num(a.PT ?? 0)
-    const inn = bool(a.IN ?? false)
+    if (a.PT !== undefined) this.#pt = num(a.PT)
+    const pt = this.#pt
+    const inn = a.IN === undefined ? this.#prev : bool(a.IN)
     const rising = inn && !this.#prev
     this.#prev = inn
     if (!this.#timing && rising) {
@@ -731,7 +752,7 @@ class RTrig implements Fb {
   Q = false
   #prev = false
   call(a: FbArgs): void {
-    const clk = bool(a.CLK ?? false)
+    const clk = a.CLK === undefined ? this.#prev : bool(a.CLK) // left out, CLK keeps its last value
     this.Q = clk && !this.#prev
     this.#prev = clk
   }
@@ -744,7 +765,7 @@ class FTrig implements Fb {
   Q = false
   #prev = false
   call(a: FbArgs): void {
-    const clk = bool(a.CLK ?? false)
+    const clk = a.CLK === undefined ? this.#prev : bool(a.CLK) // left out, CLK keeps its last value
     this.Q = !clk && this.#prev
     this.#prev = clk
   }
@@ -755,13 +776,19 @@ class FTrig implements Fb {
 class Ctu implements Fb {
   CV = 0
   Q = false
+  /** CU as the last call left it, which is also the input a call that leaves CU out keeps */
   #prev = false
+  #r = false
+  #pv = 0
   call(a: FbArgs): void {
-    const cu = bool(a.CU ?? false)
-    if (bool(a.RESET ?? a.R ?? false)) this.CV = 0
+    const cu = a.CU === undefined ? this.#prev : bool(a.CU)
+    const r = a.RESET ?? a.R
+    if (r !== undefined) this.#r = bool(r)
+    if (a.PV !== undefined) this.#pv = wrap('INT', num(a.PV))
+    if (this.#r) this.CV = 0
     else if (cu && !this.#prev && this.CV < 32767) this.CV++
     this.#prev = cu
-    this.Q = this.CV >= wrap('INT', num(a.PV ?? 0))
+    this.Q = this.CV >= this.#pv
   }
 }
 
@@ -770,10 +797,15 @@ class Ctu implements Fb {
 class Ctd implements Fb {
   CV = 0
   Q = false
+  /** CD as the last call left it, which is also the input a call that leaves CD out keeps */
   #prev = false
+  #ld = false
+  #pv = 0
   call(a: FbArgs): void {
-    const cd = bool(a.CD ?? false)
-    if (bool(a.LD ?? false)) this.CV = wrap('INT', num(a.PV ?? 0))
+    const cd = a.CD === undefined ? this.#prev : bool(a.CD)
+    if (a.LD !== undefined) this.#ld = bool(a.LD)
+    if (a.PV !== undefined) this.#pv = wrap('INT', num(a.PV))
+    if (this.#ld) this.CV = this.#pv
     else if (cd && !this.#prev && this.CV > 0) this.CV--
     this.#prev = cd
     this.Q = this.CV <= 0
@@ -786,14 +818,22 @@ class Ctud implements Fb {
   CV = 0
   QU = false
   QD = false
+  /** CU and CD as the last call left them, which are also the inputs a call that leaves them out keeps */
   #pcu = false
   #pcd = false
+  #r = false
+  #ld = false
+  #pv = 0
   call(a: FbArgs): void {
-    const cu = bool(a.CU ?? false)
-    const cd = bool(a.CD ?? false)
-    const pv = wrap('INT', num(a.PV ?? 0))
-    if (bool(a.RESET ?? a.R ?? false)) this.CV = 0
-    else if (bool(a.LD ?? false)) this.CV = pv
+    const cu = a.CU === undefined ? this.#pcu : bool(a.CU)
+    const cd = a.CD === undefined ? this.#pcd : bool(a.CD)
+    const r = a.RESET ?? a.R
+    if (r !== undefined) this.#r = bool(r)
+    if (a.LD !== undefined) this.#ld = bool(a.LD)
+    if (a.PV !== undefined) this.#pv = wrap('INT', num(a.PV))
+    const pv = this.#pv
+    if (this.#r) this.CV = 0
+    else if (this.#ld) this.CV = pv
     else {
       if (cu && !this.#pcu && this.CV < 32767) this.CV++
       if (cd && !this.#pcd && this.CV > -32768) this.CV--
@@ -911,9 +951,15 @@ class AxisKernel implements Fb {
  *  `SET1`/`RESET` are accepted as aliases of `S1`/`R` (see FB_INPUTS). */
 class Sr implements Fb {
   Q1 = false
+  #s1 = false
+  #r = false
   call(a: FbArgs): void {
-    if (bool(a.R ?? a.RESET ?? false)) this.Q1 = false
-    if (bool(a.S1 ?? a.SET1 ?? false)) this.Q1 = true // set is dominant, so it is applied last
+    const r = a.R ?? a.RESET
+    const s1 = a.S1 ?? a.SET1
+    if (r !== undefined) this.#r = bool(r)
+    if (s1 !== undefined) this.#s1 = bool(s1)
+    if (this.#r) this.Q1 = false
+    if (this.#s1) this.Q1 = true // set is dominant, so it is applied last
   }
 }
 
@@ -921,9 +967,15 @@ class Sr implements Fb {
  *  `SET`/`RESET1` are accepted as aliases of `S`/`R1` (see FB_INPUTS). */
 class Rs implements Fb {
   Q1 = false
+  #s = false
+  #r1 = false
   call(a: FbArgs): void {
-    if (bool(a.S ?? a.SET ?? false)) this.Q1 = true
-    if (bool(a.R1 ?? a.RESET1 ?? false)) this.Q1 = false // reset is dominant, so it is applied last
+    const s = a.S ?? a.SET
+    const r1 = a.R1 ?? a.RESET1
+    if (s !== undefined) this.#s = bool(s)
+    if (r1 !== undefined) this.#r1 = bool(r1)
+    if (this.#s) this.Q1 = true
+    if (this.#r1) this.Q1 = false // reset is dominant, so it is applied last
   }
 }
 

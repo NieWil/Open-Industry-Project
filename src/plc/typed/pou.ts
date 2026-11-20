@@ -5,12 +5,13 @@
 // definition's TypedFb. docs/plc-typed-storage.md.
 
 import { classIds, type Env, fbDecls, funcDecls, identKey, isScalarType, methodDecls } from '../program'
-import { coerceScalar, coercerFor, type Pou } from '../pou'
+import { coerceScalar, coercerFor, type Pou, type WatchPlace } from '../pou'
 import { bool, CALL_DEPTH_MESSAGE, isInt, MAX_CALL_DEPTH, num, wrap } from '../runtime'
 import { generateBody, generateValue, type GenBody, type GenInternals, type GenScope, type TypedScope } from '../scanCodegen'
 import type { DataType, Decl, Expr, FbDef, FuncDef, Initializer, MethodDef, ScalarType, Stmt, StructInit, TagPort, TagValue, VarInfo } from '../types'
 import { isArray, isEnum, isInterface, isRef, isStruct, isUserFb, StError } from '../types'
-import { Arena } from './arena'
+import type { WatchRange, WatchShape } from '../../core/watchTable'
+import { Arena, watchKindOf } from './arena'
 import { blocksOver } from './blocks'
 import { CLASS_FIELD, type Layouts, OWN_COPY, type PouLayout, type ScalarLayout, type TypeLayout, TypedUnsupported } from './layout'
 
@@ -62,6 +63,7 @@ export function finish(tp: TypedProgram): void {
     I8: arena.I8, U8: arena.U8, I16: arena.I16, U16: arena.U16, I32: arena.I32, U32: arena.U32, F32: arena.F32, F64: arena.F64,
     strAt: (a: number) => arena.strAt(a),
     strPut: (a: number, cap: number, s: string) => arena.strPut(a, cap, s),
+    strCopy: (dst: number, cap: number, src: number) => arena.strCopy(dst, cap, src),
     copyBytes: (dst: number, src: number, n: number) => arena.copy(dst, src, n),
     clearAt: (dst: number, ranges: readonly number[]) => arena.clear(dst, ranges),
     ...blocksOver(arena),
@@ -309,6 +311,12 @@ export class TypedFn {
   readonly aggregate: readonly boolean[]
   /** the layout of a whole array or struct result (null for a scalar one): copied out to the call site's own region */
   readonly result: TypeLayout | null
+  /** each input's absolute address and layout, in declaration order, and the result's: where a generated call site
+   *  stores its arguments and reads the answer (scanCodegen.ts typedFnCall) */
+  readonly inputSlots: readonly { off: number; layout: TypeLayout }[]
+  readonly resultSlot: { off: number; layout: TypeLayout }
+  /** every input holds its value (no whole array or struct, no reference or interface) and so does the result */
+  readonly direct: boolean
   /** set when any code calls it: only those are generated (an unused function refuses nothing) */
   called = false
   #inputs: ((v: unknown) => void)[] = []
@@ -329,6 +337,11 @@ export class TypedFn {
     this.aggregate = def.decls.filter((d) => d.section === 'VAR_INPUT').map((d) => this.layout.byKey.get(identKey(d.name))!.layout.kind !== 'scalar')
     const ret = this.layout.byKey.get(identKey(def.name))!
     this.result = ret.layout.kind === 'scalar' ? null : ret.layout
+    const inputs = def.decls.filter((d) => d.section === 'VAR_INPUT').map((d) => this.layout.byKey.get(identKey(d.name))!)
+    this.inputSlots = inputs.map((f) => ({ off: this.base + f.off, layout: f.layout }))
+    this.resultSlot = { off: this.base + ret.off, layout: ret.layout }
+    const holds = (f: typeof ret): boolean => f.layout.kind === 'scalar' && !f.layout.pointer && !f.ref && f.iface === undefined
+    this.direct = holds(ret) && inputs.every(holds)
   }
 
   get ready(): boolean {
@@ -371,21 +384,31 @@ export class TypedFn {
   }
 
   #run(given: unknown[], slots: readonly number[] | undefined): void {
+    this.enter()
+    for (let i = 0; i < this.#inputs.length; i++) {
+      const k = slots ? slots.indexOf(i) : i
+      if (k < 0 || k >= given.length) continue
+      this.#inputs[i]!(given[k])
+    }
+    this.exec()
+  }
+
+  /** the region back to its starting values, ready for a call's arguments */
+  enter(): void {
     if (!this.#body) this.prepare()
     const a = this.tp.arena!
-    // back to its starting values: when every initial value is a literal they are the same on every call, so the region
-    // as the first reset left it is kept and copied back (the walker caches literal initial values the same way)
+    // when every initial value is a literal they are the same on every call, so the region as the first reset left it
+    // is kept and copied back (the walker caches literal initial values the same way)
     if (this.#start) a.U8.set(this.#start, this.base)
     else {
       zeroRegion(a, this.layout, this.base)
       initDecls(this.tp, this.decls, this.layout, this.scope, this.base)
       if (this.decls.every(literalInits)) this.#start = a.U8.slice(this.base, this.base + this.layout.size)
     }
-    for (let i = 0; i < this.#inputs.length; i++) {
-      const k = slots ? slots.indexOf(i) : i
-      if (k < 0 || k >= given.length) continue
-      this.#inputs[i]!(given[k])
-    }
+  }
+
+  /** the body, on the arguments stored since enter() */
+  exec(): void {
     this.#body!(this.base, 0) // a function is stateless and block-free: no timer reads the clock
   }
 }
@@ -750,6 +773,15 @@ export class TypedPou implements Pou {
     return leaves
   }
 
+  placesInto(out: Map<string, WatchPlace>, prefix: string, maxArray: number, blocks: boolean): ArrayBuffer {
+    for (const { key, slot, addr } of blocks ? this.#blocks(prefix) : this.#plan(prefix, maxArray)) out.set(key, { addr, kind: watchKindOf(slot.scalar) })
+    return this.#arena.buffer
+  }
+
+  rangesInto(out: WatchRange[], prefix: string, maxArray: number): void {
+    for (const f of this.layout.fields) if (!f.hidden && !f.ref && f.iface === undefined) planRanges(out, `${prefix}${f.name}`, f.layout, this.base + f.off, maxArray)
+  }
+
   watchInto(out: Record<string, TagValue>, prefix: string, maxArray: number): void {
     const a = this.#arena
     for (const leaf of this.#plan(prefix, maxArray)) out[leaf.key] = a.load(leaf.slot, leaf.addr)
@@ -824,4 +856,52 @@ function planLeaves(out: Leaf[], key: string, layout: TypeLayout, addr: number, 
     }
     walk(0, [], addr)
   }
+}
+
+/** The arrays planLeaves leaves out (longer than `max`), each as its key, its address and its shape: the same walk,
+ *  keeping what that one skips. */
+function planRanges(out: WatchRange[], key: string, layout: TypeLayout, addr: number, max: number): void {
+  if (layout.kind === 'scalar') return
+  if (layout.kind === 'struct') {
+    if (layout.block || layout.fb) return
+    for (const f of layout.fields) if (!f.hidden && f.iface === undefined && !f.ref) planRanges(out, `${key}.${f.name}`, f.layout, addr + f.off, max)
+    return
+  }
+  const count = layout.dims.reduce((n, d) => n * (d.hi - d.lo + 1), 1)
+  if (count > max) {
+    const shape = shapeOf(layout)
+    if (shape) out.push({ key, addr, shape })
+    return
+  }
+  if (layout.elem.kind === 'scalar') return
+  const walk = (k: number, at: number[], a: number): void => {
+    if (k === layout.dims.length) return planRanges(out, `${key}[${at.join(',')}]`, layout.elem, a, max)
+    const d = layout.dims[k]!
+    for (let i = d.lo; i <= d.hi; i++) walk(k + 1, [...at, i], a + (i - d.lo) * layout.strides[k]!)
+  }
+  walk(0, [], addr)
+}
+
+// one shape per layout: a range per element of an array of structures shares it, on the wire too
+const shapes = new WeakMap<TypeLayout, WatchShape | null>()
+/** What planLeaves would list under a place, as a shape (core/watchTable.ts); null when it would list nothing. */
+function shapeOf(layout: TypeLayout): WatchShape | null {
+  let shape = shapes.get(layout)
+  if (shape !== undefined) return shape
+  if (layout.kind === 'scalar') shape = layout.pointer ? null : { kind: watchKindOf(layout.scalar) }
+  else if (layout.kind === 'struct') {
+    const fields: { name: string; off: number; shape: WatchShape }[] = []
+    if (!layout.block && !layout.fb) {
+      for (const f of layout.fields) {
+        const s = !f.hidden && f.iface === undefined && !f.ref ? shapeOf(f.layout) : null
+        if (s) fields.push({ name: f.name, off: f.off, shape: s })
+      }
+    }
+    shape = fields.length > 0 ? { fields } : null
+  } else {
+    const elem = shapeOf(layout.elem)
+    shape = elem ? { dims: layout.dims.map((d, k) => ({ lo: d.lo, hi: d.hi, stride: layout.strides[k]! })), elem } : null
+  }
+  shapes.set(layout, shape)
+  return shape
 }

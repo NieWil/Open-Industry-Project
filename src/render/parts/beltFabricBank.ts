@@ -1,6 +1,6 @@
 import { DoubleSide, InstancedBufferAttribute, MeshStandardMaterial, Texture } from 'three'
-import type { InstancedMesh } from 'three'
-import type { InstanceTransform } from '../../core/partApi'
+import type { InstancedMesh, Material } from 'three'
+import type { InstanceTransform } from '../../core/parts/partApi'
 import { webgpuNodeFactory } from '../renderMode'
 import { BELT_TEX_PERIOD, beltWeaveTexture } from './common'
 import { animClockEpoch, animClockUniform, rebaseAnim, rebaseAnimForWrap } from './animClock'
@@ -25,9 +25,10 @@ import type { BeltTextureVariant } from './common'
  * beds bake u along +X, and curved parts (the arc-mirror rule) never bank.
  *
  * WebGL: MeshStandardMaterial + an onBeforeCompile uv patch. WebGPU: the TSL twin
- * (beltFabricBankNodeMaterial.ts, injected by createRenderer). Materials and textures are
- * module-level singletons, never disposed. They exist to be shared, and the set is bounded by the
- * (variant, colour) pairs a scene uses.
+ * (beltFabricBankNodeMaterial.ts, injected by createRenderer). The textures are module-level singletons,
+ * never disposed. A material is shared while any bank holds it: each bank acquires its material and
+ * releases it when it switches or is dropped, and the last release disposes it. A colour drag commits
+ * on every slider move, so a material kept for the session would pile up one per colour the drag passed.
  */
 
 // the WebGPU TSL twin, injected by createRenderer (see renderMode.webgpuNodeFactory for the contract)
@@ -56,14 +57,21 @@ export function rebaseBeltScrollForWrap(base: number, rate: number, wraps: numbe
 // textures (never an image swap on one), so the WebGPU same-GPUTexture-size trap never applies.
 const bankTexture = beltWeaveTexture
 
-const bankMaterials = new Map<string, MeshStandardMaterial>()
+const bankMaterials = new Map<string, { mat: MeshStandardMaterial; refs: number }>()
+/** the key of each live bank material, so a release can find its entry */
+const bankMaterialKeys = new WeakMap<Material, string>()
 
-/** the shared fabric material for a (weave variant, belt colour), with the same look as the per-belt
- *  createBeltSurface material (fabric × colour, metalness 0 / roughness 0.85, double-sided). */
-export function beltBankMaterial(variant: BeltTextureVariant, colorHex: string): MeshStandardMaterial {
+/** Acquire the shared fabric material for a (weave variant, belt colour), with the same look as the per-belt
+ *  createBeltSurface material (fabric × colour, metalness 0 / roughness 0.85, double-sided). Each call takes a
+ *  reference; pair it with one {@link releaseBeltBankMaterial}. */
+export function acquireBeltBankMaterial(variant: BeltTextureVariant, colorHex: string): MeshStandardMaterial {
   const key = `${variant}|${colorHex}`
-  let mat = bankMaterials.get(key)
-  if (mat) return mat
+  const held = bankMaterials.get(key)
+  if (held) {
+    held.refs++
+    return held.mat
+  }
+  let mat: MeshStandardMaterial
   const tex = bankTexture(variant)
   const nodeFactory = webgpuNodeFactory(bankNodeFactory, 'beltBank')
   if (nodeFactory) {
@@ -82,8 +90,29 @@ export function beltBankMaterial(variant: BeltTextureVariant, colorHex: string):
   }
   mat.color.set(colorHex)
   mat.side = DoubleSide
-  bankMaterials.set(key, mat)
+  bankMaterials.set(key, { mat, refs: 1 })
+  bankMaterialKeys.set(mat, key)
   return mat
+}
+
+/**
+ * Drop one reference to a bank material; the last one disposes it. Disposing a material is safe under a
+ * recorded render bundle (gpuRetire.ts header). Any other material is ignored, so a caller can pass whatever
+ * its bank held.
+ */
+export function releaseBeltBankMaterial(mat: Material | null | undefined): void {
+  const key = mat ? bankMaterialKeys.get(mat) : undefined
+  if (key === undefined) return
+  const entry = bankMaterials.get(key)!
+  if (--entry.refs > 0) return
+  bankMaterials.delete(key)
+  bankMaterialKeys.delete(entry.mat)
+  entry.mat.dispose()
+}
+
+/** live bank material count, for tests */
+export function beltBankMaterialCount(): number {
+  return bankMaterials.size
 }
 
 /**
@@ -113,6 +142,26 @@ export function writeFabricBankAttributes(mesh: InstancedMesh, instances: readon
   fUv.needsUpdate = true
   mesh.userData.beltFabricBank = true
   writeFabricBankScroll(mesh, base, rate)
+}
+
+/**
+ * Write a bank's scroll state with a pair per instance: a posable conveying array's copies, each running its belt at
+ * its own speed. Like writeFabricBankScroll, a call only when a rate changes or the clock wraps, never per frame.
+ */
+export function writeFabricBankScrolls(mesh: InstancedMesh, base: ArrayLike<number>, rate: ArrayLike<number>): void {
+  const geo = mesh.geometry
+  let fScroll = geo.getAttribute('fabricScroll') as InstancedBufferAttribute | undefined
+  if (!fScroll || fScroll.count < mesh.instanceMatrix.count || fScroll.itemSize !== 2) {
+    fScroll = new InstancedBufferAttribute(new Float32Array(mesh.instanceMatrix.count * 2), 2)
+    geo.setAttribute('fabricScroll', fScroll)
+  }
+  const arr = fScroll.array as Float32Array
+  const n = Math.min(base.length, fScroll.count)
+  for (let i = 0; i < n; i++) {
+    arr[i * 2] = base[i]!
+    arr[i * 2 + 1] = rate[i]!
+  }
+  fScroll.needsUpdate = true
 }
 
 /**

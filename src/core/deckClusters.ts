@@ -1,5 +1,5 @@
 import type { PartInstance } from './types'
-import { conveyorEndsOf, isBeltLike } from './partGeometry'
+import { conveyorEndsOf, isBeltLike } from './parts/partGeometry'
 import { memoizeByParticipants } from './memoParts'
 
 /**
@@ -28,9 +28,11 @@ const BUTT_TOL = 0.05
 /** outward end normals must point into each other (collinear butt, not a side T) */
 const OPPOSED_DOT = -0.9
 
-function endsButt(a: PartInstance, b: PartInstance): boolean {
-  for (const ea of conveyorEndsOf(a)) {
-    for (const eb of conveyorEndsOf(b)) {
+type Ends = ReturnType<typeof conveyorEndsOf>
+
+function endsButt(endsA: Ends, endsB: Ends): boolean {
+  for (const ea of endsA) {
+    for (const eb of endsB) {
       const dx = ea.x - eb.x
       const dz = ea.z - eb.z
       if (dx * dx + dz * dz > BUTT_TOL * BUTT_TOL) continue
@@ -69,9 +71,11 @@ function computeDeckClustersUncached(parts: readonly PartInstance[]): Map<string
     }
     return root
   }
+  // each conveyor's ends once, not once per pair it is tested in
+  const ends = conveyors.map((c) => conveyorEndsOf(c))
   for (let i = 0; i < conveyors.length; i++) {
     for (let j = i + 1; j < conveyors.length; j++) {
-      if (endsButt(conveyors[i]!, conveyors[j]!)) parent.set(find(conveyors[i]!.id), find(conveyors[j]!.id))
+      if (endsButt(ends[i]!, ends[j]!)) parent.set(find(conveyors[i]!.id), find(conveyors[j]!.id))
     }
   }
   const groups = new Map<string, PartInstance[]>()

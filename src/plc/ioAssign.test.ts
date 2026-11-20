@@ -345,6 +345,28 @@ END_VAR`)
     expect(diagnostics(after)).toEqual([])
   })
 
+  it('drops an emptied input block that opens the program, where the located block goes', () => {
+    // the new block is inserted at the line the input block is deleted from: one edit must not eat the other
+    const source = `VAR_INPUT
+  Eye : BOOL; (* the photo eye at the end *)
+END_VAR
+
+VAR_OUTPUT
+  Run : BOOL;
+END_VAR
+
+Run := NOT Eye;`
+    const after = assign(source, [EYE, RUN]).source
+    expect(after).toBe(`VAR
+  Eye AT %IX0.0 : BOOL; (* the photo eye at the end *)
+  Run AT %QX0.0 : BOOL;
+END_VAR
+
+
+Run := NOT Eye;`)
+    expect(diagnostics(after)).toEqual([])
+  })
+
   it('keeps CRLF line endings', () => {
     const after = assign(CONVEYOR.replace(/\n/g, '\r\n'), [EYE, RUN]).source
     expect(after.includes('\r\n')).toBe(true)

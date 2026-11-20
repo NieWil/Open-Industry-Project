@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
 import { legPieces, legStations } from './common'
 import { examplePart } from './examplePart'
 

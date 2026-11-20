@@ -1,7 +1,7 @@
 // The live snap's stickiness policy: which snap the preview shows on this pointer-move, given the join it showed on
 // the last one. Pure, so it is tested without a controller (liveSnap.test.ts); controller/snapRest.ts applyLiveSnap feeds it.
 
-import type { SnapCandidate } from '../../core/snapFeatures'
+import type { SnapCandidate } from '../../core/snap/snapFeatures'
 import { SNAP_MIN_SWITCH_MS, SNAP_SWITCH_MARGIN, SNAP_SWITCH_MIN_GAIN } from '../../core/types'
 
 /** a join's identity: the target, the connector that made it, and (a conveyor) which ends meet */

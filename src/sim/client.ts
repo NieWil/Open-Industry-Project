@@ -1,16 +1,24 @@
 import type { BoxFrame } from '../core/frame'
-import { FlowFactLog } from '../core/flowFactLog'
-import { clearPartDiagnostics, notePartDiagnosticsDropped, reportPartDiagnostic } from '../core/partDiagnostics'
-import { PART_CALL_BEACON_BYTES, readPartCallBeacon } from '../core/partScript'
+import { FlowFactLog } from '../core/flow/flowFactLog'
+import { clearPartDiagnostics, notePartDiagnosticsDropped, reportPartDiagnostic } from '../core/parts/partDiagnostics'
+import { PART_CALL_BEACON_BYTES, readPartCallBeacon } from '../core/parts/partScript'
 import { DEFAULT_SIM_HZ } from '../core/types'
+import { markKeySet } from '../core/watchKeys'
+import { memoryTable, type WatchLayout } from '../core/watchTable'
 import type { SceneJSON, SimRate } from '../core/types'
-import type { WiredBindings } from '../plc/plcLink'
+import type { WiredBindings } from '../plc/link/plcLink'
+import type { PlcRun } from './plcGroup'
 import type { TagValue } from '../plc/types'
 import type { PlcFrameState } from './plcHost'
 import { scenePatch } from './scenePatch'
 import type { MainToWorker, StepStats, WorkerToMain } from './protocol'
 import { SimClockRate } from './simClockRate'
-import { FrameWireDecoder } from './frameWire'
+import { FrameWireDecoder, RecordDecoder } from './frameWire'
+
+/** how a {@link SimClient.stepBy} request ended (protocol.ts 'stepped') */
+export type StepDone = Omit<Extract<WorkerToMain, { type: 'stepped' }>, 'type' | 'seq'>
+/** each cargo body's velocity and contacts (protocol.ts 'cargoDetail') */
+export type CargoDetail = Omit<Extract<WorkerToMain, { type: 'cargoDetail' }>, 'type' | 'seq'>
 
 /** an attached ST program faulting in the worker (runtime scan fault / backstop compile failure) */
 export interface PlcFault {
@@ -20,8 +28,9 @@ export interface PlcFault {
   offset?: number
 }
 
-/** How long a running world may send no frame before the worker is taken to be stuck: the first frame waits on the
- *  world build (and, cold, the Jolt compile), later ones arrive many times a second whether paused or not. */
+/** How long a running world may show no sign of life before the worker is taken to be stuck: the first frame waits
+ *  on the world build (and, cold, the Jolt compile). After it, a running loop sends frames many times a second, and a
+ *  paused one, which sends none, ticks its loop counter (or, without shared memory, sends 'alive'). */
 export const SIM_HANG_FIRST_FRAME_MS = 30_000
 export const SIM_HANG_MS = 10_000
 
@@ -37,6 +46,11 @@ export class SimClient {
   /** the in-worker PLC's latest state (watch / %I / %Q / scan telemetry), refreshed with every
    *  frame while a program is attached; null when none is (or before the first frame lands) */
   plcState: PlcFrameState | null = null
+  // the last whole copy of the program's inputs and outputs, which a frame carries only the changes to
+  private readonly plcInputs = new RecordDecoder<TagValue>()
+  private readonly plcOutputs = new RecordDecoder<TagValue>()
+  /** the running program's held forces, last set by {@link setForces} */
+  forces: Readonly<Record<string, number | boolean>> = {}
 
   /** which Jolt build the worker initialized (set on its ready message); null until then.
    *  'wasm-multithread' only under ?joltthreads in a cross-origin isolated context. */
@@ -50,9 +64,9 @@ export class SimClient {
    *  window-diff two reads (e2e/threaded-jolt-bench.mjs, StatsOverlay's `phys` line). null until
    *  the first frame. */
   stepStats: StepStats | null = null
-  /** The current run's flow facts (core/flowFacts.ts), by fact id, as the worker reported them: a fact that unfolds (a
+  /** The current run's flow facts (core/flow/flowFacts.ts), by fact id, as the worker reported them: a fact that unfolds (a
    *  stall) arrives again under its id when it ends, and replaces its first record. Kept after Stop, cleared on each
-   *  start; the Problems dock subscribes to it (core/flowFactLog.ts). */
+   *  start; the Problems dock subscribes to it (core/flow/flowFactLog.ts). */
   readonly flowFacts = new FlowFactLog()
   /** the last `partIds` / `dressings` the worker sent: it omits them while unchanged (frameWire.ts), and every
    *  frame handed on re-attaches these, so consumers still see a complete BoxFrame */
@@ -75,12 +89,21 @@ export class SimClient {
   // Play is still instant.
   private worker: Worker | null = null
   private _running = false
-  /** shared with the worker: which part's code it is running (core/partScript.ts); null where memory cannot be shared */
+  /** shared with the worker: which part's code it is running (core/parts/partScript.ts); null where memory cannot be shared */
   private beacon: SharedArrayBuffer | null = null
-  /** when the last frame arrived (or the run started), and whether one has arrived this run */
-  private lastFrameAt = 0
+  /** shared with the worker: its step loop's tick count, a sign of life while paused; null where memory cannot be shared */
+  private progress: Int32Array | null = null
+  private observedTicks = 0
+  /** when the worker last showed it was alive (a frame, a loop tick, an 'alive', or the run starting), and whether a
+   *  frame has arrived this run */
+  private lastAliveAt = 0
   private framed = false
   private watchdog: ReturnType<typeof setInterval> | null = null
+  /** callers waiting on a 'stepped' or 'cargoDetail' answer, by seq; each gets null when the run ends first */
+  private readonly waiters = new Map<number, (msg: StepDone | CargoDetail | null) => void>()
+  private nextSeq = 1
+  /** the key set of the program whose table arrived last (core/watchKeys.ts), by the worker's number for it */
+  private watchKeySet: { of: number; set: object; layout: WatchLayout | null } | null = null
 
   /** create + wire the worker on first use; idempotent */
   private ensureWorker(): Worker {
@@ -97,7 +120,8 @@ export class SimClient {
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module', name })
     if (typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOriginIsolated === true) {
       this.beacon = new SharedArrayBuffer(PART_CALL_BEACON_BYTES)
-      worker.postMessage({ type: 'beacon', buffer: this.beacon } satisfies MainToWorker)
+      this.progress = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT))
+      worker.postMessage({ type: 'beacon', buffer: this.beacon, progress: this.progress.buffer as SharedArrayBuffer } satisfies MainToWorker)
     }
     worker.onmessage = (e: MessageEvent<WorkerToMain>) => {
       const msg = e.data
@@ -112,12 +136,25 @@ export class SimClient {
         // the worker sends these two only when they changed (protocol.ts 'frame'); keep the last copy before
         // the not-running early-out below, so a frame dropped here can't leave the cache a frame behind
         this.frameWire.accept(msg)
-        this.lastFrameAt = performance.now()
+        this.lastAliveAt = performance.now()
         this.framed = true
         this.stepStats = msg.stepStats
         if (msg.flowFacts) this.flowFacts.accept(msg.flowFacts)
         // (the variable table rides only some frames - plcHost.ts WATCH_HZ: between them the last one stands)
-        this.plcState = msg.plc ? { ...msg.plc, watch: msg.plc.watch ?? this.plcState?.watch ?? {} } : null
+        if (msg.plc) {
+          // the table itself, or a copy of the program's memory to read it from (core/watchTable.ts); neither on a
+          // frame between two sends, where the last one stands
+          const { watchBytes, watchLayout, watchKeys, inputs: inputsSent, outputs: outputsSent, ioKept, ioPatches, ...plc } = msg.plc
+          // the inputs and outputs cross as far as they changed (frameWire.ts): these are the whole of each
+          const inputs = this.plcInputs.accept(inputsSent, ioPatches?.inputs, ioKept?.includes('inputs') === true) ?? {}
+          const outputs = this.plcOutputs.accept(outputsSent, ioPatches?.outputs, ioKept?.includes('outputs') === true) ?? {}
+          if (watchKeys !== undefined && this.watchKeySet?.of !== watchKeys) this.watchKeySet = { of: watchKeys, set: {}, layout: null }
+          if (watchLayout && this.watchKeySet) this.watchKeySet.layout = watchLayout
+          const layout = this.watchKeySet?.layout
+          const watch = plc.watch ?? (watchBytes && layout ? memoryTable(layout, watchBytes) : undefined)
+          if (watch && watchKeys !== undefined && this.watchKeySet) markKeySet(watch, this.watchKeySet.set)
+          this.plcState = { ...plc, inputs, outputs, watch: watch ?? this.plcState?.watch ?? {} }
+        } else this.plcState = null
         if (!this._running) return
         // a paused frame advanced no sim time: sampling it would measure real time passing with the sim still
         if (!msg.paused) this.clock.sample(performance.now(), msg.simTime, this.requestedScale)
@@ -132,19 +169,17 @@ export class SimClient {
           caps: msg.caps,
           partIds: this.frameWire.partIds,
           simTime: msg.simTime,
-          ...(msg.joints ? { joints: msg.joints } : {}),
-          ...(msg.subPoses ? { subPoses: msg.subPoses } : {}),
-          ...(msg.lamps ? { lamps: msg.lamps } : {}),
-          ...(msg.values ? { values: msg.values } : {}),
-          ...(msg.displays ? { displays: msg.displays } : {}),
-          ...(msg.tags ? { tags: msg.tags } : {}),
-          ...(msg.basePoses ? { basePoses: msg.basePoses } : {}),
-          ...(msg.conveyorSpeeds ? { conveyorSpeeds: msg.conveyorSpeeds } : {}),
-          ...(msg.beamHits ? { beamHits: msg.beamHits } : {}),
+          // (the records by part, each the last copy where the frame did not change it: frameWire.ts)
+          ...this.frameWire.records,
           ...(this.frameWire.dressings ? { dressings: this.frameWire.dressings } : {}),
-          ...(msg.marks ? { marks: msg.marks } : {}),
           ...(this.frameWire.shapes ? { shapes: this.frameWire.shapes, shapeRefs: this.frameWire.shapeRefs } : {}),
         })
+      } else if (msg.type === 'alive') {
+        this.lastAliveAt = performance.now()
+      } else if (msg.type === 'stepped' || msg.type === 'cargoDetail') {
+        const done = this.waiters.get(msg.seq)
+        this.waiters.delete(msg.seq)
+        done?.(msg)
       } else if (msg.type === 'error') {
         this.onError(msg.message)
       } else if (msg.type === 'plcFault') {
@@ -212,22 +247,29 @@ export class SimClient {
 
   /**
    * Watch a run for a worker that stopped answering: part code stuck where the loop budget cannot reach it (deep
-   * recursion, a pathological regex) or a call that never returns. A hidden page's timers are throttled and its
-   * frames may lag, so a hidden page restarts the clock instead of judging.
+   * recursion, a pathological regex) or a call that never returns. Part code runs on the loop's thread, so a stuck call
+   * stops the loop counter too: a counter that moved means a live worker, paused or not, however late this check runs.
+   * A hidden page's timers are throttled and its frames may lag, so a hidden page restarts the clock instead of judging.
    */
   private armWatchdog(): void {
-    this.lastFrameAt = performance.now()
+    this.lastAliveAt = performance.now()
+    this.observedTicks = this.progress ? Atomics.load(this.progress, 0) : 0
     this.framed = false
     if (this.watchdog !== null) return
     this.watchdog = setInterval(() => {
       if (!this._running) return
       const now = performance.now()
+      const ticks = this.progress ? Atomics.load(this.progress, 0) : this.observedTicks
+      if (ticks !== this.observedTicks) {
+        this.observedTicks = ticks
+        this.lastAliveAt = now
+      }
       // (the sim layer has no DOM types; the page's document is read through globalThis)
       if ((globalThis as { document?: { visibilityState?: string } }).document?.visibilityState === 'hidden') {
-        this.lastFrameAt = now
+        this.lastAliveAt = now
         return
       }
-      if (now - this.lastFrameAt < (this.framed ? SIM_HANG_MS : SIM_HANG_FIRST_FRAME_MS)) return
+      if (now - this.lastAliveAt < (this.framed ? SIM_HANG_MS : SIM_HANG_FIRST_FRAME_MS)) return
       const inPart = this.beacon ? readPartCallBeacon(this.beacon) : null
       this.endHungWorker()
       this.onHang(inPart?.label || null)
@@ -251,6 +293,8 @@ export class SimClient {
     this.worker?.terminate()
     this.worker = null
     this.beacon = null
+    this.progress = null
+    this.dropWaiters()
   }
 
   /** Release a world started with `deferStepping`. Idempotent, and ignored when not running. */
@@ -335,6 +379,37 @@ export class SimClient {
     this.post({ type: 'setPaused', paused })
   }
 
+  /** while paused: advance one fixed step (the worker ignores it while running) */
+  step(): void {
+    if (!this._running) return
+    this.post({ type: 'step' })
+  }
+
+  /** While paused: advance `steps` fixed steps, or until the sim time reaches `until`. Resolves once the frame that
+   *  shows the last step has been handed on; null when the run ends first. */
+  stepBy(opts: { steps?: number; until?: number }): Promise<StepDone | null> {
+    return this.ask((seq) => ({ type: 'step', ...opts, seq })) as Promise<StepDone | null>
+  }
+
+  /** Each cargo body's velocity and what it touches, from the world as it stands; null when the run ends first. */
+  inspectCargo(): Promise<CargoDetail | null> {
+    return this.ask((seq) => ({ type: 'inspectCargo', seq })) as Promise<CargoDetail | null>
+  }
+
+  private ask(msg: (seq: number) => MainToWorker): Promise<StepDone | CargoDetail | null> {
+    if (!this._running) return Promise.resolve(null)
+    const seq = this.nextSeq++
+    return new Promise((resolve) => {
+      this.waiters.set(seq, resolve)
+      this.post(msg(seq))
+    })
+  }
+
+  private dropWaiters(): void {
+    for (const done of this.waiters.values()) done(null)
+    this.waiters.clear()
+  }
+
   /** scale the sim clock (slow-motion <1, fast-forward >1); applied live while running.
    *  A speed chosen while stopped is re-pushed by the controller on the next start. */
   setTimeScale(scale: number): void {
@@ -360,6 +435,23 @@ export class SimClient {
     this.post({ type: 'forceTag', name, value })
   }
 
+  /**
+   * Hold the running program's variables at these values until released: the whole table each time, {} to release
+   * them all. Kept here and sent again with every attach, so a program reloaded mid-run or run again after Stop keeps
+   * them from its first scan, as a controller keeps a force until it is removed. Session state: never saved.
+   */
+  setForces(forces: Readonly<Record<string, number | boolean>>): void {
+    this.forces = { ...forces }
+    if (!this._running) return
+    this.post({ type: 'setForces', forces: this.forces })
+  }
+
+  /** start the running program's scan-time averages and maxima over */
+  resetScanTimes(): void {
+    if (!this._running) return
+    this.post({ type: 'resetScanTimes' })
+  }
+
   /** push the global tag keys the attached controller drives (its program outputs, alias-lifted): the
    *  output-ownership set behaviors read as ctx.tagDriven. Pushed on program attach, cleared ([]) on detach. */
   setDrivenTags(tags: string[]): void {
@@ -367,19 +459,15 @@ export class SimClient {
     this.post({ type: 'setDrivenTags', tags })
   }
 
-  /** Attach an ST program to the running world: the worker compiles it and interleaves its scans
-   *  between physics steps (PlcHost). Validate the source main-side first (LocalPlcLink throws
-   *  StError); a worker-side failure comes back as onPlcFault. Dropped while not running: the
+  /** Attach the programs of the controllers the simulator runs (one each, sim/plcGroup.ts) to the running world: the
+   *  worker compiles them and interleaves their scans between physics steps. Validate each source main-side first
+   *  (LocalPlcLink throws StError); a worker-side failure comes back as onPlcFault. Dropped while not running: the
    *  controller re-attaches on every Play, so there is nothing to catch up. */
-  runProgram(source: string, periodSec?: number, wired?: WiredBindings): void {
+  runProgram(runs: PlcRun[]): void {
     this.plcState = null // stale state from a previous program must not show under the new one
-    if (!this._running) return
-    this.post({
-      type: 'runProgram',
-      source,
-      ...(periodSec !== undefined ? { periodSec } : {}),
-      ...(wired ? { wired } : {}),
-    })
+    if (!this._running || runs.length === 0) return
+    this.post({ type: 'runProgram', runs })
+    if (Object.keys(this.forces).length > 0) this.post({ type: 'setForces', forces: this.forces })
   }
 
   /** detach the ST program; custom-part behaviors idle on their next step */
@@ -395,10 +483,10 @@ export class SimClient {
     this.post({ type: 'writePlcVars', values })
   }
 
-  /** re-bind the attached program to the scene's wiring after an edit, keeping its state; no-op when nothing is attached */
-  rebindProgram(wired: WiredBindings): void {
+  /** re-bind one controller's program (none: the default one's) to the scene's wiring after an edit, keeping its state */
+  rebindProgram(wired: WiredBindings, controller?: string): void {
     if (!this._running) return
-    this.post({ type: 'rebindProgram', wired })
+    this.post({ type: 'rebindProgram', wired, ...(controller !== undefined ? { controller } : {}) })
   }
 
   /** retune the attached program's scan (cycle) time live; no-op when nothing is attached */
@@ -417,11 +505,12 @@ export class SimClient {
     if (!this._running) return
     this._running = false
     this.runHz = null
-    this.plcState = null // the worker drops its program with the world ('stop' handler)
+    this.plcState = null // the worker drops its program with the world ('stop' handler); `forces` stay for the next run
     this.clock.reset()
     this.lastSent = null
     this.post({ type: 'stop' })
     this.disarmWatchdog()
+    this.dropWaiters()
   }
 
   dispose(): void {
@@ -429,6 +518,7 @@ export class SimClient {
     this.worker?.terminate()
     this.worker = null
     this.lastSent = null
+    this.dropWaiters()
   }
 
   private post(msg: MainToWorker): void {

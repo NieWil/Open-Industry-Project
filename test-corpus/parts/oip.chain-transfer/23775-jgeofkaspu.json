@@ -1,0 +1,258 @@
+{
+  "format": 6,
+  "id": "oip.chain-transfer",
+  "name": "Chain Transfer",
+  "params": {
+    "chains": {
+      "type": "number",
+      "default": 5,
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "label": "Chains",
+      "group": "Size",
+      "desc": "How many chain strands lift between the rollers. More strands spread the load, so a small or floppy carton is less likely to sag between them."
+    },
+    "distance": {
+      "type": "number",
+      "default": 0.33,
+      "min": 0.03,
+      "max": 5,
+      "step": 0.01,
+      "label": "Lane spacing (m)",
+      "group": "Size",
+      "desc": "Centre-to-centre gap between chain strands. Together with the strand count this sets how wide the transfer reaches across the host bed."
+    },
+    "laneLength": {
+      "type": "number",
+      "default": 2,
+      "min": 0.5,
+      "max": 3,
+      "step": 0.1,
+      "label": "Lane length (m)",
+      "group": "Size",
+      "desc": "How far each strand runs in the transfer direction - the stroke available to push product off the main line."
+    },
+    "fpmUnits": {
+      "type": "boolean",
+      "default": true,
+      "whenAbsent": false,
+      "imperialUnits": true,
+      "label": "PLC speed in FPM",
+      "desc": "The unit the PLC commands this conveyor in. On: feet per minute. Off: metres per second. The speed tag is a REAL either way, so switching changes what its value means and never how the program declares it. Set by the scene Units (Scene Properties), which switch every conveyor together, so the Inspector does not show it. A conveyor saved before this switch existed is in metres per second."
+    },
+    "speedFpm": {
+      "type": "number",
+      "default": 394,
+      "min": -600,
+      "max": 600,
+      "step": 1,
+      "unit": "FPM",
+      "label": "Speed",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "Surface speed in feet per minute. Negative runs it backwards. A program can command this through the FPM speed tag below."
+    },
+    "speed": {
+      "type": "number",
+      "unit": "m/s",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "default": 2,
+      "min": -3,
+      "max": 3,
+      "step": 0.1,
+      "label": "Speed",
+      "desc": "How fast the chains carry product sideways once raised. Negative sends it the other way."
+    },
+    "raised": {
+      "type": "boolean",
+      "default": false,
+      "label": "Raised (divert)",
+      "group": "Start state",
+      "desc": "Lift the chains above the roller line to take the load off the main lane and drive it sideways. This is the state it starts in; Use cycles it by hand. While a program drives the pop-up tag below, that program owns it instead."
+    },
+    "raiseTime": {
+      "type": "number",
+      "default": 0.15,
+      "min": 0.02,
+      "max": 2,
+      "step": 0.01,
+      "label": "Pop-up time (s)",
+      "desc": "How long the chains take to rise or drop. A program must wait this out before running the transfer, and a quicker pop-up throws the load harder: at the default a packed row moves about 20 mm, and below about 0.07 s it loses its packing."
+    },
+    "speedTag": {
+      "type": "tag",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "dir": "in",
+      "stType": "REAL",
+      "setpointFor": "speed",
+      "default": "",
+      "label": "Speed tag",
+      "group": "Comms",
+      "desc": "The program commands chain speed here, replacing the Speed field above. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0."
+    },
+    "speedFpmTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "REAL",
+      "setpointFor": "speedFpm",
+      "default": "",
+      "label": "Speed tag",
+      "group": "Comms",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0."
+    },
+    "popupTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "autoWhenDriven": true,
+      "default": "",
+      "label": "Pop-up tag (true = divert)",
+      "group": "Comms",
+      "desc": "Raise the chains from the program. While a program drives this tag it OWNS the transfer, so a hand Use in pilot mode is refused with \"In auto - PLC controlled\"."
+    }
+  },
+  "behavior": "// Chain Transfer — a right-angle transfer (RAT). Cargo normally flows through the bed along the\n// part's forward (+X, the main line, like every conveyor); on a pop-up command the chain lanes rise and the bed\n// diverts it 90° along −Z (the chains' travel direction, off the side). One `conveys` deck carries cargo; the\n// behavior switches its surface velocity between the two world directions (derived from ctx.forward) and lifts the\n// chains while diverting — the lift slews at a tween rate, not a one-tick jump. Driven by an authored `raised`\n// toggle / a hand Use, or — while a PLC program drives its pop-up tag (ctx.tagDriven) — the tag. The\n// auto-vs-hand handoff follows output ownership, like a real panel.\n//\n// Placement: lane-parity track snap onto a roller bed (snap.track.lanes), host pitch adopted into `distance`, lane\n// length auto-fit to the host bed.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// ---- from examples/parts/_shared/conveyorUnits.js ----\n/** metres per second in one foot per minute */\nconst FPM_MS = 0.00508\n\n/** `{ group }` to spread into a param, or nothing when there is no group */\nconst paramGroup = (group) => (group ? { group } : {})\n\n/** Spread into the part's own m/s `speed` and `speedTag` params: shown only while the PLC speaks metres per second. */\nconst METRIC_ONLY = { visibleWhen: { param: 'fpmUnits', is: false } }\n\n/** Params to stand BEFORE the part's own `speed`: the unit switch, and the speed in the other unit. */\nfunction speedUnitParams(speedMs) {\n  return {\n    fpmUnits: { type: 'boolean', default: true, whenAbsent: false, imperialUnits: true, label: 'PLC speed in FPM', desc: 'The unit the PLC commands this conveyor in. On: feet per minute. Off: metres per second. The speed tag is a REAL either way, so switching changes what its value means and never how the program declares it. Set by the scene Units (Scene Properties), which switch every conveyor together, so the Inspector does not show it. A conveyor saved before this switch existed is in metres per second.' },\n    speedFpm: { type: 'number', default: Math.round(speedMs / FPM_MS), min: -600, max: 600, step: 1, unit: 'FPM', label: 'Speed', visibleWhen: { param: 'fpmUnits', is: true }, desc: 'Surface speed in feet per minute. Negative runs it backwards. A program can command this through the FPM speed tag below.' },\n  }\n}\n\n/** The param to stand right AFTER the part's own `speedTag`: the same setpoint, in FPM. */\nfunction speedFpmTagParam(group) {\n  return {\n    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },\n  }\n}\n\n/** In step(): the Inspector readout of whichever speed field is in use. `v` is the effective m/s. */\nfunction reportSpeed(ctx, fpm, v) {\n  if (fpm) ctx.report('speedFpm', Math.round(v / FPM_MS)); else ctx.report('speed', v)\n}\n\nconst RAISE = 0.095 // pop-up stroke, m (travel time is the `raiseTime` param — a real RAT's lift is geared)\nconst LANE_D = 0.33 // default lane spacing, m (the `distance` default)\n// The lane's strand crown, above its mount - the surface a load actually rides on.\nconst NATIVE_LANE_TOP = 0.0058\n// The lanes hang so their STRAND CROWN sits on the conveying deck, because the deck is only a physics stand-in\n// for these chains: cargo is carried at the deck's top face, so anything else draws the chains somewhere the\n// load is not. At -0.08 the crown sat 74 mm UNDER the deck, and the pop-up could not make that back - a 95 mm\n// stroke against a 74 mm hole plus the deck's own 30 mm recess left the chains 9 mm BELOW the host rollers at\n// full extension. The deck (and so the cargo) rose over them correctly the whole time; only the chains you can\n// see stayed under, which is why it read as \"the chains never come up\".\nconst LANE_Y = -NATIVE_LANE_TOP\nlet raised = false // runtime state — follows the 'raised' param and a Use/click (pilot mode)\nlet lastRaised // adopt the Inspector 'raised' toggle whenever it changes\nlet lift = null // current lift, m; seeded from the authored state on the first step, then chases the target\n\ndefinePart({\n  interactive: true, // a Use/click pops the chains up/down\n  useParam: 'raised', // the hand state is the param: the state a run starts from. The Inspector sets it; Use never writes it\n  joints: ['lift'],\n  params: {\n    chains: { type: 'number', default: 5, min: 1, max: 10, step: 1, label: 'Chains', group: 'Size', desc: 'How many chain strands lift between the rollers. More strands spread the load, so a small or floppy carton is less likely to sag between them.' },\n    distance: { type: 'number', default: LANE_D, min: 0.03, max: 5, step: 0.01, label: 'Lane spacing (m)', group: 'Size', desc: 'Centre-to-centre gap between chain strands. Together with the strand count this sets how wide the transfer reaches across the host bed.' },\n    laneLength: { type: 'number', default: 2, min: 0.5, max: 3, step: 0.1, label: 'Lane length (m)', group: 'Size', desc: 'How far each strand runs in the transfer direction - the stroke available to push product off the main line.' },\n    ...speedUnitParams(2),\n    speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 2, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'How fast the chains carry product sideways once raised. Negative sends it the other way.' },\n    raised: { type: 'boolean', default: false, label: 'Raised (divert)', group: 'Start state', desc: 'Lift the chains above the roller line to take the load off the main lane and drive it sideways. This is the state it starts in; Use cycles it by hand. While a program drives the pop-up tag below, that program owns it instead.' },\n    // How long the lift takes end to end. It is a real interlock, not decoration: a deck driven through its own\n    // stroke is a powered surface travelling sideways while still BELOW the roller line, dragging at the row it is\n    // about to lift, so a program has to wait this out before it commands the deck to run.\n    // It also has a FLOOR set by the cargo, not by the machine. The lift is a linear tween, so the deck steps\n    // straight to RAISE/raiseTime and hands the load that speed; at the top the deck stops and the load does not,\n    // carrying on for v²/2g. The default throws cargo ~20 mm, which a packed row survives; halving the time\n    // quadruples that, and by ~0.07 s a row is thrown ~94 mm and lands with its packing gone.\n    raiseTime: { type: 'number', default: 0.15, min: 0.02, max: 2, step: 0.01, label: 'Pop-up time (s)', desc: 'How long the chains take to rise or drop. A program must wait this out before running the transfer, and a quicker pop-up throws the load harder: at the default a packed row moves about 20 mm, and below about 0.07 s it loses its packing.' },\n    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag', group: 'Comms', desc: 'The program commands chain speed here, replacing the Speed field above. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0.' },\n    ...speedFpmTagParam('Comms'),\n    // autoWhenDriven: this tag COMMANDS the pop-up (the step's auto gate reads it), so a program driving it\n    // owns the device — the pilot prompt shows \"In auto - PLC controlled\" instead of a dead \"Use\".\n    popupTag: { type: 'tag', dir: 'in', stType: 'BOOL', autoWhenDriven: true, default: '', label: 'Pop-up tag (true = divert)', group: 'Comms', desc: 'Raise the chains from the program. While a program drives this tag it OWNS the transfer, so a hand Use in pilot mode is refused with \"In auto - PLC controlled\".' },\n  },\n  // The chain lanes, drawn. One lane is built in the lane's own frame and NATIVE units (+X along the lane, +Y up, +Z\n  // across), at the TRUE lane length — the run is as long as\n  // the lane needs and the ends (channel end caps, sprockets, feet, the chain's half-loops) keep their own size, so\n  // a sprocket is round at any length. Each lane is then turned into place (+X along → part −Z, the divert\n  // direction) and thinned across to the app's lane width, and all lanes merge per material: three draws however\n  // many lanes. Everything rides the 'chainBank' link, which the lift raises.\n  //\n  // The chain is ONE loop — both runs and both half-loops — with its link texture laid out at 16 links a metre all\n  // the way round (U in tiles), and it SCROLLS (MeshPart.scroll) at the reported 'speed', the chain drive the\n  // program commands: the links move at exactly that speed, the top run toward the divert direction, whether the\n  // chains are up or down (the drive and the lift are separate outputs, as on the machine).\n  geometry(g, p) {\n    var num = function (v, d) { return typeof v === 'number' && isFinite(v) ? v : d }\n    var n = Math.max(1, Math.round(num(p.chains, 5)))\n    var pitch = num(p.distance, LANE_D)\n    var half = Math.max(num(p.laneLength, 2), 0.1) / 2\n    var EX = Math.max(half - 0.1096, 0.02) // the run's half-length: the feet reach 0.1096 past it, so the lane measures laneLength overall\n    var SA = 0.04 / 0.087 // across: the model's 0.087 channel thinned to the app's 4 cm lane\n    var PIVOT = -0.094309 // the sprocket axle, below the strand crown\n    var YAW = [0, Math.SQRT1_2, 0, Math.SQRT1_2] // +90° about +Y: lane +X → part −Z, lane +Z → part +X\n    var LINKS_PER_M = 16\n    var frame = [], support = [], chain = []\n\n    // ---- the frame (blue): two rails under the lane, the U channel the chain runs in, its round-topped end caps,\n    // and a foot at each end (two tapered gussets + a slotted mounting flange outboard of each)\n    for (var s = -1; s <= 1; s += 2) frame.push(g.bevelBox([2 * EX, 0.1561, 0.01], [0, -0.27835, s * 0.0554], 0.001, ['x-', 'x+']))\n    var channel = [[0.0221, -0.28], [0.0241, -0.278], [0.0241, -0.002], [0.0261, 0], [0.0398, 0], [0.0418, -0.002], [0.0418, -0.298], [0.0398, -0.3],\n      [-0.0398, -0.3], [-0.0418, -0.298], [-0.0418, -0.002], [-0.0398, 0], [-0.0261, 0], [-0.0241, -0.002], [-0.0241, -0.278], [-0.0221, -0.28]]\n    frame.push(g.extrude(channel.map(function (q) { return [q[1], q[0]] }), -EX, EX, { axis: 'x' })) // outline in (y, z)\n    var capWall = [[0, 0], [0.1, 0], [0.1, 0.2]]\n    for (var k = 1; k <= 4; k++) capWall.push([0.1 * Math.cos((k * Math.PI) / 8), 0.2 + 0.1 * Math.sin((k * Math.PI) / 8)])\n    var gusset = [[0, 0], [0.1006, 0], [0.1006, -0.0761], [0.0672, -0.0791], [0.0381, -0.0943], [0.0229, -0.1234], [0.0196, -0.1556], [0, -0.1561]]\n    var FOOT_Y = -0.200264\n    for (var e = -1; e <= 1; e += 2) {\n      var X0 = e * EX\n      var out = function (pts, dy) { return pts.map(function (q) { return [X0 + e * q[0], q[1] + dy] }) }\n      // end cap: two walls (the seam edge onto the channel stays square) and the floor between them\n      frame.push(g.extrude(out(capWall, -0.3), 0.0241, 0.0418, { bevel: 0.002, square: [capWall.length - 1] }))\n      frame.push(g.extrude(out(capWall, -0.3), -0.0418, -0.0241, { bevel: 0.002, square: [capWall.length - 1] }))\n      frame.push(g.extrude(out([[0, 0], [0.098, 0], [0.1, 0.002], [0.1, 0.018], [0.098, 0.02], [0, 0.02]], -0.3), -0.0241, 0.0241))\n      // foot: gussets (square where they meet the rail and the flange), then a flange tab with a hex hole each side\n      frame.push(g.extrude(out(gusset, FOOT_Y), 0.0504, 0.0604, { bevel: 0.001, square: [gusset.length - 1, 1] }))\n      frame.push(g.extrude(out(gusset, FOOT_Y), -0.0604, -0.0504, { bevel: 0.001, square: [gusset.length - 1, 1] }))\n      for (var sz = -1; sz <= 1; sz += 2) {\n        var z0 = sz * 0.0504, z1 = sz * 0.1248, cy = FOOT_Y - 0.0361, cz = sz * 0.0876\n        var hex = []\n        for (var h = 0; h < 6; h++) hex.push([cy + 0.0137 * Math.cos((h * Math.PI) / 3), cz + 0.0137 * Math.sin((h * Math.PI) / 3)])\n        frame.push(g.extrude([[FOOT_Y - 0.0761, z0], [FOOT_Y, z0], [FOOT_Y, z1], [FOOT_Y - 0.0761, z1]], X0 + e * 0.0996, X0 + e * 0.1096, { axis: 'x', holes: [hex], bevel: 0.001 }))\n      }\n      // ---- the sprocket (grey) the chain turns round\n      support.push(g.lathe([[0, -0.0142], [0.07485, -0.0142], [0.07485, 0.0142], [0, 0.0142]], { axis: 'z', center: [X0 + e * 0.01045, PIVOT, 0], segments: 16 }))\n    }\n\n    // ---- the chain: one loop of stations (an outer and an inner point each), walked from the middle of the bottom\n    // run toward −X, up round the −X sprocket, along the top run, down round the +X one and back — so +U runs along\n    // the top toward +X. U is the outer edge's arc length in tiles; the seam (U wraps) sits under the lane.\n    var BEND = [[[0, -0.1], [0, -0.0772]], [[0.0488, -0.0925], [0.04, -0.0714]], [[0.0813, -0.0708], [0.0651, -0.0546]], [[0.103, -0.0383], [0.0818, -0.0296]], [[0.1106, 0], [0.0877, 0]]]\n    var turn = BEND.concat(BEND.slice(0, 4).reverse().map(function (b) { return [[b[0][0], -b[0][1]], [b[1][0], -b[1][1]]] })) // bottom → top\n    var st = [{ o: [0, PIVOT - 0.1], i: [0, PIVOT - 0.0772] }, { o: [-EX, PIVOT - 0.1], i: [-EX, PIVOT - 0.0772] }]\n    for (var t1 = 1; t1 < turn.length; t1++) st.push({ o: [-EX - turn[t1][0][0], PIVOT + turn[t1][0][1]], i: [-EX - turn[t1][1][0], PIVOT + turn[t1][1][1]] })\n    st.push({ o: [EX, PIVOT + 0.1], i: [EX, PIVOT + 0.0772] })\n    for (var t2 = turn.length - 2; t2 >= 0; t2--) st.push({ o: [EX + turn[t2][0][0], PIVOT + turn[t2][0][1]], i: [EX + turn[t2][1][0], PIVOT + turn[t2][1][1]] })\n    st.push({ o: [0, PIVOT - 0.1], i: [0, PIVOT - 0.0772] })\n    var u = [0]\n    for (var a = 1; a < st.length; a++) u.push(u[a - 1] + Math.hypot(st[a].o[0] - st[a - 1].o[0], st[a].o[1] - st[a - 1].o[1]) * LINKS_PER_M)\n    var Z = 0.0148, surf = g.surface()\n    // per station: the outer and inner broad faces (the link photo's top half) and the two flanks (its side view)\n    var V = st.map(function (q, j) {\n      return {\n        ob: [surf.vertex(q.o[0], q.o[1], -Z, u[j], 0.9842), surf.vertex(q.o[0], q.o[1], Z, u[j], 0.5021)],\n        ib: [surf.vertex(q.i[0], q.i[1], -Z, u[j], 0.5021), surf.vertex(q.i[0], q.i[1], Z, u[j], 0.9842)],\n        fm: [surf.vertex(q.o[0], q.o[1], -Z, u[j], 0.0043), surf.vertex(q.i[0], q.i[1], -Z, u[j], 0.4941)],\n        fp: [surf.vertex(q.o[0], q.o[1], Z, u[j], 0.4941), surf.vertex(q.i[0], q.i[1], Z, u[j], 0.0043)],\n      }\n    })\n    // wind a quad a-b-c-d (along the loop from a to b, then across) to face the direction want, given its first two points\n    var quad = function (a, b, c, d, pa, pb, across, want) {\n      var ex = pb[0] - pa[0], ey = pb[1] - pa[1]\n      var nx = ey * across[2], ny = -ex * across[2], nz = ex * across[1] - ey * across[0] // (b − a) × (d − a)\n      if (nx * want[0] + ny * want[1] + nz * want[2] >= 0) surf.quad(a, b, c, d)\n      else surf.quad(a, d, c, b)\n    }\n    for (var j = 0; j + 1 < st.length; j++) {\n      var q0 = st[j], q1 = st[j + 1], A = V[j], B = V[j + 1]\n      var mx = (q0.o[0] + q1.o[0]) / 2, my = (q0.o[1] + q1.o[1]) / 2\n      var core = [mx - Math.max(-EX, Math.min(EX, mx)), my - PIVOT, 0] // away from the loop's middle: out of the chain\n      quad(A.ob[0], B.ob[0], B.ob[1], A.ob[1], q0.o, q1.o, [0, 0, 2 * Z], core)\n      quad(A.ib[0], B.ib[0], B.ib[1], A.ib[1], q0.i, q1.i, [0, 0, 2 * Z], [-core[0], -core[1], 0])\n      quad(A.fm[0], B.fm[0], B.fm[1], A.fm[1], q0.o, q1.o, [q0.i[0] - q0.o[0], q0.i[1] - q0.o[1], 0], [0, 0, -1])\n      quad(A.fp[0], B.fp[0], B.fp[1], A.fp[1], q0.o, q1.o, [q0.i[0] - q0.o[0], q0.i[1] - q0.o[1], 0], [0, 0, 1])\n    }\n    chain.push(surf.build())\n\n    // ---- every lane: the same pieces, turned into place and stepped across the part, centred\n    var lane = function (list) { return g.merge.apply(g, list) }\n    var one = { frame: lane(frame), support: lane(support), chain: lane(chain) }\n    var all = { frame: [], support: [], chain: [] }\n    for (var li = 0; li < n; li++) {\n      var x = (li - (n - 1) / 2) * pitch\n      for (var key in one) all[key].push(g.transform(one[key], { scale: [1, 1, SA], rotate: YAW, translate: [x, LANE_Y, 0] }))\n    }\n    var both = { link: 'chainBank', doubleSided: true }\n    return [\n      Object.assign({ desc: lane(all.frame), material: 'frame' }, both),\n      Object.assign({ desc: lane(all.support), material: 'support' }, both),\n      Object.assign({ desc: lane(all.chain), material: 'chain', scroll: { tilesPerMeter: LINKS_PER_M } }, both),\n    ]\n  },\n  step(ctx) {\n    // Signal handoff, modelled on a real panel: the pop-up tag commands the chains only while a controller actually\n    // drives it (the tag is an attached program's output — ctx.tagDriven). Any other time — no tag named,\n    // no program, sim stopped — the manual signal rules: the 'raised' param or a pilot Use/click.\n    if (ctx.params.raised !== lastRaised) { raised = ctx.params.raised; lastRaised = ctx.params.raised }\n    if (ctx.used()) raised = !raised\n    // auto wins by overwriting the hand latch (bumpless transfer): a press while owned is undone the same tick, and\n    // when ownership releases (program detach) the chains hold their last commanded state.\n    if (ctx.tagDriven(ctx.params.popupTag)) raised = ctx.readTag(ctx.params.popupTag)\n    // the hand latch AFTER the auto gate — what the device is really doing, for the Inspector readout\n    ctx.report('raised', raised)\n    const fpm = ctx.params.fpmUnits === true\n    const setpointTag = fpm ? ctx.params.speedFpmTag : ctx.params.speedTag\n    const setpointMs = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * (fpm ? FPM_MS : 1)\n    const speed = setpointMs\n    ctx.report('speed', speed) // the chains scroll on 'speed' (m/s) whichever unit the Inspector shows\n    reportSpeed(ctx, fpm, speed)\n    if (lift === null) lift = raised ? RAISE : 0 // first step: start at the authored state (no spurious slew)\n    lift = ctx.approach(lift, raised ? RAISE : 0, (RAISE / Math.max(ctx.params.raiseTime, 0.01)) * ctx.dt)\n    ctx.joints.lift = lift\n    const f = ctx.forward\n    if (raised) {\n      // DIVERT: the raised chains carry cargo 90° off the main line — forward rotated +90° about +Y, i.e. out to −Z.\n      ctx.setSurfaceVelocity({ x: f.z * speed, y: 0, z: -f.x * speed })\n    } else {\n      // THROUGH: convey along the part's forward (+X) — the main line.\n      ctx.setSurfaceVelocity({ x: f.x * speed, y: 0, z: f.z * speed })\n    }\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "deck",
+        "parent": "chainBank",
+        "shape": {
+          "kind": "box",
+          "size": [
+            1.65,
+            0.06,
+            2
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "chains",
+              "mulParam": "distance"
+            },
+            {
+              "axis": 2,
+              "param": "laneLength",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.03,
+          0
+        ],
+        "conveys": true,
+        "hidden": true,
+        "color": [
+          0.12,
+          0.12,
+          0.13
+        ]
+      },
+      {
+        "name": "chainBank",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      }
+    ],
+    "joints": [
+      {
+        "name": "lift",
+        "link": "chainBank",
+        "type": "prismatic",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": 0,
+        "max": 0.095
+      }
+    ],
+    "bounds": {
+      "length": 1.65,
+      "width": 2,
+      "top": 0.2,
+      "bottom": -0.3622
+    }
+  },
+  "category": "Equipment",
+  "interactive": true,
+  "useParam": "raised",
+  "snap": {
+    "track": {
+      "lanes": {
+        "countParam": "chains",
+        "pitchParam": "distance"
+      },
+      "fitWidthParam": "laneLength",
+      "fitWidthScale": 1,
+      "targetLocalY": -0.03
+    }
+  },
+  "assets": [
+    {
+      "id": "links",
+      "mime": "image/webp",
+      "url": "/part-assets/c1dd4a9377760e0545b0418b8f4c3c0f15777884a74df0c71b25bcddfe16db2a.webp",
+      "sha256": "c1dd4a9377760e0545b0418b8f4c3c0f15777884a74df0c71b25bcddfe16db2a"
+    }
+  ],
+  "materials": [
+    {
+      "id": "chain",
+      "albedo": "links",
+      "metalness": 0,
+      "roughness": 1
+    },
+    {
+      "id": "support",
+      "color": [
+        0.4629,
+        0.4629,
+        0.4629
+      ],
+      "metalness": 1,
+      "roughness": 0.6264
+    },
+    {
+      "id": "frame",
+      "color": [
+        0.0879,
+        0.0822,
+        0.4813
+      ],
+      "metalness": 0.7692,
+      "roughness": 0.7088
+    }
+  ],
+  "conveyor": {
+    "surface": "roller",
+    "speedParam": "speed"
+  },
+  "sdk": {
+    "level": 9,
+    "of": "v2:20198:25va9ew1l8l"
+  }
+}

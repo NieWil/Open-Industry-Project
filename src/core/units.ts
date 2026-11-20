@@ -1,19 +1,45 @@
 // --- units: the one conversion table, and how a stored quantity is shown in the scene's unit system ---
 //
 // Storage never changes with the display: a document holds SI (or whatever unit a param declares). The scene's Units
-// (core/sceneUnits.ts) decide how a length or a speed is shown and typed. Only units of length and speed convert;
-// '°', 's', '%', 'kg' and the rest show as declared under either system.
+// and Length (core/scene/sceneUnits.ts) decide how a length or a speed is shown and typed. Only units of length and
+// speed convert; '°', 's', '%', 'kg' and the rest show as declared under either system.
 
 import { DEFAULT_TRANSLATE_SNAP } from './types/base'
-import type { SceneUnits } from './types/parts'
+import type { SceneLengthUnit, SceneUnits } from './types/parts'
 
-/** How lengths and speeds are shown: metric (m, m/s) or imperial (inches, feet per minute). It is the scene's Units
- *  (core/sceneUnits.ts), which also decides what its conveyors' speed tags carry. */
-export type DisplayUnits = SceneUnits
+/** How lengths and speeds are shown: the scene's Units (metric: m/s, imperial: feet per minute, and what its
+ *  conveyors' speed tags carry), and its Length, which shows every length in one unit (lengthUnitOf).
+ *  Built by displayUnits, which returns one shared object per combination, so `===` compares them. */
+export interface DisplayUnits {
+  readonly system: SceneUnits
+  readonly length?: SceneLengthUnit
+}
 
-/** The grid-snap translate increment a viewer who never set one gets, in metres: 1 m, or 1 ft under imperial. */
-export function defaultTranslateSnap(system: DisplayUnits): number {
-  return system === 'imperial' ? 0.3048 : DEFAULT_TRANSLATE_SNAP
+const interned = new Map<string, DisplayUnits>()
+
+/** The display units for a scene's Units and Length; the same object for the same pair. */
+export function displayUnits(system: SceneUnits, length?: SceneLengthUnit): DisplayUnits {
+  const key = `${system}|${length ?? ''}`
+  let d = interned.get(key)
+  if (!d) {
+    d = Object.freeze(length ? { system, length } : { system })
+    interned.set(key, d)
+  }
+  return d
+}
+
+/** Metric with no Length set: a new scene's display, and the default where no scene is at hand. */
+export const METRIC_DISPLAY = displayUnits('metric')
+
+/** The unit every length shows in: the Length, else metres or (imperial) inches. A scene with no Length saved
+ *  shows exactly what that unit set explicitly shows, so the two are the same setting. */
+export function lengthUnitOf(d: DisplayUnits): SceneLengthUnit {
+  return d.length ?? (d.system === 'imperial' ? 'in' : 'm')
+}
+
+/** The grid-snap translate increment a viewer who never set one gets, in metres: 1 m, or 1 ft when lengths show in inches. */
+export function defaultTranslateSnap(d: DisplayUnits): number {
+  return lengthUnitOf(d) === 'in' ? 0.3048 : DEFAULT_TRANSLATE_SNAP
 }
 
 // Each table is factors to its base (metres; metres per second). Keys are lower case: look units up lower-cased.
@@ -30,23 +56,20 @@ export function unitTable(unit: string): Readonly<Record<string, number>> | unde
   return LENGTH_UNITS[u] !== undefined ? LENGTH_UNITS : SPEED_UNITS[u] !== undefined ? SPEED_UNITS : undefined
 }
 
-const METRIC_LENGTHS = new Set(['m', 'cm', 'mm'])
-
 /**
- * The unit a quantity stored in `unit` is shown in under `system`. A unit already of that system shows as itself
- * (a metre field stays metres, a millimetre field millimetres); one of the other system shows in that system's
- * working unit: inches or millimetres for a length, feet per minute or m/s for a speed.
+ * The unit a quantity stored in `unit` is shown in under `d`. Every length shows in the scene's Length, whatever unit
+ * its part stores it in. A speed already of the system shows as itself, and one of the other system shows in the
+ * system's: feet per minute or m/s.
  */
-export function displayUnitFor(unit: string, system: DisplayUnits): string {
+export function displayUnitFor(unit: string, d: DisplayUnits): string {
   const table = unitTable(unit)
   if (!table) return unit
   const u = unit.toLowerCase()
   if (table === LENGTH_UNITS) {
-    const metric = METRIC_LENGTHS.has(u)
-    if (system === 'metric') return metric ? unit : 'mm'
-    return metric ? 'in' : unit
+    const length = lengthUnitOf(d)
+    return u === length ? unit : length
   }
-  if (system === 'metric') return u === 'm/s' ? unit : 'm/s'
+  if (d.system === 'metric') return u === 'm/s' ? unit : 'm/s'
   return u === 'm/s' ? 'FPM' : unit
 }
 
@@ -71,8 +94,8 @@ export interface UnitView {
   decimals?: number
 }
 
-export function unitView(unit: string, system: DisplayUnits): UnitView {
-  const shown = displayUnitFor(unit, system)
+export function unitView(unit: string, d: DisplayUnits): UnitView {
+  const shown = displayUnitFor(unit, d)
   const k = convertUnit(1, unit, shown)
   return k === 1 ? { unit, k } : { unit: shown, k, decimals: CONVERTED_DECIMALS[shown.toLowerCase()] }
 }
@@ -92,11 +115,13 @@ export function toStored(shown: number, k: number): number {
 }
 
 /**
- * A length in metres as a read-out (the measure tool): metres to the millimetre, or feet and inches to a
- * hundredth (`12' 3.50"`; under a foot, inches alone). Not for a field, which shows one number in one unit.
+ * A length in metres as a read-out (the measure tool): metres to the millimetre, millimetres to a tenth, or feet and
+ * inches to a hundredth (`12' 3.50"`; under a foot, inches alone). Not for a field, which shows one number in one unit.
  */
-export function formatLength(m: number, system: DisplayUnits): string {
-  if (system === 'metric') return `${m.toFixed(3)} m`
+export function formatLength(m: number, d: DisplayUnits): string {
+  const unit = lengthUnitOf(d)
+  if (unit === 'm') return `${m.toFixed(3)} m`
+  if (unit === 'mm') return `${(m * 1000).toFixed(1)} mm`
   const sign = m < 0 ? '-' : ''
   const totalIn = Math.round((Math.abs(m) / 0.0254) * 100) / 100
   const ft = Math.floor(totalIn / 12)
@@ -108,7 +133,7 @@ export function formatLength(m: number, system: DisplayUnits): string {
  * A speed in m/s as a read-out (the fly-speed indicator): m/s to two decimals under 1, else one, or whole feet per
  * minute under imperial. Like formatLength, not for a field.
  */
-export function formatSpeed(mps: number, system: DisplayUnits): string {
-  if (system === 'metric') return `${mps.toFixed(Math.abs(mps) < 1 ? 2 : 1)} m/s`
+export function formatSpeed(mps: number, d: DisplayUnits): string {
+  if (d.system === 'metric') return `${mps.toFixed(Math.abs(mps) < 1 ? 2 : 1)} m/s`
   return `${Math.round(convertUnit(mps, 'm/s', 'fpm'))} FPM`
 }

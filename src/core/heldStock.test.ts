@@ -4,9 +4,10 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 import { emptyHolds, fillHolds, holdCount, holdPositions, holdsOf } from './heldStock'
-import { PACKAGE_FORMAT, validatePartPackage } from './partPackage'
-import type { PartPackage } from './partPackage'
-import { clearPackages, registerPackage } from './partRegistry'
+import { PACKAGE_FORMAT } from './parts/partPackage'
+import { validatePartPackage } from './parts/partValidate'
+import type { PartPackage } from './parts/partPackage'
+import { clearPackages, registerPackage } from './parts/partRegistry'
 import type { PartInstance, SceneJSON, SdkPart } from './types'
 
 const HOLDER = 'acme.holder'
@@ -105,6 +106,19 @@ describe('holds (stored stock is authored cargo at the gripper positions)', () =
     expect(bad({ part: TOTE, positions: ['s0'], params: { size: 'capacity' } })).toEqual([])
     expect(bad({ part: TOTE, positions: ['s0'], params: { size: 'missing' } })).toEqual(['holds.params.size'])
     expect(bad({ part: TOTE, positions: ['s0'], params: ['capacity'] })).toEqual(['holds.params'])
+    // `link#i` names a copy of a posable gripper array, and nothing else
+    expect(bad({ part: TOTE, positions: ['s0#0'] })).toEqual(['holds.positions[0]']) // s0 is a plain gripper link
+  })
+
+  it('a posable gripper array holds one item per copy, each at its rest place in the row', () => {
+    const row = holder({ part: TOTE, positions: ['s#0', 's#1', 's#2'], limitParam: 'capacity' })
+    row.geometry = { kind: 'rig', links: [{ name: 's', shape: { kind: 'frame' }, offset: [0, 0.5, 0], grip: { zone: { size: [0.4, 0.16, 0.3], offset: [0, 0.1, 0] } }, array: { count: 'capacity', step: [0, 0.2, 0], posable: true } }], joints: [] }
+    expect(validatePartPackage(row)).toEqual([])
+    registerPackage(row)
+    const pos = holdPositions(placed(0, 3), row, row.holds!)
+    expect(pos.map((p) => p.gripper)).toEqual(['s#0', 's#1', 's#2'])
+    expect(pos.map((p) => Math.round(p.centre[1] * 1e6) / 1e6)).toEqual([0.6, 0.8, 1]) // 0.5 + i * 0.2 + the zone's 0.1
+    expect(holdPositions(placed(0, 2), row, row.holds!)).toHaveLength(2) // a smaller capacity: fewer copies, fewer positions
   })
 
   it('Fill hands each item the holder params its holds.params names', () => {

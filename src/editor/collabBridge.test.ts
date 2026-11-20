@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { createPart, serializeScene } from '../core/scene'
+import { createPart, serializeScene } from '../core/scene/scene'
 import { SCENE_VERSION } from '../core/types'
 import type { PartInstance, SceneJSON } from '../core/types'
 import { CollabBridge } from '../collab/bridge'
@@ -20,10 +20,10 @@ import {
   writePackage,
 } from '../collab/schema'
 import type { FeedEvent } from '../collab/schema'
-import type { PartPackage } from '../core/partPackage'
-import { getPackage, registerPackage } from '../core/partRegistry'
-import { EditorStore } from './store'
-import { PACKAGE_FORMAT } from '../core/partPackage'
+import type { PartPackage } from '../core/parts/partPackage'
+import { getPackage, registerPackage } from '../core/parts/partRegistry'
+import { EditorStore } from './store/store'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 
 /** end-to-end: two stores joined by two relayed Y.Docs behave like two browser tabs in a room */
 function richScene(): SceneJSON {

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { rackBoxes } from '../../core/partGeometry'
-import type { RigLink } from '../../core/partPackage'
-import { arrayInstanceDeltas, linkHalfExtents, resolvedOffset } from '../../core/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { rackBoxes } from '../../core/parts/partGeometry'
+import type { RigLink } from '../../core/parts/partPackage'
+import { arrayInstanceDeltas, linkHalfExtents, resolvedOffset } from '../../core/rig/rigPose'
 import { examplePart, type RigGeo } from './examplePart'
 
 /** a link's instances as the host resolves them: its array (a single instance without one), none while its
@@ -10,7 +11,7 @@ import { examplePart, type RigGeo } from './examplePart'
 const instances = (link: RigLink, params: Record<string, number | boolean>) => arrayInstanceDeltas(link.array ?? {}, params, undefined, link.showParam)
 const { geometry: RACK_RIG } = examplePart<RigGeo>('oip.rack')
 
-// The Rack, authored as a custom part (examples/parts/rack) to match the built-in (core/partGeometry.rackBoxes
+// The Rack, authored as a custom part (examples/parts/rack) to match the built-in (core/parts/partGeometry.rackBoxes
 // + STRUCTURE_DEFS.rack). It exercises array-links (numShelves shelf/beam arrays + an X×Z pole grid) composed
 // with C-paramgeo, including a mulParam product (frame height = numShelves × shelfSpacing, which neither param
 // gives alone). This checks the array expansion + the param-driven geometry against the built-in rack.

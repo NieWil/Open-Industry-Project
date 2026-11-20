@@ -4,7 +4,7 @@
 import { clamp, isHexColor, isHexColorA, normalizeHexColorList, splitHexAlpha } from '../../../core/math'
 import { isRealBound, partParamSpecs } from '../../../core/packageParams'
 import { locatedVariables } from '../../../plc/locatedIndex'
-import { unitView, type DisplayUnits } from '../../../core/units'
+import { METRIC_DISPLAY, unitView, type DisplayUnits } from '../../../core/units'
 import type { BuildingWallRule, NumberParamSpec, ParamSpec, ParamValue, PartInstance } from '../../../core/types'
 
 export function isArrayKind(k: ParamSpec['kind']): boolean {
@@ -40,7 +40,7 @@ function shownQuantity(spec: NumberParamSpec, v: number, system: DisplayUnits): 
 }
 
 /** a stored number with its unit, as the viewer's display units show it: '23.62 in', '2 m/s', '42 %' */
-export function formatQuantity(spec: NumberParamSpec, v: number, system: DisplayUnits = 'metric'): string {
+export function formatQuantity(spec: NumberParamSpec, v: number, system: DisplayUnits = METRIC_DISPLAY): string {
   const u = unitView(spec.unit, system).unit
   return `${shownQuantity(spec, v, system)}${u ? ` ${u}` : ''}`
 }
@@ -73,8 +73,10 @@ function formatParamDefault(spec: ParamSpec, system: DisplayUnits): string {
  * default. Build that multi-line string (the native title attribute renders
  * the newlines) from the spec + its registered description.
  */
-export function buildParamTooltip(spec: ParamSpec, label: string, desc: string | undefined, system: DisplayUnits = 'metric'): string {
-  const lines: string[] = [label]
+export function buildParamTooltip(spec: ParamSpec, label: string, desc: string | undefined, system: DisplayUnits = METRIC_DISPLAY): string {
+  // a tag's first line says what it carries, as the row's badge does: `Speed tag · REAL, m/s`
+  const carries = spec.kind === 'tagRef' ? [spec.stType, spec.unit].filter(Boolean).join(', ') : ''
+  const lines: string[] = [carries ? `${label} · ${carries}` : label]
   if (desc) lines.push(desc)
   const meta: string[] = []
   if (spec.kind === 'number') {
@@ -100,6 +102,8 @@ export function buildParamTooltip(spec: ParamSpec, label: string, desc: string |
 export interface TagSignal {
   writers: number
   readers: number
+  /** the tag fields in the scene that hold it, whatever their direction */
+  uses: number
   types: Set<string>
 }
 
@@ -126,7 +130,8 @@ export function buildSceneTagIndex(allParts: readonly PartInstance[], program = 
       if (s.kind !== 'tagRef') continue
       const v = (p.params as unknown as Record<string, ParamValue>)[s.key]
       if (typeof v !== 'string' || v === '') continue
-      const entry = signals.get(v) ?? { writers: 0, readers: 0, types: new Set<string>() }
+      const entry = signals.get(v) ?? { writers: 0, readers: 0, uses: 0, types: new Set<string>() }
+      entry.uses++
       if (s.dir === 'out') entry.writers++
       else if (s.dir === 'in') entry.readers++
       if (s.stType) entry.types.add(s.stType)
@@ -185,6 +190,13 @@ export function buildGroupTree(specs: readonly ParamSpec[]): { ungrouped: ParamS
     node!.specs.push(spec)
   }
   return { ungrouped, groups }
+}
+
+/** The first tag field in the order the Inspector draws them: the ungrouped fields, then each group's own before its
+ *  subsections. The part's Controller row is drawn above it (controllerRow.tsx). */
+export function firstTagKey(ungrouped: readonly ParamSpec[], groups: readonly GroupNode[]): string | undefined {
+  const inGroup = (g: GroupNode): string | undefined => g.specs.find((s) => s.kind === 'tagRef')?.key ?? g.children.map(inGroup).find((k) => k !== undefined)
+  return ungrouped.find((s) => s.kind === 'tagRef')?.key ?? groups.map(inGroup).find((k) => k !== undefined)
 }
 
 /**

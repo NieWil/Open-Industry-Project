@@ -5,7 +5,7 @@
 // conveys at `speed` along the deck's current forward — the conveys body is static and its surface velocity
 // world-space, so the direction is recomputed from the deck angle every tick. By default the deck slews to the
 // manual `deckAngleDeg` and holds there — an angled cross-feed you orient from the Inspector, not a
-// self-runner. With comms (enableComms) a PLC commands the target angle instead. Its enable tag is the safety
+// self-runner. With an angle tag named, a PLC commands the target angle instead. Its enable tag is the safety
 // stop: dropped mid-turn, the deck brakes to a standstill in SAFE_STOP_S still gripping its load, and finishes the
 // turn when the tag comes back. A turn not yet begun waits for it.
 //
@@ -170,7 +170,7 @@ function speedUnitParams(speedMs) {
 /** The param to stand right AFTER the part's own `speedTag`: the same setpoint, in FPM. */
 function speedFpmTagParam(group) {
   return {
-    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag (FPM)', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },
+    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },
   }
 }
 
@@ -223,17 +223,16 @@ definePart({
     standHeight: { type: 'number', default: 0.95, min: 0.1, max: 3, step: 0.01, rest: 'surfaceBelow', label: 'Stand height (m)', desc: 'Height of the deck above whatever is beneath it, which sets the leg length. The host fills this in when you drop or snap the turntable, so raising it regrows the legs to reach.' },
     ...speedUnitParams(1),
     speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 1, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'How fast the lane conveys once the deck has SETTLED at its target angle. While the deck is still slewing the lane carries nothing forward - product just rides round with the platter - so this only applies between moves. Negative runs the lane backwards.' },
-    deckAngleDeg: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Deck angle (°)', desc: 'Target angle for the deck, which then slews to it and holds. This is the whole control surface when comms are off: an angled cross-feed you aim from the Inspector rather than a self-runner. A program commands it through the angle tag below instead.' },
+    deckAngleDeg: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Deck angle (°)', desc: 'Target angle for the deck, which then slews to it and holds. This is the whole control surface with no tags named: an angled cross-feed you aim from the Inspector rather than a self-runner. A program commands it through the angle tag below instead.' },
     // TOP speed, reached through the ramp below. 20°/s is a 90° index in ~5 s including both ramps, which is
     // where real units sit (3-6 s); the old 45°/s default was about double industry practice, and combined
     // with an instant start it demanded more of the deck than any real drive delivers.
     rotationSpeedDeg: { type: 'number', unit: '°/s', default: 20, min: 1, max: 360, step: 5, label: 'Rotation speed', desc: 'TOP slew rate, reached through a fixed acceleration ramp rather than instantly. The default indexes 90 degrees in about 5 seconds including both ramps, which is where real units sit - winding it much higher asks more of the deck than a real drive delivers, and product slides.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
-    angleTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'deckAngleDeg', default: '', label: 'Target angle tag (°)', group: 'Comms', desc: 'The program commands the deck angle here, replacing the Deck angle field above. On the first scan the part SEEDS the tag with the authored angle, so a program that has not written yet does not slam the deck to zero.' },
-    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands lane speed here, replacing the Speed field above. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0.' },
+    angleTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'deckAngleDeg', default: '', label: 'Target angle tag', group: 'Comms', desc: 'The program commands the deck angle here, replacing the Deck angle field above. On the first scan the part SEEDS the tag with the authored angle, so a program that has not written yet does not slam the deck to zero.' },
+    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag', group: 'Comms', desc: 'The program commands lane speed here, replacing the Speed field above. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0.' },
     ...speedFpmTagParam('Comms'),
     doneTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Done tag (true once settled)', group: 'Comms', desc: 'Handshake back to the program: true once the deck has stopped at its target angle. Wait on this before commanding the lane to run, or product is pushed at a deck still turning under it.' },
-    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Enable tag', group: 'Comms', desc: 'The deck turns only while this is true. Drop it mid-turn and the deck brakes to a stop where it is, still holding its load; raise it and the turn finishes. Lane speed is not affected: command that through the speed tag. Leave it empty and the deck is always enabled.' },
+    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Enable tag', group: 'Comms', desc: 'The deck turns only while this is true. Drop it mid-turn and the deck brakes to a stop where it is, still holding its load; raise it and the turn finishes. Lane speed is not affected: command that through the speed tag. Until a program drives it, or with it empty, the deck is always enabled, so a merely-typed tag does not hold it.' },
   },
   // The round roller bed, drawn on the deck's 'roller' frame so it turns with the platter: rollers fanned across
   // the full plate diameter at the heavy pitch, each clipped to the plate circle (long across the lane, tapering
@@ -284,13 +283,10 @@ definePart({
     return parts
   },
   step(ctx) {
-    // Setpoint precedence, same shape as every other comms part: the angle tag replaces the authored
-    // deckAngleDeg while comms are on AND a tag is actually bound. Gating on 'seeded' alone (as this did)
-    // meant comms-on with an EMPTY angleTag read tag "" — always 0 — so the deck ignored its authored angle
-    // and slewed to zero, while the Inspector went on showing the angle it had abandoned.
-    const comms = ctx.params.enableComms
-    const enabled = !comms || !ctx.params.enableTag || ctx.readTag(ctx.params.enableTag) === true
-    const bound = comms && ctx.params.angleTag
+    // Setpoint precedence: the angle tag replaces the authored deckAngleDeg only while a tag is named. An empty
+    // name reads 0, so without this check the deck would slew to zero and ignore its authored angle.
+    const enabled = !ctx.tagDriven(ctx.params.enableTag) || ctx.readTag(ctx.params.enableTag) === true
+    const bound = ctx.params.angleTag
     let target
     if (bound) {
       // seed-write once from the deck's authored angle so the PLC sees a sensible initial target; after that
@@ -329,7 +325,7 @@ definePart({
     // deck angle; while slewing, spin resting cargo with the platter via the arc field instead
     const fpm = ctx.params.fpmUnits === true
     const setpointTag = fpm ? ctx.params.speedFpmTag : ctx.params.speedTag
-    const setpointMs = (comms && setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * (fpm ? FPM_MS : 1)
+    const setpointMs = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * (fpm ? FPM_MS : 1)
     const speed = setpointMs
     ctx.report('speed', speed) // the lane conveys on 'speed' (m/s) whichever unit the Inspector shows
     reportSpeed(ctx, fpm, speed)
@@ -345,6 +341,6 @@ definePart({
       // take (cargo that arrived mid-turn), and it should describe what the plate is actually doing
       ctx.setArcSurfaceVelocity({ center: { x: ctx.position.x, z: ctx.position.z }, omega: Math.sign(d) * rate * D2R })
     }
-    if (comms && ctx.params.doneTag) ctx.writeTag(ctx.params.doneTag, settled)
+    if (ctx.params.doneTag) ctx.writeTag(ctx.params.doneTag, settled)
   },
 })

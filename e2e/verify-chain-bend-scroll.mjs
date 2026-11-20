@@ -47,7 +47,7 @@ async function placeChainTransfer(page, chains) {
     const scene = st.getState().scene
     const pkg = st.getState().bundledPackages.find((p) => p.id === 'oip.chain-transfer')
     if (!pkg) return false
-    const parts = [{ id, type: 'part', packageId: 'oip.chain-transfer', position: [0, 0.9, 0], rotationY: 0, params: { chains, distance: 0.33, laneLength: 2, speed: 2, raised: true, enableComms: false, speedTag: '', popupTag: '' } }]
+    const parts = [{ id, type: 'part', packageId: 'oip.chain-transfer', position: [0, 0.9, 0], rotationY: 0, params: { chains, distance: 0.33, laneLength: 2, speed: 2, raised: true, speedTag: '', popupTag: '' } }]
     st.loadScene({ ...scene, parts, packages: [...(scene.packages ?? []).filter((p) => p.id !== pkg.id), pkg] })
     st.setState({ selectedIds: [] })
     return true

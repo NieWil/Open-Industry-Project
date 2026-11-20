@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { RIGHTS_LINE } from '../../core/partSubmission'
-import type { PartPackage } from '../../core/partPackage'
+import { RIGHTS_LINE } from '../../core/parts/partSubmission'
+import type { PartPackage } from '../../core/parts/partPackage'
 import { buildPackage } from '../../sim/buildPackage'
 import { finishSignIn, savedSession, startSignIn, submissionStatus, submitPart } from './github'
 import { pullRequestText, submissionFiles } from './submission'

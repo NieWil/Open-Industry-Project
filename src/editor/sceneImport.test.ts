@@ -1,19 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EditorStore } from './store'
-import { importSceneText, isSceneFileText, sceneFileText, sceneNameFromFile } from './sceneFile'
+import { EditorStore } from './store/store'
+import { importSceneText, isSceneFileText, sceneFileText, sceneNameFromFile } from './project/sceneFile'
 import { SCENE_VERSION } from '../core/types'
 import type { PartInstance } from '../core/types'
-import { PACKAGE_FORMAT } from '../core/partPackage'
-import type { PartPackage } from '../core/partPackage'
-import { validateProject } from '../core/project'
-import type { ProjectJSON } from '../core/project'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
+import type { PartPackage } from '../core/parts/partPackage'
+import { validateProject } from '../core/project/project'
+import type { ProjectJSON } from '../core/project/project'
 
 // Import Project, handed a scene file, opens it as a new project (a project holds one scene since format 4), filed beside
 // the open one, which is kept. Creating a project reloads into it, so newProject's two hooks are stubbed: whether a
 // project can be created here, and the project handed over to be filed.
 const creatable = vi.fn(() => true)
 const created: ProjectJSON[] = []
-vi.mock('./newProject', () => ({
+vi.mock('./project/newProject', () => ({
   canCreateProject: () => creatable(),
   createProjectFrom: (_store: unknown, project: ProjectJSON) => {
     created.push(project)
@@ -143,5 +143,16 @@ describe('a scene file carries only the custom parts its scene places', () => {
     store.loadScene({ version: SCENE_VERSION, parts: [placed], packages: [SENSOR, unused] })
     const written = JSON.parse(sceneFileText(store.getState())) as { packages?: { id: string }[] }
     expect(written.packages?.map((p) => p.id)).toEqual([SENSOR.id])
+  })
+
+  it('carries what its parts use even when the live scene holds no copy, products included', () => {
+    const crate: PartPackage = { ...SENSOR, id: 't.crate', name: 't.crate' }
+    const spawner = { ...SENSOR, id: 't.spawner', name: 't.spawner', params: { product: { type: 'string', default: crate.id, product: true } } } as unknown as PartPackage
+    const placed = { id: 'sp1', type: 'part', packageId: spawner.id, position: [0, 0.2, 0], rotationY: 0, params: {} } as unknown as PartInstance
+    const store = new EditorStore()
+    store.loadScene({ version: SCENE_VERSION, parts: [], packages: [spawner, crate] }) // registers both
+    store.loadScene({ version: SCENE_VERSION, parts: [placed] }) // a scene that names the spawner, with no copies
+    const written = JSON.parse(sceneFileText(store.getState())) as { packages?: { id: string }[] }
+    expect(written.packages?.map((p) => p.id)).toEqual([spawner.id, crate.id])
   })
 })

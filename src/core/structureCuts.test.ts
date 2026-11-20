@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyPlatformCut, applyStairLift } from './structureCuts'
-import type { PartPackage } from './partPackage'
+import type { PartPackage } from './parts/partPackage'
 
 type RigGeo = Extract<PartPackage['geometry'], { kind: 'rig' }>
 

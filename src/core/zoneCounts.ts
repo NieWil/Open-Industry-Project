@@ -5,9 +5,9 @@
 // them with the stack drawn in mid-air.
 
 import type { BoxFrame } from './frame'
-import type { PartPackage } from './partPackage'
-import { qApply, qFromAxisAngle, resolvedBoxSize, rigWorldPoses } from './rigPose'
-import type { RigParams } from './rigPose'
+import type { PartPackage } from './parts/partPackage'
+import { qApply, qFromAxisAngle, resolvedBoxSize, rigWorldPoses } from './rig/rigPose'
+import type { RigParams } from './rig/rigPose'
 import type { SdkPart } from './types'
 
 /** Cargo in each of `part`'s zones, from `cargo` (the stopped scene's buildAuthoredCargoFrame). Undefined when the part has no zones. */

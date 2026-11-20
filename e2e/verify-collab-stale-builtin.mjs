@@ -98,7 +98,7 @@ try {
       const [{ connectRoom, seedIfEmpty }, { resolveRoom }, demos] = await Promise.all([
         import('/src/collab/provider.ts'),
         import('/src/collab/rooms.ts'),
-        import('/src/editor/demoScenes.ts'),
+        import('/src/editor/demo/demoScenes.ts'),
       ])
       const scene = demos.createPlcDemoScene()
       const pkg = (scene.packages ?? []).find((p) => p.id === id)

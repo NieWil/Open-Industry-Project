@@ -3,19 +3,20 @@
 // in flight is this area's own state (LiveSnapState, held by the controller as `snap`); the resting helpers
 // are stateless and take only the store / view they read.
 
-import { commitSnap } from '../../core/snapCommit'
+import { commitSnap } from '../../core/snap/snapCommit'
 import { cargoSeatOn } from '../../core/frame'
-import { getPackage } from '../../core/partRegistry'
-import { floorRestPose, restOnSurface, surfaceBelowParam } from '../../core/partGeometry'
-import { findSnap, findSnapToTarget, surfaceRestPose } from '../../core/snapFeatures'
-import { conveyingSurfaceAt } from '../../core/conveyorSurface'
-import type { SnapCandidate, SnapPose } from '../../core/snapFeatures'
-import { resolveRollerGrids } from '../../core/rollerGrid'
+import { getPackage } from '../../core/parts/partRegistry'
+import { floorRestPose, restOnSurface, surfaceBelowParam } from '../../core/parts/partGeometry'
+import { findSnap, findSnapToTarget } from '../../core/snap/snapFeatures'
+import { surfaceRestPose } from '../../core/snap/snapSurfacePose'
+import { conveyingSurfaceAt } from '../../core/conveyor/conveyorSurface'
+import type { SnapCandidate, SnapPose } from '../../core/snap/snapFeatures'
+import { resolveRollerGrids } from '../../core/conveyor/rollerGrid'
 import { FLOOR_SURFACE_Y } from '../../core/types'
 import type { PartInstance, SceneJSON } from '../../core/types'
 import { chooseLiveSnap, joinKey } from './liveSnap'
 import type { IRenderView } from '../../render/api'
-import type { EditorStore } from '../store'
+import type { EditorStore } from '../store/store'
 import type { EditorController } from '../controller'
 
 /** The live snap of the gesture in flight: the candidate the preview shows, and the stickiness / flash bookkeeping. */
@@ -117,7 +118,7 @@ export function applyLiveSnap(
 export function withSnapOverrides(snap: LiveSnapState, scene: SceneJSON, movingId: string | null): SceneJSON {
   const c = snap.candidate
   if (!c || movingId === null) return scene
-  // the gesture already moved the part to the previewed pose; the fits and the attach are core/snapCommit's
+  // the gesture already moved the part to the previewed pose; the fits and the attach are core/snap/snapCommit's
   const parts = commitSnap(scene.parts, movingId, c, { pose: false })
   return parts === scene.parts ? scene : { ...scene, parts: [...parts] }
 }

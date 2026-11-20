@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
-import type { RigBoxShape, RigLegShape } from '../../core/partPackage'
-import { legFrameDepth, resolvedBoxSize, resolvedOffset } from '../../core/rigPose'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
+import type { RigBoxShape, RigLegShape } from '../../core/parts/partPackage'
+import { legFrameDepth, resolvedBoxSize, resolvedOffset } from '../../core/rig/rigPose'
 import { examplePart, type RigGeo } from './examplePart'
 
 // Roller beds carry a `frameHeight` param so a bed butted to a belt conveyor can match the belt's frame: the belt's

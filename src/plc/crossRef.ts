@@ -4,7 +4,7 @@
 // Part of the shared rung core (ladderEdit.ts): it reads a family's leaf only through `LeafRefs` - which of its fields
 // name tags, and how the element touches each - so every ladder family's editor has the same Cross Reference.
 
-import { isBranch, type RungElementOf, type RungOf } from './ladderEdit'
+import { isBranch, type RungElementOf, type RungOf } from './ladder/ladderEdit'
 import { lex } from './lexer'
 import { identKey } from './program'
 

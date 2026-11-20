@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
-import { resolvedBoxSize, resolvedOffset } from '../../core/rigPose'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
+import { resolvedBoxSize, resolvedOffset } from '../../core/rig/rigPose'
 import { GUARD_HEIGHT } from '../../core/types'
 import { examplePart, type RigGeo } from './examplePart'
 

@@ -2,7 +2,7 @@
 // plus which parts container (bundled or live) a part's visual goes in.
 
 import type { Group, Object3D } from 'three'
-import { getPackage } from '../../core/partRegistry'
+import { getPackage } from '../../core/parts/partRegistry'
 import type { PartInstance, PartType } from '../../core/types'
 import { markBundleDirtyPart, notifyBundleStructureChanged, wantsBundleLiveSplit } from '../bundleGroups'
 import { visualStructureEpoch } from '../parts/structureRev'
@@ -53,7 +53,7 @@ const MATRIX_STATIC_TYPES = new Set<PartType>([])
 // geometry kind is matrix-static, because the freeze is driven by poseRev/structureVersion, not a predicate:
 //  - `function`/`deck` conveying beds convey via surface velocity + shader scroll (no transform moves);
 //  - a `rig`, jointed or not, self-reports every runtime transform move by bumping poseRev (applyJoints/
-//    applySubPoses/squashTick/probeTick in sdk/rig.ts), and every async child attach (GLB/roller/chain)
+//    applySubPoses/squashTick/probeTick in sdk/rig.ts and its rig*.ts modules), and every async child attach (GLB/roller/chain)
 //    bumps structureVersion; ensureFreshPose re-bakes on either, so a diverter mid-swing re-bakes exactly
 //    the frames it moves and freezes again the moment it holds still;
 //  - `cargo` stubs never carry the running pose (the instanced SimBoxes batch does, boxes.ts); their
@@ -116,7 +116,7 @@ export function syncPartContainer(view: MatrixHost, entry: Entry): void {
  *  - scene-level changes (create / update / selection) route through this;
  *  - content-level ones (package-edit reflow, refresh) bump poseRev in apply();
  *  - runtime ones (frame-routed joints/subPoses, squash relax, beam stretch) bump poseRev at
- *    their write sites in sdk/rig.ts;
+ *    their write sites in sdk/rig.ts and its rig*.ts modules;
  *  - async child attaches bump structureVersion.
  * ensureFreshPose() compares both revs per frame and before frozen-matrix reads, and re-bakes on
  * movement, so a swinging diverter re-bakes exactly the frames it moves and re-freezes when it

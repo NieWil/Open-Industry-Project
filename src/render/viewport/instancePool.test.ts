@@ -1002,7 +1002,7 @@ describe('InstancePoolManager - plain poolUnit meshes (static rig unit-primitive
     })
 
     it('re-bakes when the link subtree moves (a subPose the tag survived) - no stale merged copy', () => {
-      // rig.ts keeps subPose'd links out of the pool, and untags at the first move as a backstop.
+      // rig.ts keeps subPose'd links out of the pool, and rigPlacement.ts untags at the first move as a backstop.
       // This pins the layer below that: if a pooled leaf's ancestor moves, the signature must notice.
       const { scene, partsGroup, mgr } = setup()
       const mat = new MeshStandardMaterial({ color: 0x223344 })

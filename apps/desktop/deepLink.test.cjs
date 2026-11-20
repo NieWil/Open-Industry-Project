@@ -54,3 +54,14 @@ assert.equal(linkUrl('oip://app/app/?x=1', { room: null }), 'oip://app/app/?x=1'
 assert.equal(roomUrl(`oip://app/app/?handoff=${EDIT}`, { room: VIEW, view: true }), `oip://app/app/?room=${VIEW}&view=1`)
 
 console.log('deepLink: ok')
+
+// a room on a self-hosted server keeps its server through the shell, and a bare link drops any server it had
+assert.equal(
+  roomUrl('oip://app/app/?server=wss%3A%2F%2Fold.example', { room: EDIT, view: false, server: 'wss://collab.example.org' }),
+  `oip://app/app/?room=${EDIT}&server=wss%3A%2F%2Fcollab.example.org`,
+)
+assert.equal(roomUrl('oip://app/app/?server=wss%3A%2F%2Fold.example', { room: EDIT, view: false }), `oip://app/app/?room=${EDIT}`)
+assert.equal(
+  linkUrl('oip://app/app/', { room: null, handoff: EDIT, server: 'ws://10.0.0.5:1234' }),
+  `oip://app/app/?handoff=${EDIT}&server=ws%3A%2F%2F10.0.0.5%3A1234`,
+)

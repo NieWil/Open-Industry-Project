@@ -6,11 +6,11 @@
 import type { BoxFrame } from '../../core/frame'
 import { isCargoPart } from '../../core/frame'
 import { quatToYXZ } from '../../core/math'
-import { createSdkPart, idAllocator } from '../../core/scene'
-import { getPackage } from '../../core/partRegistry'
+import { createSdkPart, idAllocator } from '../../core/scene/scene'
+import { getPackage } from '../../core/parts/partRegistry'
 import type { ParamValue, PartInstance } from '../../core/types'
 import type { BoxPick } from '../../render/api'
-import type { EditorState, LiveCargoPose } from '../store'
+import type { EditorState, LiveCargoPose } from '../store/store'
 import type { EditorController } from '../controller'
 
 /** what the live-cargo view reads and drives: the store, the sim, the latest frame, the live-pose cache, the

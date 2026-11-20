@@ -8,7 +8,7 @@ import { bundleGroupsRegistered, bundleRecordSerial, notifyBundleStructureChange
  * `geometry.dispose()` can destroy buffers an earlier recording still references. Replaying it submits
  * a destroyed buffer, Dawn rejects the command buffer and the bundled main pass goes black. It does not
  * throw. Frees can outrun invalidation, e.g. a resize drag re-emits geometry on every pointer-move
- * (sdk/rig.ts realizeProceduralGeometry) while the re-record poll skips a drag-ejected part
+ * (sdk/rigProcedural.ts realizeProceduralGeometry) while the re-record poll skips a drag-ejected part
  * (view.syncBundleInvalidation's `bundleDragEjected` branch). The stale-recording guard
  * (bundleReplayRefresh.ts) doesn't cover this: it watches `bindings.deleteForRender`, and a geometry
  * dispose kills attribute buffers while the bindings live.

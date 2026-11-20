@@ -41,12 +41,12 @@ still chains rail to rail.
 It is parametric, reflows when the deck is resized, and takes per-side openings (`structureCuts.ts`). A
 hand-seated guard rail would duplicate it and conflict with it whenever `showRailings` is on. The facing is a
 general capability for a custom part seating along any declared rectangular surface edge. `SNAP_KIND_OWNER`
-(`src/editor/bundledPackageData.test.ts`) records `oip.stairs` as `edgeMount`'s shipped declarer, through the
+(`src/editor/parts/bundledPackageData.test.ts`) records `oip.stairs` as `edgeMount`'s shipped declarer, through the
 `'into'` facing.
 
 ## How a match happens
 
-`snapEdgeMount` (in [snapFeatures.ts](../src/core/snapFeatures.ts)):
+`snapEdgeMount` (in [snapEdges.ts](../src/core/snap/snapEdges.ts)):
 
 1. Read the target's `surfaces` entry whose `kind === accepts` → the deck rectangle (its length/width params).
 2. Height gate `|Δy| ≤ tolerance`, decks coplanar.
@@ -56,7 +56,7 @@ general capability for a custom part seating along any declared rectangular surf
 
 ## Proof
 
-[snapFeatures.test.ts](../src/core/snapFeatures.test.ts) (`customEdgeMountPkg`, `customDeckHostPkg`) drives
+[snapFeatures.test.ts](../src/core/snap/snapFeatures.test.ts) (`customEdgeMountPkg`, `customDeckHostPkg`) drives
 synthetic custom barriers onto a synthetic custom deck host and asserts pinned poses: a guard-rail-style mount
 nudged out the half-post, a fence-style mount seated flush and sliding along the edge, a mover wider than the
 edge centred on it, and an edge-mount inert against a host advertising no matching deck kind.

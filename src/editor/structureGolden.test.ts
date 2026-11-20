@@ -15,19 +15,19 @@
 // then read the diff.
 
 import { beforeAll, describe, expect, it } from 'vitest'
-import { deriveGuardExtents, hostSurfaceY } from '../core/guardExtents'
-import { deriveGuardOpenings, isOpener } from '../core/guardOpenings'
-import type { PartPackage, RigLink } from '../core/partPackage'
-import { conveyorEndsOf, guardPusherContacts, isConveyorLike, toWorldXZ } from '../core/partGeometry'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import { createSdkPart } from '../core/scene'
+import { deriveGuardExtents, hostSurfaceY } from '../core/guards/guardExtents'
+import { deriveGuardOpenings, isOpener } from '../core/guards/guardOpenings'
+import type { PartPackage, RigLink } from '../core/parts/partPackage'
+import { conveyorEndsOf, guardPusherContacts, isConveyorLike, toWorldXZ } from '../core/parts/partGeometry'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import { createSdkPart } from '../core/scene/scene'
 import { computeStructureConnections } from '../core/structureConnections'
 import type { StructureConnections } from '../core/structureConnections'
 import { structureCutGeo } from '../core/structureCuts'
 import type { PartInstance } from '../core/types'
 import { STAIRS_STANDARD_TREAD } from '../core/types'
 import { buildPackage } from '../sim/buildPackage'
-import { bundledBehaviors, bundledManifests } from './bundledExamples'
+import { bundledBehaviors, bundledManifests } from './parts/bundledExamples'
 
 type RigGeo = Extract<PartPackage['geometry'], { kind: 'rig' }>
 

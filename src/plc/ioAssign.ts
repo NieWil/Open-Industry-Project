@@ -1,5 +1,5 @@
 // Giving the controller's tags I/O addresses: the program half of "Assign I/O" and "Import I/O list"
-// (editor/ioAssign.ts is the scene half).
+// (editor/program/ioAssign.ts is the scene half).
 //
 // A PLC on the network sees points, not names, so each tag a part is wired to becomes a LOCATED variable
 // (`Eye AT %IX100.0 : BOOL`) and the part is wired to that address. Only declarations change; the Inspector
@@ -23,8 +23,8 @@
 // PLC that serves its process image as registers, packed from the server device's first register, since there
 // a bit and the word that holds it are one place.
 
-import { isBitArea, modbusPointFor, registerImagePointFor, type RegisterBase } from '../core/externalIo'
-import { canonicalAddress, parseDirectAddress, sizeWord, TYPES_FOR_SIZE, type IoSize } from '../core/iecAddress'
+import { isBitArea, modbusPointFor, registerImagePointFor, type RegisterBase } from '../core/io/externalIo'
+import { canonicalAddress, parseDirectAddress, sizeWord, TYPES_FOR_SIZE, type IoSize } from '../core/io/iecAddress'
 import { lex } from './lexer'
 import { locatedInTokens } from './locatedIndex'
 import { identKey } from './program'
@@ -61,7 +61,7 @@ export interface IoPlan {
  * - `modbus-server` (the default): the simulator serves and the PLC polls it, as OpenPLC does. Bits and words
  *   travel in separate Modbus areas there, so %IX100.0 and %IW50 are two different points.
  * - `register-image`: the PLC serves its process image as registers and the simulator polls it
- *   (core/externalIo.ts, registerImagePointFor). The image is byte-addressed, so
+ *   (core/io/externalIo.ts, registerImagePointFor). The image is byte-addressed, so
  *   %IX100.0 is a bit of %IW50 and the two clash, and addresses count from where the device sits (`base`).
  */
 export type IoTarget = { kind: 'modbus-server' } | { kind: 'register-image'; base: RegisterBase }
@@ -256,7 +256,7 @@ interface Holder {
 
 /**
  * The points an area's addresses occupy, so that a word and the double word covering it are seen as one
- * conflict: %ID100 is the registers %IW200 and %IW201 (core/externalIo.ts), and two tags on one register
+ * conflict: %ID100 is the registers %IW200 and %IW201 (core/io/externalIo.ts), and two tags on one register
  * would carry two values in one place. For a register-image target a cell is one bit of the image, so a
  * bit and the word that holds it clash too.
  */
@@ -485,7 +485,7 @@ export function planIoImport(source: string, uses: readonly IoTagUse[], rows: re
       continue
     }
     const address = parsed.text
-    // what can travel is the link's rule, asked rather than restated (core/externalIo.ts)
+    // what can travel is the link's rule, asked rather than restated (core/io/externalIo.ts)
     const carried = target.kind === 'register-image' ? registerImagePointFor(address, target.base) : modbusPointFor(address)
     if ('error' in carried) {
       refuse(carried.error)
@@ -683,8 +683,10 @@ export function locateTags(source: string, assignments: readonly IoAssignment[])
     })
   }
 
-  // later edits first, so earlier offsets stay true; two at one offset keep the order they were made in
-  const ordered = edits.map((e, i) => ({ e, i })).sort((a, b) => b.e.from - a.e.from || b.i - a.i)
+  // later edits first, so earlier offsets stay true. At one offset a deletion goes before an insertion, or the
+  // deletion would cut the inserted text (an emptied input block that opens the program shares its line with the
+  // new located block); two insertions keep the order they were made in
+  const ordered = edits.map((e, i) => ({ e, i })).sort((a, b) => b.e.from - a.e.from || b.e.to - a.e.to || b.i - a.i)
   let out = source
   for (const { e } of ordered) out = out.slice(0, e.from) + e.text + out.slice(e.to)
   return out

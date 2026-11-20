@@ -25,7 +25,7 @@ let spawned = 0
 // by the host but still counted here.
 function publish(ctx) {
   ctx.display('spawned', spawned)
-  if (ctx.params.enableComms && ctx.params.countTag) ctx.writeNumber(ctx.params.countTag, spawned)
+  if (ctx.params.countTag) ctx.writeNumber(ctx.params.countTag, spawned)
 }
 
 function hexRgb(hex) {
@@ -61,8 +61,7 @@ definePart({
     mass: { type: 'number', default: 25, min: 1, max: 200, step: 1, label: 'Mass (kg)', group: 'Pallet', visibleWhen: { param: 'product', is: 'oip.pallet' }, desc: 'Mass given to every dispensed pallet, before anything is stacked on it.' },
     disable: { type: 'boolean', default: false, label: 'Paused', desc: 'Stop dispensing entirely. Use (C, or E while walking) is a separate hand stop: it pauses and resumes the magazine during a run without changing this setting, and is cleared when the run stops.' },
     conveyorId: { type: 'partRef', default: '', label: 'Pause when conveyor stopped', desc: 'Interlock: while the named conveyor is stopped, this spawner holds. Wire that conveyor to the PLC and the feed gates itself, with no tag of its own.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
-    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Run tag (spawn only while true)', group: 'Comms', desc: 'Gate the magazine from the program. Note this only takes over once a program actually DRIVES the tag - until then the spawner keeps running, so a merely-declared tag is not a stopped feed.' },
+    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (spawn only while true)', group: 'Comms', desc: 'Gate the magazine from the program. Note this only takes over once a program actually DRIVES the tag - until then the spawner keeps running, so a merely-declared tag is not a stopped feed.' },
     countTag: { type: 'tag', dir: 'out', stType: 'DINT', default: '', label: 'Spawned count tag', group: 'Comms', desc: 'Running total of pallets this spawner has dispensed. Subtract the despawner counts to get the work in progress.' },
   },
   step(ctx) {
@@ -71,7 +70,7 @@ definePart({
     // hold while a linked conveyor is stopped, or while a controller DRIVES the run tag de-energized
     // (ctx.tagDriven = output ownership; gating on the tag NAME alone would brick the spawner the moment one
     // was typed — the hand Use above can only latch it MORE off). Undriven, the authored/hand state rules.
-    const stopped = !ctx.conveyorRunning(p.conveyorId) || (p.enableComms && ctx.tagDriven(p.runTag) ? !ctx.readTag(p.runTag) : false)
+    const stopped = !ctx.conveyorRunning(p.conveyorId) || (ctx.tagDriven(p.runTag) && !ctx.readTag(p.runTag))
     if (p.disable || usedOff || stopped || p.palletsPerMinute <= 0) { armed = false; publish(ctx); return }
     const period = 60 / p.palletsPerMinute
     // held off = disarmed, so this is the first eligible tick of a fresh command: drop now, then pace

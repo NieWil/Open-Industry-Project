@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { PackageManifest } from './buildPackage'
 import { validatePart } from './validatePart'
-import { undeclaredParamReads } from '../core/partAuthoringChecks'
-import { partFingerprint, storedPackageHash } from '../core/partOrigin'
-import { manifestOfPackage } from '../core/partPackage'
-import { newerSdkLevel, PART_SDK_LEVEL } from '../core/partSdk'
+import { undeclaredParamReads } from '../core/parts/partAuthoringChecks'
+import { partFingerprint, storedPackageHash } from '../core/parts/partOrigin'
+import { manifestOfPackage } from '../core/parts/partPackage'
+import { newerSdkLevel, PART_SDK_LEVEL } from '../core/parts/partSdk'
 
 const deck: PackageManifest = { id: 'acme.deck', name: 'Deck', geometry: { kind: 'rig', links: [{ name: 'deck', shape: { kind: 'box', size: [6, 0.1, 1] }, offset: [0, -0.05, 0], conveys: true }], joints: [], bounds: { length: 6, width: 1, top: 0.05, bottom: -0.1 } } }
 
@@ -318,7 +318,7 @@ describe('where a project copy came from (package format 6: origin)', () => {
   })
 })
 
-describe('the Part SDK level stamp (core/partSdk.ts)', () => {
+describe('the Part SDK level stamp (core/parts/partSdk.ts)', () => {
   it("stamps a new part with this build's level and its fingerprint", () => {
     const pkg = validatePart(deck, GOOD).package!
     expect(pkg.sdk).toEqual({ level: PART_SDK_LEVEL, of: partFingerprint(pkg) })
@@ -345,5 +345,23 @@ describe('the Part SDK level stamp (core/partSdk.ts)', () => {
     const { sdk: _sdk, ...unstamped } = made
     expect(partFingerprint(unstamped)).toBe(partFingerprint(made))
     expect(storedPackageHash(unstamped)).toBe(storedPackageHash(made))
+  })
+})
+
+describe('geometry(): a spinning instanced bank', () => {
+  const bank = (look: string): string =>
+    `definePart({ params: { speed: { type: 'number', default: 1 } }, geometry(g) { return [{ desc: g.box([1, 1, 1], [0, 0, 0]), ${look}, instances: [{ position: [0, 0, 0] }, { position: [1, 0, 0] }], spin: { axis: [0, 0, 1], radius: 0.1, speed: 'speed' } }] }, step() {} })`
+  const messages = (m: PackageManifest, src: string): string[] => validatePart(m, src).diagnostics.map((d) => d.message)
+
+  it('says a bank whose material has no grain to turn holds still, and how to turn its teeth instead', () => {
+    expect(messages(rig, bank("finish: 'bolt'"))).toEqual([expect.stringContaining('finish "bolt" has no grain to turn, so it holds still')])
+    const plain = { ...rig, materials: [{ id: 'steel', color: [0.5, 0.5, 0.5] as [number, number, number] }] }
+    expect(messages(plain, bank("material: 'steel'"))).toEqual([expect.stringContaining('draw each one as its own submesh, which turns its mesh')])
+  })
+
+  it("is quiet for a roller finish or an object-space triplanar material, whose grain turns", () => {
+    expect(messages(rig, bank("finish: 'roller'"))).toEqual([])
+    const grained = { ...rig, assets: [{ id: 'tex', mime: 'image/webp', url: '/textures/x.webp' }], materials: [{ id: 'arm', albedo: 'tex', triplanar: { space: 'object' as const, scale: 2 } }] }
+    expect(messages(grained, bank("material: 'arm'"))).toEqual([])
   })
 })

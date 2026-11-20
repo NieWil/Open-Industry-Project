@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#17191b" />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <title>Make a piece of a part move on a PLC command | Open Industry Project</title>
+    <meta name="description" content="Step by step: split a moving piece out of your part's model, give it a joint, and let a PLC program drive it with one BOOL, with no code in the part." />
+    <meta name="keywords" content="custom part, joint, prismatic, PLC tag, BOOL, Structured Text, simulator, virtual commissioning" />
+    <link rel="canonical" href="https://www.openindustryproject.org/guides/part-motion/" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Open Industry Project" />
+    <meta property="og:title" content="Make a piece of a part move on a PLC command | Open Industry Project" />
+    <meta property="og:description" content="Step by step: split a moving piece out of your part's model, give it a joint, and let a PLC program drive it with one BOOL, with no code in the part." />
+    <meta property="og:url" content="https://www.openindustryproject.org/guides/part-motion/" />
+    <meta property="og:image" content="https://www.openindustryproject.org/og-image.jpg?v=20261013" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- A hand-written page. Every label and message below is read from the app (editor/components/inspector/rigNode.tsx,
+         editor/jointPlcControl.ts, editor/components/SceneTree.tsx), and e2e/guide-part-motion.mjs follows the page in
+         the desktop app, starting where /guides/part-model/ ends. Change those and this goes stale. -->
+
+    <link rel="preload" href="/fonts/plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
+
+    <link rel="stylesheet" href="/src/site/site.css" />
+    <script type="module" src="/src/site/copyCode.js"></script>
+  </head>
+
+  <body class="doc">
+
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
+        <nav class="nav-links" aria-label="Site">
+          <a href="/plc/">PLC reference</a>
+          <a href="/guides/">Guides</a>
+          <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </nav>
+        <a class="btn btn-sm" href="/app/">Open the editor</a>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="hero">
+        <h1>Making a piece move on a PLC command</h1>
+        <p class="lede">
+          A part moves by its joints. A joint lets one piece of the model slide or turn, and a PLC program drives it
+          through the part's tags, the same way it drives a conveyor or reads a sensor.
+        </p>
+        <p class="lede">
+          In this guide you make the blade of your blade stop rise when a PLC program sets one BOOL, and sink again when
+          it clears it. The part needs no code: the Part Editor writes it. It takes about ten minutes.
+        </p>
+
+        <h2>You need</h2>
+        <ul class="dash">
+          <li>The project from <a href="/guides/part-model/">Making a part from your own model</a>: Blade Stop 900, mounted under a roller conveyor.</li>
+          <li>The simulator, <a href="/app/">in the browser</a> or the desktop app for <a href="/#desktop">Windows or Linux</a>.</li>
+        </ul>
+
+        <ul class="toc">
+          <li><a href="#open">1. Open the part</a></li>
+          <li><a href="#split">2. Split the blade out</a></li>
+          <li><a href="#joint">3. Give it a joint</a></li>
+          <li><a href="#plc">4. Let the PLC drive it</a></li>
+          <li><a href="#run">5. Wire it and run</a></li>
+          <li><a href="#trouble">Troubleshooting</a></li>
+        </ul>
+      </section>
+    </main>
+
+    <section class="section" id="open">
+      <div class="wrap">
+        <h2>1. Open the part</h2>
+        <p>
+          Right-click <b>Blade Stop 900</b> in the Scene dock, or its model in the view, and choose
+          <span class="ui">Open Part Editor</span>. The Scene dock now lists the part's nodes, <b>body</b> and
+          <b>collider</b>, under <span class="ui">‹ Scene</span>. What you change here changes the part itself, so every
+          copy in the scene follows.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="split">
+      <div class="wrap">
+        <h2>2. Split the blade out</h2>
+        <p>
+          The whole model is one node, <b>body</b>, and a joint moves a whole node. So the blade first needs a node of its
+          own.
+        </p>
+        <ol class="steps">
+          <li>Click <b>body</b> in the Scene dock.</li>
+          <li>In the Inspector's <span class="ui">Split into pieces</span> section, click <b>Blade</b>.</li>
+        </ol>
+        <p>
+          A new node, <b>Blade</b>, appears under <b>body</b> and is selected. It holds the blade and its two guide rods,
+          the pieces of the Blade group in the file. Nothing moves: a split piece stays where it is.
+        </p>
+        <figure class="shot">
+          <img src="img/blade-node.webp" width="310" height="139" loading="lazy" decoding="async"
+            alt="The Scene dock in the Part Editor: Blade Stop 900 with its nodes body, Blade under body, and collider." />
+          <figcaption>The blade, split out into a node of its own.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="joint">
+      <div class="wrap">
+        <h2>3. Give it a joint</h2>
+        <p>
+          With <b>Blade</b> selected, click <span class="ui">Add joint</span> near the bottom of the Inspector. A
+          <span class="ui">Joint</span> section opens. Type or pick these, pressing Enter after each:
+        </p>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Field</th><th>Set to</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Name</td><td class="m">raise</td><td>The joint's name. The part's tags and script use it.</td></tr>
+              <tr><td>Type</td><td class="m">prismatic</td><td>The node slides. A revolute joint turns it instead.</td></tr>
+              <tr><td>Min</td><td class="m">0</td><td>The lowest it goes, in metres from where it is now.</td></tr>
+              <tr><td>Max</td><td class="m">0.06</td><td>The highest: 6 cm up.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Leave <span class="ui">Axis</span> at 0, 1, 0, which is straight up. The blade's top sits 1 cm below the rollers,
+          so raised by 6 cm it stands 5 cm above them, enough to stop a box.
+        </p>
+        <p>
+          Click <span class="ui">Test motion</span>. The blade rises and sinks twice, then goes back to rest. If it moves
+          the wrong way, check the axis and the limits.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="plc">
+      <div class="wrap">
+        <h2>4. Let the PLC drive it</h2>
+        <p>
+          A real blade stop is an air cylinder with two positions, down and up. The joint can work the same way without
+          any code. In the <span class="ui">Joint</span> section:
+        </p>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Field</th><th>Set to</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>PLC control</td><td class="m">Two positions</td><td>A BOOL drives the joint between Min and Max.</td></tr>
+              <tr><td>Stroke time</td><td class="m">0.2</td><td>Seconds from one end to the other. An air cylinder is quick.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The Part Editor writes the part's behavior script for you and explains the result: A is Min and B is Max. Each
+          placed copy gets three tags in its <span class="ui">Comms</span> group. <b>Command</b> is the BOOL the program
+          writes: true moves the blade to B, up, and false back to A. <b>At A</b> and <b>At B</b> tell the program which
+          end it is at, and the next guide uses them.
+        </p>
+        <figure class="shot">
+          <img src="img/joint.webp" width="376" height="705" loading="lazy" decoding="async"
+            alt="The Joint section of the Blade node: name raise, type prismatic, axis 0, 1, 0, Min 0, Max 0.06, PLC control Two positions and a stroke time of 0.2 seconds." />
+          <figcaption>The blade's joint, driven by the PLC.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="run">
+      <div class="wrap">
+        <h2>5. Wire it and run</h2>
+        <p>
+          Click <span class="ui">‹ Scene</span> at the top of the Scene dock. Select <b>Blade Stop 900</b>, open its
+          <span class="ui">Comms</span> group in the Inspector, and type the program variable:
+        </p>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Part</th><th>Field</th><th>Type in</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Blade Stop 900</td><td>Command</td><td class="m">RaiseBlade</td><td>The blade rises while it is true.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Open the <span class="ui">PLC</span> tab next to the Parts dock, replace whatever is in its code editor with this
+          program, and check it reports no errors:
+        </p>
+        <pre class="code" translate="no" data-copy><code>PROGRAM Main
+VAR
+  RaiseBlade : BOOL;
+  Cycle : TON;
+END_VAR
+
+Cycle(IN := NOT Cycle.Q, PT := T#2s);
+IF Cycle.Q THEN
+  RaiseBlade := NOT RaiseBlade;
+END_IF;
+END_PROGRAM</code></pre>
+        <p>
+          Every 2 seconds the timer runs out and the program flips <code>RaiseBlade</code>. Press
+          <span class="ui">Play</span>. The blade rises between the rollers, stays up for 2 seconds, sinks, and rises
+          again. While it runs, the code editor shows each variable's value next to its name.
+        </p>
+        <figure class="shot">
+          <img src="img/raised.webp" width="1260" height="630" loading="lazy" decoding="async"
+            alt="The roller conveyor with the blade stop's orange blade raised between two rollers." />
+          <figcaption>The blade up, on the program's command.</figcaption>
+        </figure>
+        <p>
+          The stroke time you set in step 4 is each copy's own starting value: select a copy and change its
+          <span class="ui">Stroke Time</span> in the Inspector, and only that copy moves faster or slower.
+        </p>
+        <div class="note tip">
+          <p>
+            A piece that turns works the same way: a revolute joint, Min and Max in degrees, and Two positions for a gate or
+            a flap. For a shaft or a motor that turns without end, tick <span class="ui">Spins endlessly</span> and set
+            <span class="ui">PLC control</span> to <b>Spin</b>: the copy then gets a Run tag, and an optional speed tag in
+            rpm.
+          </p>
+        </div>
+        <p>
+          Next: <a href="/guides/part-feedback/">Sending a part's state back to the PLC</a>, so the program knows the blade
+          got where it was sent.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="trouble">
+      <div class="wrap">
+        <h2>Troubleshooting</h2>
+        <dl class="trouble">
+          <dt>"Every piece of this model is already split out."</dt>
+          <dd>Blade is split already. Look for the <b>Blade</b> node under <b>body</b> in the Scene dock.</dd>
+
+          <dt>The whole blade stop moves, not just the blade.</dt>
+          <dd>The joint is on <b>body</b>. Click <span class="ui">Remove joint</span> there, select <b>Blade</b>, and add it again.</dd>
+
+          <dt>The blade moves sideways, or turns.</dt>
+          <dd>The joint's type is still <b>revolute</b>, or its axis is not 0, 1, 0. Set them as in step 3.</dd>
+
+          <dt>"PLC control drives “raise”, so it can't be renamed here."</dt>
+          <dd>A joint's name is fixed while the PLC drives it. Set <span class="ui">PLC control</span> to None, rename it, then choose Two positions again.</dd>
+
+          <dt>The blade does not move when the simulation runs.</dt>
+          <dd>Check that the copy's <span class="ui">Command</span> holds <code>RaiseBlade</code>, that the PLC tab shows no errors, and that <span class="ui">Play</span> is pressed. Without a program driving it, the blade stays at A.</dd>
+
+          <dt>Test motion moves the blade, but it is gone back when I select another node.</dt>
+          <dd>That is the test: nothing is saved, and the joint goes back to rest.</dd>
+        </dl>
+      </div>
+    </section>
+
+    <footer class="site">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div>
+            <img class="mark" src="/oip-logo.svg" alt="Open Industry Project" />
+            <p class="blurb">A free industrial simulator, in your browser or as a desktop app.</p>
+          </div>
+          <div>
+            <h4>Get it</h4>
+            <ul>
+              <li><a href="https://downloads.openindustryproject.org/desktop/Open-Industry-Project-Setup.exe">Download for Windows</a></li>
+              <li><a href="https://downloads.openindustryproject.org/desktop/open-industry-project_amd64.deb">Download for Linux (.deb)</a></li>
+              <li><a href="/app/">Launch the simulator in the browser</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Explore</h4>
+            <ul>
+              <li><a href="/guides/">All guides</a></li>
+              <li><a href="https://github.com/Open-Industry-Project/Open-Industry-Project/blob/main/docs/part-authoring-guide.md" target="_blank" rel="noopener noreferrer">Part authoring reference</a></li>
+              <li><a href="/plc/">PLC language reference</a></li>
+              <li><a href="/app/?scene=demo">See a PLC-driven line run</a></li>
+              <li><a href="/">Back to the front page</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <span>&copy; Automation Standard LLC and contributors</span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

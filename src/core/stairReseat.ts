@@ -1,7 +1,7 @@
 import type { PartInstance } from './types'
 import { STAIRS_LANDING_DEPTH } from './types'
-import { getPackage, isAuthoritativePackage } from './partRegistry'
-import { toWorldXZ } from './partGeometry'
+import { getPackage, isAuthoritativePackage } from './parts/partRegistry'
+import { toWorldXZ } from './parts/partGeometry'
 import { computeStructureConnections } from './structureConnections'
 
 export const STAIRS_PACKAGE_ID = 'oip.stairs'

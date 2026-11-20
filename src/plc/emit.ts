@@ -9,7 +9,7 @@
 import { BUILTIN_RUNTIME_HELPERS, emitBuiltin, isBuiltinFunc } from './builtins'
 import { parseAndCheck } from './checker'
 import { controllerTags, fbDecls, identKey, methodDecls, passOrder, taskTable } from './program'
-import { isCalendar, isInt, isReal, isString, isTime } from './runtime'
+import { isCalendar, isInt, isInt32, isReal, isString, isTime } from './runtime'
 import { isArray, isEnum, isInterface, isRef, isStruct, isUserFb } from './types'
 import type { ArrayDim, ArrayType, Ast, DataType, Decl, DeclType, EnumDef, Expr, FbDef, FuncDef, Initializer, MethodDef, ScalarType, StructDef, StructRef, Stmt } from './types'
 
@@ -237,7 +237,7 @@ function emitBinary(e: Extract<Expr, { node: 'binary' }>, ref: string): string {
   if (isReal(t)) return t === 'REAL' ? `wrap('REAL', ${l} ${op} ${r})` : `(${l} ${op} ${r})`
   if (op === '/') return `wrap('${t}', idiv(${l}, ${r}))`
   if (op === 'MOD') return `wrap('${t}', imod(${l}, ${r}))`
-  if (op === '*' && (t === 'DINT' || t === 'DWORD')) return `wrap('${t}', Math.imul(${l} | 0, ${r} | 0))`
+  if (op === '*' && isInt32(t)) return `wrap('${t}', Math.imul(${l} | 0, ${r} | 0))`
   return `wrap('${t}', ${l} ${op} ${r})`
 }
 

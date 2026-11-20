@@ -1,0 +1,179 @@
+{
+  "format": 6,
+  "id": "oip.guard-rail",
+  "name": "Guard Rail",
+  "params": {
+    "length": {
+      "type": "number",
+      "default": 4,
+      "min": 0.5,
+      "step": 0.1,
+      "label": "Length (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "x"
+      },
+      "desc": "Rail run length along local +X. Posts re-space themselves to stay under 2.4 m apart. Drag the dot on either end face to resize in the viewport."
+    },
+    "color": {
+      "type": "color",
+      "default": "#f2bd0f",
+      "label": "Steel color",
+      "desc": "Steel tint of the rails and posts."
+    },
+    "omitPostStart": {
+      "type": "boolean",
+      "default": false,
+      "label": "Omit start post",
+      "group": "Posts",
+      "desc": "Suppress the post at local -X so a snapped neighbour draws the shared one instead. Snapping sets this for you."
+    },
+    "omitPostEnd": {
+      "type": "boolean",
+      "default": false,
+      "label": "Omit end post",
+      "group": "Posts",
+      "desc": "Suppress the post at local +X so a snapped neighbour draws the shared one instead. Snapping sets this for you."
+    }
+  },
+  "behavior": "// Guard Rail — a structural safety railing. Demonstrates the array-links 'distribute' form: the posts\n// auto-space evenly along the 'length' param (N = ceil(length/2.4)+1), and the two rails are length-parametric.\n// The omit-post toggles drop an end post so two rails butt flush. No runtime logic — the params reshape the rig.\n\ndefinePart({\n  params: {\n    length: { type: 'number', default: 4, min: 0.5, step: 0.1, label: 'Length (m)', handle: { kind: 'face', axis: 'x' }, desc: 'Rail run length along local +X. Posts re-space themselves to stay under 2.4 m apart. Drag the dot on either end face to resize in the viewport.' },\n    color: { type: 'color', default: '#f2bd0f', label: 'Steel color', desc: 'Steel tint of the rails and posts.' },\n    omitPostStart: { type: 'boolean', default: false, label: 'Omit start post', group: 'Posts', desc: 'Suppress the post at local -X so a snapped neighbour draws the shared one instead. Snapping sets this for you.' },\n    omitPostEnd: { type: 'boolean', default: false, label: 'Omit end post', group: 'Posts', desc: 'Suppress the post at local +X so a snapped neighbour draws the shared one instead. Snapping sets this for you.' },\n  },\n  react() {},\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "railTop",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length"
+            }
+          ]
+        },
+        "offset": [
+          0,
+          1.07,
+          0
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "railMid",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length"
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.54,
+          0
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none"
+      },
+      {
+        "name": "post",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.04,
+            1.07,
+            0.04
+          ]
+        },
+        "offset": [
+          0,
+          0.535,
+          0
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "collision": "none",
+        "array": {
+          "distribute": {
+            "axis": 0,
+            "spanParam": "length",
+            "maxSpacing": 2.4
+          },
+          "omitFirstParam": "omitPostStart",
+          "omitLastParam": "omitPostEnd"
+        }
+      },
+      {
+        "name": "wall",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            1.07,
+            0.06
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length"
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.535,
+          0
+        ],
+        "hidden": true
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 4,
+      "width": 0.08,
+      "top": 1.07
+    }
+  },
+  "category": "Structure",
+  "snap": {
+    "chain": {
+      "group": "guardRail",
+      "lengthParam": "length",
+      "reach": 3,
+      "omitStartParam": "omitPostStart",
+      "omitEndParam": "omitPostEnd"
+    }
+  },
+  "materials": [],
+  "sdk": {
+    "level": 16,
+    "of": "v2:2355:qyx11zjdxj"
+  }
+}

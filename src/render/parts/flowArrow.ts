@@ -1,13 +1,13 @@
 import { ConeGeometry, CylinderGeometry, Group, Mesh, MeshBasicMaterial, Quaternion, Vector3 } from 'three'
 import type { Object3D } from 'three'
 import type { PartInstance } from '../../core/types'
-import { buildBeltPath, sampleBeltPath } from '../../core/beltPath'
-import type { BeltPath } from '../../core/beltPath'
-import { conveyorSpeedOf } from '../../core/conveyorDirection'
-import { registryRevision } from '../../core/partRegistry'
-import { flexStations } from '../../core/flexPath'
-import { bedOf } from '../../core/conveyorBeds'
-import { DEG, flexPathOf, resolveInclineRad } from '../../core/partGeometry'
+import { buildBeltPath, sampleBeltPath } from '../../core/conveyor/beltPath'
+import type { BeltPath } from '../../core/conveyor/beltPath'
+import { conveyorSpeedOf } from '../../core/conveyor/conveyorDirection'
+import { registryRevision } from '../../core/parts/partRegistry'
+import { flexStations } from '../../core/conveyor/flexPath'
+import { bedOf } from '../../core/conveyor/conveyorBeds'
+import { DEG, flexPathOf, resolveInclineRad } from '../../core/parts/partGeometry'
 
 /**
  * Flow-direction arrow overlay: a green,
@@ -162,7 +162,7 @@ function straightArrowPoints(fullLength: number, inclineRad = 0): Vector3[] {
 }
 
 /**
- * Shaft points for a conveyor part, by its bed kind (core/conveyorBeds.ts). Null for a part that doesn't convey.
+ * Shaft points for a conveyor part, by its bed kind (core/conveyor/conveyorBeds.ts). Null for a part that doesn't convey.
  * The switch covers every kind, so a new kind fails to compile here until it has an arrow.
  */
 function customArrowPoints(part: PartInstance): Vector3[] | null {

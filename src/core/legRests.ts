@@ -1,8 +1,8 @@
 import { FLOOR_SURFACE_Y } from './types'
 import type { PartInstance } from './types'
-import type { ParamValue } from './partApi'
-import { partFootprint, surfaceBelowParam, toLocalXZ, toWorldXZ } from './partGeometry'
-import { getPackage } from './partRegistry'
+import type { ParamValue } from './parts/partApi'
+import { partFootprint, surfaceBelowParam, toLocalXZ, toWorldXZ } from './parts/partGeometry'
+import { getPackage } from './parts/partRegistry'
 import { platformDeck } from './structureConnections'
 import { memoizeByParticipants } from './memoParts'
 

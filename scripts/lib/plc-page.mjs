@@ -299,7 +299,7 @@ export function renderPlcPage(m) {
         <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
         <nav class="nav-links" aria-label="Site">
           <a href="/plc/" aria-current="page">PLC reference</a>
-          <a href="/guides/">Connection guides</a>
+          <a href="/guides/">Guides</a>
           <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
         <a class="btn btn-sm" href="/app/">Open the editor</a>
@@ -559,7 +559,7 @@ export function renderPlcPage(m) {
             <ul>
               <li><a href="/app/">Launch the simulator</a></li>
               <li><a href="/app/?scene=demo">See a PLC-driven line run</a></li>
-              <li><a href="/guides/">Connection guides</a></li>
+              <li><a href="/guides/">Guides</a></li>
               <li><a href="/">Back to the front page</a></li>
             </ul>
           </div>

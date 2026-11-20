@@ -72,9 +72,8 @@ definePart({
     frameColor: { type: 'color', default: '#24507a', label: 'Frame color', group: 'Colors', desc: 'Paint of the column, the boom and its knee brace.' },
     armColor: { type: 'color', default: '#f2bd0f', label: 'Arm color', group: 'Colors', desc: 'Paint of the rotating arm and its mast, the parts that sweep round the load.' },
     showBeam: { type: 'boolean', default: false, label: 'Show beams', desc: 'Draw the station eye and the film carriage eye. Off by default: the carriage eye turns with the arm.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this wrapper to a PLC program. Its tags appear once this is on.' },
     startTag: { type: 'tag', dir: 'in', stType: 'BOOL', autoWhenDriven: true, default: '', label: 'Start tag (rising edge)', group: 'Comms', desc: 'Each rising edge starts ONE wrap cycle on the load in the station; holding it true does not wrap again. While a program drives this tag it owns the machine: Use and Auto wrap stand aside.' },
-    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Enable tag', group: 'Comms', desc: 'The wrapper moves only while this is true. Drop it and the arm brakes to a stop where it is and the carriage holds; raise it and the cycle carries on from there. A start while it is false is ignored. Wire it to the line running, so a Stop or a trip holds the wrap and a Start finishes it. Leave it empty and the wrapper is always enabled.' },
+    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Enable tag', group: 'Comms', desc: 'The wrapper moves only while this is true. Drop it and the arm brakes to a stop where it is and the carriage holds; raise it and the cycle carries on from there. A start while it is false is ignored. Wire it to the line running, so a Stop or a trip holds the wrap and a Start finishes it. Until a program drives it, or with it empty, the wrapper is always enabled, so a merely-typed tag does not hold it.' },
     busyTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Busy tag', group: 'Comms', desc: 'True from a start until the arm has parked beside the column. Hold the conveyor while it is true: the arm is turning around the load.' },
     doneTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Done tag', group: 'Comms', desc: 'True once the load in the station is wrapped and the arm is parked, until the load leaves. Carry on down the line when it goes true.' },
     inPositionTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'In position tag', group: 'Comms', desc: 'The station eye, across the line just downstream of the wrap axis: true while a load blocks it. Stop the conveyor on it and the load comes to rest centred under the arm.' },
@@ -226,8 +225,8 @@ definePart({
     if (!loaded && phase === 'idle') wrappedHere = false // the wrapped load has gone: the next one is due
 
     // requests: the program's edge while it owns the machine, else a Use or a load standing in the station
-    const driven = p.enableComms && ctx.tagDriven(p.startTag)
-    const enabled = !p.enableComms || !p.enableTag || ctx.readTag(p.enableTag) === true
+    const driven = ctx.tagDriven(p.startTag)
+    const enabled = !ctx.tagDriven(p.enableTag) || ctx.readTag(p.enableTag) === true
     if (driven) {
       if (ctx.rising(p.startTag)) pending = true
     } else {
@@ -317,10 +316,8 @@ definePart({
     const busy = pending || phase !== 'idle'
     blink = (blink + dt) % 1
     ctx.lamps.beacon = busy && blink < 0.5
-    if (p.enableComms) {
-      if (p.busyTag) ctx.writeTag(p.busyTag, busy)
-      if (p.doneTag) ctx.writeTag(p.doneTag, phase === 'idle' && wrappedHere && loaded)
-      if (p.inPositionTag) ctx.writeTag(p.inPositionTag, ctx.sense('inPos').hit)
-    }
+    if (p.busyTag) ctx.writeTag(p.busyTag, busy)
+    if (p.doneTag) ctx.writeTag(p.doneTag, phase === 'idle' && wrappedHere && loaded)
+    if (p.inPositionTag) ctx.writeTag(p.inPositionTag, ctx.sense('inPos').hit)
   },
 })

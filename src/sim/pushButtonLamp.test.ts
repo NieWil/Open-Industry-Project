@@ -44,21 +44,19 @@ describe('push button behavior - the lamp is its own circuit', () => {
   })
 
   it("'tag' hands the lamp to the program: the tag lights it, the press does not", () => {
-    open({ lampSource: 'tag', enableComms: true, lampTag: 'RunLamp', momentary: false })
+    open({ lampSource: 'tag', lampTag: 'RunLamp', momentary: false })
     expect(tick(true, { RunLamp: false }).lamps['cap']).toBe(false) // pressed, but the program says dark
     expect(tick(false, { RunLamp: true }).lamps['cap']).toBe(true) // released, but the program says lit
   })
 
   it("'tag' with nothing wired reads dark - an unbound tag must not fall back to the press", () => {
-    open({ lampSource: 'tag', enableComms: true, momentary: false }) // no lampTag
+    open({ lampSource: 'tag', momentary: false }) // no lampTag
     expect(tick(true).lamps['cap']).toBe(false)
-    open({ lampSource: 'tag', enableComms: false, lampTag: 'RunLamp', momentary: false }) // comms gate shut
-    expect(tick(true, { RunLamp: true }).lamps['cap']).toBe(false)
   })
 
   it('the cap depress and the tag output are unaffected by the lamp source', () => {
     for (const lampSource of ['press', 'tag', 'on', 'off']) {
-      open({ lampSource, momentary: false, enableComms: true, tag: 'Start' })
+      open({ lampSource, momentary: false, tag: 'Start' })
       expect(tick().subPoses['cap']?.position?.[2] ?? 0).toBe(0)
       const down = tick(true)
       expect(down.subPoses['cap']!.position![2]).toBeLessThan(0) // travels into the housing
@@ -69,7 +67,7 @@ describe('push button behavior - the lamp is its own circuit', () => {
   })
 
   it('a normally-closed contact still reads TRUE at rest under an always-on lamp', () => {
-    open({ lampSource: 'on', normallyClosed: true, enableComms: true, tag: 'Stop' })
+    open({ lampSource: 'on', normallyClosed: true, tag: 'Stop' })
     const out = tick()
     expect(out.tags['Stop']).toBe(true)
     expect(out.lamps['cap']).toBe(true)

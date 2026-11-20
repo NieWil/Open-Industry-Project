@@ -1,13 +1,13 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 // The tote's collider is hollow and stacks on its foot (core/tote.ts toteCollider, bodyFactory.ts buildToteShape).
 // These pin what that is for: cargo put in a tote stays in it and rides with it, and a stack of totes locates
 // itself, ledge on rim, at its height less the foot per level.
 
 import initJolt from 'jolt-physics'
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/partPackage'
-import { createSdkPart } from '../core/scene'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/parts/partPackage'
+import { createSdkPart } from '../core/scene/scene'
 import { TOTE_FLOOR_T, TOTE_FOOT_H, TOTE_SIZE } from '../core/tote'
 import { SCENE_VERSION } from '../core/types'
 import type { PartInstance, SdkPart } from '../core/types'

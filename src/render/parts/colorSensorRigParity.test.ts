@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { rigWorldPoses } from '../../core/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { rigWorldPoses } from '../../core/rig/rigPose'
 import { rayObb } from '../../core/beamCast'
-import { evalPartGeometry } from '../../core/geometryEval'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
 import { examplePart, type RigGeo } from './examplePart'
 const { assets: COLOR_SENSOR_ASSETS, behavior: COLOR_SENSOR_BEHAVIOR, materials: COLOR_SENSOR_MATERIALS, geometry: COLOR_SENSOR_RIG } = examplePart<RigGeo>('oip.color-sensor')
 

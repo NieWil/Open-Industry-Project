@@ -45,7 +45,7 @@ try {
       const pe = st.packageEdit
       const part = pe ? st.scene.parts.find((p) => p.id === pe.partId) : null
       if (!part) return { opened, part: null }
-      const g = await import('/src/core/partGeometry.ts')
+      const g = await import('/src/core/parts/partGeometry.ts')
       const fp = g.partFootprint(part)
       const rested = g.restOnSurface(part, [part.position[0], 0, part.position[2]], [0, 1, 0])
       const pkg = window.__oip.getPackage(id)

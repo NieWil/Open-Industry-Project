@@ -14,14 +14,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { dialogHost } from '../dialogHost'
-import { partDisplayNames, partTypeName } from '../../core/partDisplayName'
+import { partDisplayNames, partTypeName } from '../../core/parts/partDisplayName'
 import { PART_DEFS } from '../../core/types'
 import { commandChord, commandDisabledReason, commandEnabled, groupLabel, runCommand, visibleCommands } from '../commands'
-import { DESKTOP_SHELL } from '../desktopMenuBridge'
-import { rankPaletteItems, type PaletteItem } from '../paletteItems'
+import { DESKTOP_SHELL } from '../desktop/desktopMenuBridge'
+import { englishAlias, rankPaletteItems, type PaletteItem } from '../paletteItems'
 import type { EditorController } from '../controller'
-import type { EditorState, EditorStore } from '../store'
-import { defineMessages, t } from '../../core/i18n'
+import type { EditorState, EditorStore } from '../store/store'
+import { defineMessages, messageSource, t } from '../../core/i18n'
 
 const M = defineMessages('palette', {
   groupScene: 'Scene',
@@ -64,6 +64,8 @@ export function CommandPalette({ store, state, controller, onClose }: CommandPal
         kind: 'command',
         group: cmd.group,
         label: cmd.label,
+        // the English label (commands.ts localizeCommand registers it under this id) still finds a translated command
+        alias: englishAlias(cmd.label, messageSource(`command.${cmd.id}.label`)),
         // in the shortcuts panel's notation (⌘ on a Mac), and the chord this surface binds (F5 is the menu's)
         detail: commandChord(cmd),
         disabled: !commandEnabled(cmd.id),

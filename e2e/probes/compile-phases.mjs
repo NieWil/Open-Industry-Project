@@ -1,19 +1,14 @@
-// Where does the WebGPU staged pre-warm actually spend the cover - phase 1 or phase 2? And is
-// phase 1 worth un-serialising?
+// Where does the WebGPU staged pre-warm actually spend the cover - phase 1 or phase 2?
 //
-// compileStaged runs two phases: (1) the building shell + env, (2) the parts. Phase 2 feeds Dawn
-// concurrently (withConcurrentPipelines un-serialises three's per-object
-// `createRenderPipelineAsync` await, measured ~8-10x on the part compile). Phase 1 stays on three's
-// stock one-pipeline-in-flight loop. The measurement behind that choice compared
-// staged-with-serial-phase-1 against one all-at-once concurrent pass (~6 s vs ~10 s). It did not
-// test keeping the staging and also un-serialising phase 1. This script tests that combination, and
-// reports the per-phase split either way (viewCompileLedger.ts publishes `__oipCompilePhases`).
+// compileStaged runs two phases: (1) the building shell + env, (2) the parts, each through three's own
+// compileAsync (up to 16 pipelines in flight since three 0.187). This reports the per-phase split
+// (viewCompileLedger.ts publishes `__oipCompilePhases`, viewWarm.ts withCompileLedger fills it).
 //
 // Cold cache per run: Dawn's compiled pipelines are disk-cached per profile, so a
 // second run on the same profile measures the cache, not the compile. Every run gets a fresh
 // persistent profile dir and the arms alternate inside one process, so machine drift affects both.
 //
-// Usage: npm run build && node e2e/probes/compile-phases.mjs [runs=3] [--throttle]
+// Usage: npm run build && node e2e/probes/compile-phases.mjs [runs=3] [--throttle] [--oneshot]
 /* global process, console, window, document, performance, PerformanceObserver */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -24,26 +19,15 @@ import { distIsBuilt, serveDist } from '../_edge-server.mjs'
 const THROUGHPUT_KBPS = 550
 const LATENCY_MS = 60
 const THROTTLE = process.argv.includes('--throttle')
-// `--ab` re-runs the settled phase-1 concurrent-vs-serial A/B. By default only the shipped arm runs,
-// since the ledger's job is attributing time to a phase, not re-deciding that question
-const ARMS = process.argv.includes('--ab')
+// By default only the shipped arm runs: the ledger's job is attributing time to a phase.
+// --oneshot: is the two-phase split still worth it? ?serialcompile is three's stock whole-scene
+// compileAsync in one pass.
+const ARMS = process.argv.includes('--oneshot')
   ? [
-      ['concurrent', ''],
-      ['serial', '&serialphase1'],
+      ['staged', ''],
+      ['oneshot', '&serialcompile'],
     ]
-  : process.argv.includes('--overlap')
-    ? [
-        ['overlap', '&phase1overlap'],
-        ['shipped', ''],
-      ]
-    : // --oneshot: is the two-phase split still worth it? ?serialcompile is three's stock whole-scene
-      // compileAsync, the arm the ~6s-vs-10s staging decision was measured against.
-      process.argv.includes('--oneshot')
-      ? [
-          ['staged', ''],
-          ['oneshot', '&serialcompile'],
-        ]
-      : [['shipped', '']]
+  : [['shipped', '']]
 const log = (...a) => console.log(...a)
 const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]
 const ms = (x, w = 5) => String(Math.round(x)).padStart(w)
@@ -179,12 +163,7 @@ function summarise(name, rs) {
   // building GLB's geometry+textures decoding (whenBuildingReady gates the compile)
   row('  boot -> phase 1', (r) => (r.phases.phase1End ?? 0) - (r.phases.phase1 ?? 0))
   row('  phase 1 (building)', (r) => r.phases.phase1 ?? 0)
-  row('    of which build', (r) => r.phases.phase1Build ?? 0)
-  row('    of which await', (r) => r.phases.phase1Await ?? 0)
   row('  phase 2 (parts)', (r) => r.phases.phase2 ?? 0)
-  row('    ph1 tail (overlap)', (r) => r.phases.phase1Tail ?? 0)
-  row('    of which build', (r) => r.phases.phase2Build ?? 0)
-  row('    of which await', (r) => r.phases.phase2Await ?? 0)
   row('extras 1 (select-path)', (r) => r.phases.extras1Build ?? 0)
   row('extras 2 (drag/measure)', (r) => r.phases.extras2Build ?? 0)
   // completeness: what was warm when the cover lifted, and what still had to compile afterwards
@@ -205,8 +184,7 @@ function summarise(name, rs) {
   row('yield floor for ph2', (r) => r.yieldFloor ?? 0)
   row('pipelines after ph1', (r) => r.phases.phase1Pipelines ?? 0, '  ')
   row('pipelines after ph2', (r) => r.phases.phase2Pipelines ?? 0, '  ')
-  // If build >> await, more concurrency cannot help this phase: the cost is three's sequential
-  // per-item loop (codegen + one yieldToMain per item), not the Dawn compiles.
+  // main-thread cost per compilation item: three's sequential per-item loop (codegen + yields)
   for (const p of ['phase1', 'phase2']) {
     const build = median(pick((r) => r.phases[`${p}Build`] ?? 0))
     const items = median(pick((r) => r.phases[`${p}Items`] ?? 0))
@@ -230,16 +208,14 @@ function summarise(name, rs) {
   // max >> median: everything else finishes behind one heavy shader, and there is a specific
   // material to fix. max ~= median: every pipeline costs about the same, so the phase's floor is
   // one pipeline's latency however well they overlap, and only cheaper shaders (or hiding the
-  // compile behind other work) can lower it. `sum / wall` says how much overlap was achieved. It
-  // counts compiles that started during the build loop and finished before the phase awaited; that
-  // is intended overlap, not a measurement error.
+  // compile behind other work) can lower it. `sum / wall` says how much overlap was achieved.
   for (const p of ['phase1', 'phase2']) {
     const st = rs0(rs, p)
     if (!st) continue
     const verdict = st.max > st.med * 2 ? 'LONG POLE (one outlier)' : 'UNIFORM (all cost the same)'
     log(
       `   ${p}: ${st.n} timed pipelines · slowest ${ms(st.max, 1)} ms · median ${ms(st.med, 1)} ms · ` +
-        `sum ${ms(st.sum, 1)} ms over ${ms(st.await, 1)} ms of wall wait  -> ${verdict}`,
+        `sum ${ms(st.sum, 1)} ms over ${ms(st.wall, 1)} ms of phase compile  -> ${verdict}`,
     )
     log(`      slowest few: ${st.top.map((x) => `${Math.round(x.ms)} ms (started +${Math.round(x.at)} ms)`).join(', ')}`)
   }
@@ -249,9 +225,9 @@ function summarise(name, rs) {
 function rs0(rs, phase) {
   const withPipes = rs.filter((r) => (r.pipes?.[phase] ?? []).length > 0)
   if (withPipes.length === 0) return null
-  // pick the run whose phase-await is the median, so the distribution matches the reported wall time
-  const byAwait = [...withPipes].sort((a, b) => (a.phases[`${phase}Await`] ?? 0) - (b.phases[`${phase}Await`] ?? 0))
-  const r = byAwait[Math.floor(byAwait.length / 2)]
+  // pick the run whose phase compile time is the median, so the distribution matches the reported wall time
+  const byWall = [...withPipes].sort((a, b) => (a.phases[`${phase}Build`] ?? 0) - (b.phases[`${phase}Build`] ?? 0))
+  const r = byWall[Math.floor(byWall.length / 2)]
   const rows = r.pipes[phase]
   const sorted = [...rows].sort((a, b) => a.ms - b.ms)
   return {
@@ -259,7 +235,7 @@ function rs0(rs, phase) {
     max: sorted[sorted.length - 1].ms,
     med: sorted[Math.floor(sorted.length / 2)].ms,
     sum: rows.reduce((s, x) => s + x.ms, 0),
-    await: r.phases[`${phase}Await`] ?? 0,
+    wall: r.phases[`${phase}Build`] ?? 0,
     top: sorted.slice(-4).reverse(),
   }
 }
@@ -289,11 +265,7 @@ async function main() {
     for (const [name, rs] of Object.entries(arms)) summarise(name, rs)
     if (ARMS.length === 2) {
       const [a, b] = ARMS.map(([n]) => median(arms[n].map((r) => r.cover)))
-      const p1 = ARMS.map(([n]) => median(arms[n].map((r) => r.phases.phase1 ?? 0)))
-      log(
-        `\n   phase 1 concurrent vs serial: ${Math.round(p1[0] - p1[1])} ms on the phase, ` +
-          `${Math.round(a - b)} ms on the cover (negative = concurrent wins)`,
-      )
+      log(`\n   ${ARMS[0][0]} vs ${ARMS[1][0]}: ${Math.round(a - b)} ms on the cover (negative = ${ARMS[0][0]} wins)`)
     }
     log('\n   Spreads overlap on a busy machine - re-run and lean on agreement between rounds, not one round.')
   } finally {

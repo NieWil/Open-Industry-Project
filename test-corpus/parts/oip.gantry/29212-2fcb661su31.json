@@ -1,0 +1,1178 @@
+{
+  "format": 6,
+  "id": "oip.gantry",
+  "name": "Gantry",
+  "params": {
+    "frameLength": {
+      "type": "number",
+      "default": 4,
+      "min": 0.5,
+      "max": 20,
+      "step": 0.1,
+      "label": "Frame length (m)",
+      "desc": "Span of the frame along its X axis, which is also the travel available to the carriage. The legs, rails and bridge all stretch with it."
+    },
+    "frameWidth": {
+      "type": "number",
+      "default": 2,
+      "min": 0.3,
+      "max": 10,
+      "step": 0.1,
+      "label": "Frame width (m)",
+      "desc": "Span across the frame in Y, the second axis of travel."
+    },
+    "frameHeight": {
+      "type": "number",
+      "default": 1,
+      "min": 0.5,
+      "max": 10,
+      "step": 0.1,
+      "label": "Frame height (m)",
+      "desc": "Height of the frame, which sets how far the tool can be lowered on the lift axis."
+    },
+    "speed": {
+      "type": "number",
+      "default": 1,
+      "min": 0.1,
+      "max": 10,
+      "step": 0.1,
+      "label": "Motion speed (m/s)",
+      "group": "Motion",
+      "desc": "Top speed of a move, reached by the axis with the farthest to go. The other two are slowed in proportion so all three arrive together and the tool runs a straight line."
+    },
+    "accel": {
+      "type": "number",
+      "default": 5,
+      "min": 0.1,
+      "max": 50,
+      "step": 0.1,
+      "label": "Acceleration (m/s²)",
+      "group": "Motion",
+      "desc": "How hard the axes ramp up to speed and brake to a stop, for the axis with the farthest to go. Lower it for a heavier or more delicate load; a short move may never reach top speed at all."
+    },
+    "vacuumOn": {
+      "type": "boolean",
+      "default": false,
+      "label": "Vacuum on (idle grip + LED)",
+      "group": "Start state",
+      "desc": "Authored resting state of the vacuum: it seeds the grip and lights the status LED while the gantry sits idle. Once a vacuum tag is named, that tag takes over."
+    },
+    "mode": {
+      "type": "enum",
+      "default": "waypoints",
+      "label": "Mode",
+      "group": "Comms",
+      "desc": "How the program drives the gantry. Waypoints: set the command tag to a row of the taught table and pulse Execute, like drives with stored positions. Position: write the X, Y and Z targets and pulse Execute; the gantry plans one coordinated straight-line move, like a gantry with its own controller. Follow setpoints: hold Execute and stream each axis set position every scan, for a program that runs its own motion control (an MC_MoveAbsolute per axis); the program does the coordinating.",
+      "options": [
+        {
+          "value": "waypoints",
+          "label": "Taught waypoints (gantry plans the move)"
+        },
+        {
+          "value": "position",
+          "label": "Move to X/Y/Z (gantry plans the move)"
+        },
+        {
+          "value": "follow",
+          "label": "Follow PLC setpoints (PLC plans the motion)"
+        }
+      ]
+    },
+    "enableTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "onlyWhenDriven": true,
+      "default": "",
+      "label": "Enable tag",
+      "group": "Comms",
+      "desc": "Powers the drives. Drop it and the gantry stops where it is and abandons its move; raise it and it waits for the next Execute. Wire it to the cell being safe to work in. Until a program drives it, or with it empty, the drives are always on, so a merely-typed tag does not hold them."
+    },
+    "commandTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "INT",
+      "default": "",
+      "label": "Command tag (0 = home, 1+ = waypoint)",
+      "group": "Comms",
+      "visibleWhen": {
+        "param": "mode",
+        "is": "waypoints"
+      },
+      "desc": "Which row of the waypoint table to move to, as an index: 0 is home, 1 the second row and so on. Set it BEFORE pulsing execute. An index past the end of the table is ignored, and the arm stays put rather than guessing."
+    },
+    "targetXTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "REAL",
+      "default": "",
+      "label": "Target X tag (m)",
+      "group": "Comms",
+      "visibleWhen": {
+        "param": "mode",
+        "is": [
+          "position",
+          "follow"
+        ]
+      },
+      "desc": "Where to move along the length, in metres from the frame centre. Position mode: set all three targets BEFORE pulsing execute; outside the frame, the gantry drives toward the end of the frame, stops short of it and raises Fault. Follow mode: read every scan; outside the frame, that axis parks at the end of the frame."
+    },
+    "targetYTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "REAL",
+      "default": "",
+      "label": "Target Y tag (m)",
+      "group": "Comms",
+      "visibleWhen": {
+        "param": "mode",
+        "is": [
+          "position",
+          "follow"
+        ]
+      },
+      "desc": "Where to move across the width, in metres from the frame centre."
+    },
+    "targetZTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "REAL",
+      "default": "",
+      "label": "Target Z tag (m, down)",
+      "group": "Comms",
+      "visibleWhen": {
+        "param": "mode",
+        "is": [
+          "position",
+          "follow"
+        ]
+      },
+      "desc": "How far to lower the tool, in metres below its raised position: 0 is fully up."
+    },
+    "executeTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Execute tag",
+      "group": "Comms",
+      "desc": "Pulse this false-to-true to start a move. It is edge-triggered, so holding it true does NOT repeat - drop it and raise it again for each move. In follow mode, hold it true for as long as the gantry should track the targets."
+    },
+    "doneTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Done tag",
+      "group": "Comms",
+      "desc": "Handshake back to the program: true whenever the gantry is parked and ready for the next command. Wait for it before pulsing execute again, or the edge lands mid-move and is dropped. In follow mode: true while all three axes sit on their setpoints."
+    },
+    "faultTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Fault tag",
+      "group": "Comms",
+      "desc": "True when the last move was refused (the drives not enabled) or ended in a fault (a target past the frame: the gantry stops short of the frame end). The next Execute clears it, once the axes are still."
+    },
+    "actualXTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "REAL",
+      "default": "",
+      "label": "Actual X tag (m)",
+      "group": "Comms",
+      "desc": "Where the X axis is now, every scan, in the same metres as the target."
+    },
+    "actualYTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "REAL",
+      "default": "",
+      "label": "Actual Y tag (m)",
+      "group": "Comms",
+      "desc": "Where the Y axis is now."
+    },
+    "actualZTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "REAL",
+      "default": "",
+      "label": "Actual Z tag (m, down)",
+      "group": "Comms",
+      "desc": "How far the tool is lowered now."
+    },
+    "gripperTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Vacuum tag",
+      "group": "Comms",
+      "desc": "Grip or release the load. Read continuously rather than on an edge, so hold it true for the whole carry and drop it only once the load is where it belongs."
+    },
+    "waypoints": {
+      "type": "numberList",
+      "columns": [
+        "x m",
+        "y m",
+        "z m"
+      ],
+      "arity": 3,
+      "default": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          -1.4,
+          0.6,
+          0.7
+        ],
+        [
+          1.4,
+          -0.6,
+          0.7
+        ]
+      ],
+      "visibleWhen": {
+        "param": "mode",
+        "is": "waypoints"
+      },
+      "label": "Waypoints (row 0 = home)",
+      "group": "Motion",
+      "desc": "Positions in frame-local metres, one row each: x along the length, y across, and z the lift measured DOWNWARD (larger is lower). Row 0 is home and the command tag picks a row. A value outside the frame parks at its limit."
+    }
+  },
+  "behavior": "// Cartesian Gantry: a 3-axis linear pick-and-place on three SERVO axes (x along the length, y across the width,\n// z the lift, measured DOWNWARD). The host runs each servo's motion profile; this script decides where they go.\n//\n// Three ways a PLC drives it, picked by the 'mode' param:\n//  - WAYPOINTS (default): an INT command tag picks a row of the taught waypoint table (0 = home), a rising Execute\n//    runs the move, Done reads true while idle. A row outside the frame parks at the frame's limit.\n//  - POSITION CONTROL: three REAL target tags say where to go, in metres, and a rising Execute goes there. A target\n//    outside the frame drives toward the frame's end, stops short of it and raises Fault, as a real axis does at\n//    its software limit (the other axes halt with it).\n//  - FOLLOW: while Execute is HELD each axis tracks its target tag every scan, the way\n//    a drive follows a motion controller: the PLC plans the motion (an MC_MoveAbsolute per axis on its own\n//    AXIS_REF) and streams each axis's set position. Done reads true while all three sit on last scan's setpoints;\n//    dropping Execute halts them. A setpoint past the frame parks that axis at the frame's end (Done stays false):\n//    limits that FAULT are the program's own axis's (AXIS_REF software limits), as on a real drive in this mode.\n// The first two move COORDINATED: each axis's velocity and acceleration are scaled by its share of the longest\n// axis's travel, which scales the whole profile, so they start and arrive together and the tool runs a straight\n// line. In follow mode the coordination is the program's. The actual X/Y/Z tags report where the axes are, every tick. An Enable tag (always on until a program drives it)\n// powers the drives: dropping it stops the gantry dead and abandons the move, like a real drive's enable.\n// With no tags named the gantry holds home. 'vacuumOn' is the authored idle vacuum: it seeds the grip state and\n// lights the status LED at rest (the lamp's param) until a vacuum tag is named.\n//\n// The rig is assembled from Gantry.glb: four corner legs, twin Beam_Main rails, an X bridge on a prismatic 'x'\n// joint, a Y carriage on 'z'-axis travel ('y' joint), and a telescoping Beam_Lift + Tool_01 on a downward\n// prismatic 'z' joint ending in the vacuum gripper. The frame is parametric: the GLB members node-scale (mesh\n// sizeParams - members are authored at a 4 m span, their Trim strip re-tiling along the stretch via tileUv so it\n// never smears) while the corner/rail/carriage links slide out with the frame params. No collision links - the\n// gantry frame straddles the line and never touches cargo (the gripper carry is host-side).\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// Waypoints arrive already parsed + validated as number[][] (the 'waypoints' numberList, arity 3). Row 0 is home.\nconst DEFAULT_POSES = [\n  [0, 0, 0],     // 0 home (raised, centred)\n  [-1.4, 0.6, 0.7], // 1 pick (over the feed, lowered)\n  [1.4, -0.6, 0.7], // 2 place (over the takeaway, lowered)\n]\n// a move reports busy for at least this long, so even a degenerate one shows the PLC a real busy window and the\n// Execute/Done handshake can't miss it at any scan rate\nconst MIN_BUSY = 0.1\n\nlet grip = false\nlet moving = false\nlet busy = 0          // seconds since the active move was accepted\nlet fault = false     // the last move was refused (drives not enabled) or ended in a fault (a target past the frame)\nlet ids = [0, 0, 0]   // the active move's command per axis\nlet followed = [NaN, NaN, NaN] // follow mode: the setpoints sent last scan, which is what the positions read this scan reach\n\n// Send all three axes to tgt, coordinated: true when every axis took its command.\nfunction moveTo(S, tgt, speed, accel) {\n  let longest = 0\n  const dist = S.map((s, i) => {\n    const d = Math.abs(tgt[i] - s.position)\n    longest = Math.max(longest, d)\n    return d\n  })\n  ids = S.map((s, i) => {\n    const k = longest > 1e-9 ? dist[i] / longest : 1\n    return s.moveAbsolute(tgt[i], k > 1e-9 ? { velocity: speed * k, accel: accel * k } : { velocity: speed, accel })\n  })\n  if (ids.every((id) => id > 0)) return true\n  for (const s of S) s.halt() // one axis refused: none of them goes\n  return false\n}\n\n// One axis in a fault (it reached the frame's end) ends the move: the others halt with it.\nfunction faulted(S) {\n  if (!S.some((s) => s.state === 'errorStop')) return false\n  for (const s of S) if (s.state !== 'errorStop') s.halt()\n  return true\n}\n\ndefinePart({\n  servos: ['x', 'y', 'z'],\n  grippers: ['gripper'],\n  lamps: ['vacuumLamp'],\n  params: {\n    // Frame size — the rig's sizeParams/offsetParams reference these (legs/rails/bridge stretch with them).\n    frameLength: { type: 'number', default: 4, min: 0.5, max: 20, step: 0.1, label: 'Frame length (m)', desc: 'Span of the frame along its X axis, which is also the travel available to the carriage. The legs, rails and bridge all stretch with it.' },\n    frameWidth: { type: 'number', default: 2, min: 0.3, max: 10, step: 0.1, label: 'Frame width (m)', desc: 'Span across the frame in Y, the second axis of travel.' },\n    frameHeight: { type: 'number', default: 1, min: 0.5, max: 10, step: 0.1, label: 'Frame height (m)', desc: 'Height of the frame, which sets how far the tool can be lowered on the lift axis.' },\n    speed: { type: 'number', default: 1, min: 0.1, max: 10, step: 0.1, label: 'Motion speed (m/s)', group: 'Motion', desc: 'Top speed of a move, reached by the axis with the farthest to go. The other two are slowed in proportion so all three arrive together and the tool runs a straight line.' },\n    accel: { type: 'number', default: 5, min: 0.1, max: 50, step: 0.1, label: 'Acceleration (m/s²)', group: 'Motion', desc: 'How hard the axes ramp up to speed and brake to a stop, for the axis with the farthest to go. Lower it for a heavier or more delicate load; a short move may never reach top speed at all.' },\n    vacuumOn: { type: 'boolean', default: false, label: 'Vacuum on (idle grip + LED)', group: 'Start state', desc: 'Authored resting state of the vacuum: it seeds the grip and lights the status LED while the gantry sits idle. Once a vacuum tag is named, that tag takes over.' },\n    mode: {\n      type: 'enum', default: 'waypoints', label: 'Mode', group: 'Comms',\n      desc: 'How the program drives the gantry. Waypoints: set the command tag to a row of the taught table and pulse Execute, like drives with stored positions. Position: write the X, Y and Z targets and pulse Execute; the gantry plans one coordinated straight-line move, like a gantry with its own controller. Follow setpoints: hold Execute and stream each axis set position every scan, for a program that runs its own motion control (an MC_MoveAbsolute per axis); the program does the coordinating.',\n      options: [\n        { value: 'waypoints', label: 'Taught waypoints (gantry plans the move)' },\n        { value: 'position', label: 'Move to X/Y/Z (gantry plans the move)' },\n        { value: 'follow', label: 'Follow PLC setpoints (PLC plans the motion)' },\n      ],\n    },\n    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Enable tag', group: 'Comms', desc: 'Powers the drives. Drop it and the gantry stops where it is and abandons its move; raise it and it waits for the next Execute. Wire it to the cell being safe to work in. Until a program drives it, or with it empty, the drives are always on, so a merely-typed tag does not hold them.' },\n    commandTag: { type: 'tag', dir: 'in', stType: 'INT', default: '', label: 'Command tag (0 = home, 1+ = waypoint)', group: 'Comms', visibleWhen: { param: 'mode', is: 'waypoints' }, desc: 'Which row of the waypoint table to move to, as an index: 0 is home, 1 the second row and so on. Set it BEFORE pulsing execute. An index past the end of the table is ignored, and the arm stays put rather than guessing.' },\n    targetXTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', label: 'Target X tag (m)', group: 'Comms', visibleWhen: { param: 'mode', is: ['position', 'follow'] }, desc: 'Where to move along the length, in metres from the frame centre. Position mode: set all three targets BEFORE pulsing execute; outside the frame, the gantry drives toward the end of the frame, stops short of it and raises Fault. Follow mode: read every scan; outside the frame, that axis parks at the end of the frame.' },\n    targetYTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', label: 'Target Y tag (m)', group: 'Comms', visibleWhen: { param: 'mode', is: ['position', 'follow'] }, desc: 'Where to move across the width, in metres from the frame centre.' },\n    targetZTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', label: 'Target Z tag (m, down)', group: 'Comms', visibleWhen: { param: 'mode', is: ['position', 'follow'] }, desc: 'How far to lower the tool, in metres below its raised position: 0 is fully up.' },\n    executeTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Execute tag', group: 'Comms', desc: 'Pulse this false-to-true to start a move. It is edge-triggered, so holding it true does NOT repeat - drop it and raise it again for each move. In follow mode, hold it true for as long as the gantry should track the targets.' },\n    doneTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Done tag', group: 'Comms', desc: 'Handshake back to the program: true whenever the gantry is parked and ready for the next command. Wait for it before pulsing execute again, or the edge lands mid-move and is dropped. In follow mode: true while all three axes sit on their setpoints.' },\n    faultTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Fault tag', group: 'Comms', desc: 'True when the last move was refused (the drives not enabled) or ended in a fault (a target past the frame: the gantry stops short of the frame end). The next Execute clears it, once the axes are still.' },\n    actualXTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Actual X tag (m)', group: 'Comms', desc: 'Where the X axis is now, every scan, in the same metres as the target.' },\n    actualYTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Actual Y tag (m)', group: 'Comms', desc: 'Where the Y axis is now.' },\n    actualZTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Actual Z tag (m, down)', group: 'Comms', desc: 'How far the tool is lowered now.' },\n    gripperTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Vacuum tag', group: 'Comms', desc: 'Grip or release the load. Read continuously rather than on an edge, so hold it true for the whole carry and drop it only once the load is where it belongs.' },\n    waypoints: { type: 'numberList', columns: ['x m', 'y m', 'z m'], arity: 3, default: DEFAULT_POSES, visibleWhen: { param: 'mode', is: 'waypoints' }, label: 'Waypoints (row 0 = home)', group: 'Motion', desc: 'Positions in frame-local metres, one row each: x along the length, y across, and z the lift measured DOWNWARD (larger is lower). Row 0 is home and the command tag picks a row. A value outside the frame parks at its limit.' },\n  },\n  init(ctx) {\n    grip = ctx.params.vacuumOn === true\n  },\n  step(ctx) {\n    const P = ctx.params\n    const S = [ctx.servos.x, ctx.servos.y, ctx.servos.z]\n    const enabled = !ctx.tagDriven(P.enableTag) || ctx.readTag(P.enableTag)\n    for (const s of S) s.power(enabled)\n    if (!enabled) moving = false // a drive that drops out abandons its move\n    const following = P.mode === 'follow'\n    // follow mode: Done compares with LAST scan's setpoints, since the positions read here are where the servos\n    // stood before this scan\n    const onTarget = S.every((s, i) => Math.abs(s.position - followed[i]) <= 1e-6)\n    if (following) {\n      const held = ctx.readTag(P.executeTag)\n      if (ctx.rising(P.executeTag)) {\n        for (const s of S) s.reset() // a fault clears on the next Execute (refused while an axis still brakes)\n        fault = false\n      }\n      if (faulted(S)) fault = true\n      else if (held) {\n        const tgt = [ctx.readNumber(P.targetXTag), ctx.readNumber(P.targetYTag), ctx.readNumber(P.targetZTag)]\n        if (S.map((s, i) => s.follow(tgt[i])).some((id) => id <= 0)) {\n          for (const s of S) s.halt() // one axis refused (the drives are off): none of them goes\n          fault = true\n        }\n        followed = tgt\n      } else for (const s of S) if (s.state === 'continuous') s.halt()\n      moving = false\n      if (P.gripperTag) grip = ctx.readTag(P.gripperTag)\n    } else {\n      // ctx.rising diffs the begin-of-tick snapshot, so an edge can't be dropped over the async bus the way a\n      // hand-rolled prev-flag could\n      if (ctx.rising(P.executeTag) && !moving) {\n        let tgt = null\n        if (P.mode === 'position') {\n          tgt = [ctx.readNumber(P.targetXTag), ctx.readNumber(P.targetYTag), ctx.readNumber(P.targetZTag)]\n        } else {\n          const POSES = P.waypoints.length ? P.waypoints : DEFAULT_POSES\n          const cmd = Math.round(ctx.readNumber(P.commandTag))\n          if (cmd >= 0 && cmd < POSES.length) {\n            // a taught row outside the frame parks at the frame's limit: a 0.12 m inset on both horizontal axes\n            // (0.06 per side), and the lift stopping 0.225 m short of the frame top\n            const xHalf = Math.max((P.frameLength - 0.12) / 2, 0)\n            const yHalf = Math.max((P.frameWidth - 0.12) / 2, 0)\n            const zMax = Math.max(P.frameHeight - 0.225, 0)\n            const raw = POSES[cmd]\n            tgt = [ctx.clamp(raw[0], -xHalf, xHalf), ctx.clamp(raw[1], -yHalf, yHalf), ctx.clamp(raw[2], 0, zMax)]\n          }\n        }\n        if (tgt) {\n          for (const s of S) s.reset() // a fault clears on the next Execute (refused while an axis still brakes)\n          moving = moveTo(S, tgt, P.speed, P.accel)\n          fault = !moving\n          busy = 0\n        }\n      }\n      if (P.gripperTag) grip = ctx.readTag(P.gripperTag)\n    }\n    if (moving) {\n      busy += ctx.dt\n      if (faulted(S)) {\n        moving = false\n        fault = true\n      } else if (busy >= MIN_BUSY && S.every((s, i) => s.done(ids[i]))) moving = false\n    }\n    ctx.grips.gripper = grip\n    ctx.lamps.vacuumLamp = grip\n    if (P.doneTag) ctx.writeTag(P.doneTag, following ? onTarget : !moving)\n    if (P.faultTag) ctx.writeTag(P.faultTag, fault)\n    if (P.actualXTag) ctx.writeNumber(P.actualXTag, S[0].position)\n    if (P.actualYTag) ctx.writeNumber(P.actualYTag, S[1].position)\n    if (P.actualZTag) ctx.writeNumber(P.actualZTag, S[2].position)\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "legLF",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -2,
+          0,
+          -1
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "frameLength",
+            "scale": -0.5
+          },
+          {
+            "axis": 2,
+            "param": "frameWidth",
+            "scale": -0.5
+          }
+        ]
+      },
+      {
+        "name": "legLFMain",
+        "parent": "legLF",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Main",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          },
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "frameHeight",
+              "scale": 0.25
+            }
+          ],
+          "tileUv": [
+            {
+              "axis": 1,
+              "uv": "u",
+              "materials": [
+                "Trim"
+              ]
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "legLFTop",
+        "parent": "legLF",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Top",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          1,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": 1
+          }
+        ]
+      },
+      {
+        "name": "legLFBase",
+        "parent": "legLF",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Base",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "legRF",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          2,
+          0,
+          -1
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "frameLength",
+            "scale": 0.5
+          },
+          {
+            "axis": 2,
+            "param": "frameWidth",
+            "scale": -0.5
+          }
+        ],
+        "rotation": [
+          0,
+          3.14159265,
+          0
+        ]
+      },
+      {
+        "name": "legRFMain",
+        "parent": "legRF",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Main",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          },
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "frameHeight",
+              "scale": 0.25
+            }
+          ],
+          "tileUv": [
+            {
+              "axis": 1,
+              "uv": "u",
+              "materials": [
+                "Trim"
+              ]
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "legRFTop",
+        "parent": "legRF",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Top",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          1,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": 1
+          }
+        ]
+      },
+      {
+        "name": "legRFBase",
+        "parent": "legRF",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Base",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "legLB",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -2,
+          0,
+          1
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "frameLength",
+            "scale": -0.5
+          },
+          {
+            "axis": 2,
+            "param": "frameWidth",
+            "scale": 0.5
+          }
+        ]
+      },
+      {
+        "name": "legLBMain",
+        "parent": "legLB",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Main",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          },
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "frameHeight",
+              "scale": 0.25
+            }
+          ],
+          "tileUv": [
+            {
+              "axis": 1,
+              "uv": "u",
+              "materials": [
+                "Trim"
+              ]
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "legLBTop",
+        "parent": "legLB",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Top",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          1,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": 1
+          }
+        ]
+      },
+      {
+        "name": "legLBBase",
+        "parent": "legLB",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Base",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "legRB",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          2,
+          0,
+          1
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "frameLength",
+            "scale": 0.5
+          },
+          {
+            "axis": 2,
+            "param": "frameWidth",
+            "scale": 0.5
+          }
+        ],
+        "rotation": [
+          0,
+          -1.57079633,
+          0
+        ]
+      },
+      {
+        "name": "legRBMain",
+        "parent": "legRB",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Main",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          },
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "frameHeight",
+              "scale": 0.25
+            }
+          ],
+          "tileUv": [
+            {
+              "axis": 1,
+              "uv": "u",
+              "materials": [
+                "Trim"
+              ]
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "legRBTop",
+        "parent": "legRB",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Top",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          1,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": 1
+          }
+        ],
+        "rotation": [
+          0,
+          -1.57079633,
+          0
+        ]
+      },
+      {
+        "name": "legRBBase",
+        "parent": "legRB",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Leg_Base",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "beamF",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Beam_Main",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          },
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "frameLength",
+              "scale": 0.25
+            }
+          ],
+          "tileUv": [
+            {
+              "axis": 0,
+              "uv": "u",
+              "materials": [
+                "Trim"
+              ]
+            }
+          ]
+        },
+        "offset": [
+          0,
+          1,
+          -1
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": 1
+          },
+          {
+            "axis": 2,
+            "param": "frameWidth",
+            "scale": -0.5
+          }
+        ],
+        "rotation": [
+          0,
+          3.14159265,
+          0
+        ]
+      },
+      {
+        "name": "beamB",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Beam_Main",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          },
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "frameLength",
+              "scale": 0.25
+            }
+          ],
+          "tileUv": [
+            {
+              "axis": 0,
+              "uv": "u",
+              "materials": [
+                "Trim"
+              ]
+            }
+          ]
+        },
+        "offset": [
+          0,
+          1,
+          1
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": 1
+          },
+          {
+            "axis": 2,
+            "param": "frameWidth",
+            "scale": 0.5
+          }
+        ]
+      },
+      {
+        "name": "xCarriage",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          1.15,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": 1,
+            "add": 0.15
+          }
+        ]
+      },
+      {
+        "name": "beamSecondary",
+        "parent": "xCarriage",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Beam_Secondary",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          },
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "frameWidth",
+              "scale": 0.25
+            }
+          ],
+          "tileUv": [
+            {
+              "axis": 2,
+              "uv": "u",
+              "materials": [
+                "Trim"
+              ]
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "mainCarriage01",
+        "parent": "xCarriage",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Beam_MainCarriage_01",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          0,
+          1
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "frameWidth",
+            "scale": 0.5
+          }
+        ]
+      },
+      {
+        "name": "mainCarriage02",
+        "parent": "xCarriage",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Beam_MainCarriage_02",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          0,
+          -1
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "frameWidth",
+            "scale": -0.5
+          }
+        ]
+      },
+      {
+        "name": "yCarriage",
+        "parent": "xCarriage",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.095,
+          0
+        ]
+      },
+      {
+        "name": "carriage",
+        "parent": "yCarriage",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Carriage",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "lift",
+        "parent": "yCarriage",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.725,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": 1,
+            "add": -0.275
+          }
+        ]
+      },
+      {
+        "name": "beamLift",
+        "parent": "lift",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Beam_Lift",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          },
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "frameHeight",
+              "scale": 0.25
+            }
+          ],
+          "tileUv": [
+            {
+              "axis": 1,
+              "uv": "u",
+              "materials": [
+                "Trim"
+              ]
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          3.14159265
+        ]
+      },
+      {
+        "name": "tool",
+        "parent": "lift",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Tool_01",
+          "materials": {
+            "Standard": "std",
+            "Trim": "trim"
+          }
+        },
+        "offset": [
+          0,
+          -1,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": -1
+          }
+        ]
+      },
+      {
+        "name": "vacuumLamp",
+        "parent": "tool",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.02,
+            0.035,
+            0.035
+          ]
+        },
+        "collision": "none",
+        "offset": [
+          0.107,
+          0.005,
+          0
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              0.15,
+              0.85,
+              0.2
+            ],
+            "offColor": [
+              0.03,
+              0.06,
+              0.03
+            ],
+            "param": "vacuumOn"
+          }
+        ]
+      },
+      {
+        "name": "gripper",
+        "parent": "lift",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          -1.2,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": -1,
+            "add": -0.2
+          }
+        ],
+        "grip": {
+          "zone": {
+            "size": [
+              0.31,
+              0.7,
+              0.31
+            ]
+          }
+        }
+      }
+    ],
+    "joints": [
+      {
+        "name": "x",
+        "link": "xCarriage",
+        "type": "prismatic",
+        "axis": [
+          1,
+          0,
+          0
+        ],
+        "min": -10,
+        "max": 10,
+        "minParam": {
+          "param": "frameLength",
+          "scale": -0.5,
+          "add": 0.06,
+          "max": 0
+        },
+        "maxParam": {
+          "param": "frameLength",
+          "scale": 0.5,
+          "add": -0.06,
+          "min": 0
+        },
+        "servo": {
+          "maxVelocity": 10,
+          "maxAccel": 50
+        }
+      },
+      {
+        "name": "y",
+        "link": "yCarriage",
+        "type": "prismatic",
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "min": -5,
+        "max": 5,
+        "minParam": {
+          "param": "frameWidth",
+          "scale": -0.5,
+          "add": 0.06,
+          "max": 0
+        },
+        "maxParam": {
+          "param": "frameWidth",
+          "scale": 0.5,
+          "add": -0.06,
+          "min": 0
+        },
+        "servo": {
+          "maxVelocity": 10,
+          "maxAccel": 50
+        }
+      },
+      {
+        "name": "z",
+        "link": "lift",
+        "type": "prismatic",
+        "axis": [
+          0,
+          -1,
+          0
+        ],
+        "min": 0,
+        "max": 10,
+        "maxParam": {
+          "param": "frameHeight",
+          "add": -0.225,
+          "min": 0
+        },
+        "servo": {
+          "maxVelocity": 10,
+          "maxAccel": 50
+        }
+      }
+    ],
+    "bounds": {
+      "length": 4.6,
+      "width": 2.6,
+      "top": 1.4
+    },
+    "posable": true
+  },
+  "category": "Equipment",
+  "assets": [
+    {
+      "id": "glb",
+      "mime": "model/gltf-binary",
+      "url": "/part-assets/ebcc74ab8fd52311bcf4f499f081c9d7b9d9479599a0ab424aac0e38e0664c29.glb",
+      "sha256": "ebcc74ab8fd52311bcf4f499f081c9d7b9d9479599a0ab424aac0e38e0664c29"
+    },
+    {
+      "id": "stdBase",
+      "mime": "image/webp",
+      "url": "/part-assets/d5e1503a2008c0a0424d7c3e3fb240cdd9b8459f9ce036c2b10060dd9c8a78c0.webp",
+      "sha256": "d5e1503a2008c0a0424d7c3e3fb240cdd9b8459f9ce036c2b10060dd9c8a78c0"
+    },
+    {
+      "id": "stdOrm",
+      "mime": "image/webp",
+      "url": "/part-assets/c0618f61b37f961edba637bb5aa782c140b79d4bfa6c4ffce364ddfad01b4f93.webp",
+      "sha256": "c0618f61b37f961edba637bb5aa782c140b79d4bfa6c4ffce364ddfad01b4f93"
+    },
+    {
+      "id": "trimBase",
+      "mime": "image/webp",
+      "url": "/part-assets/7251b2728c0393b9aa2eb22d235270cfc47837b9ad9a157a0c1ae6816758964f.webp",
+      "sha256": "7251b2728c0393b9aa2eb22d235270cfc47837b9ad9a157a0c1ae6816758964f"
+    },
+    {
+      "id": "trimOrm",
+      "mime": "image/webp",
+      "url": "/part-assets/a9cfd11d25d1713e26a46b4fb979565f15f10f7b3e7da44cee0aaa2921d4e700.webp",
+      "sha256": "a9cfd11d25d1713e26a46b4fb979565f15f10f7b3e7da44cee0aaa2921d4e700"
+    }
+  ],
+  "materials": [
+    {
+      "id": "std",
+      "albedo": "stdBase",
+      "orm": "stdOrm"
+    },
+    {
+      "id": "trim",
+      "albedo": "trimBase",
+      "orm": "trimOrm"
+    }
+  ],
+  "sdk": {
+    "level": 6,
+    "of": "v2:22861:1dcj57l4for"
+  }
+}

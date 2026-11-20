@@ -16,15 +16,16 @@
 // so a machine whose state is what it holds (a pallet dispenser's magazine) previews holding it.
 
 import { create, destroy, stepDirect } from './embeddedBehavior'
-import type { ParamValue } from '../core/partApi'
-import { jointRestValue } from '../core/partGeometry'
+import type { ParamValue } from '../core/parts/partApi'
+import { jointRestValue } from '../core/parts/partGeometry'
+import type { InstancePose, SubPose } from '../core/rig/rigPose'
 
 /** A settled device pose to apply to a rig at rest: `joints` in the sim's units (rad / m), `subPoses` the
  *  free-form link overrides, `lamps` the emissive states (a maintained button's lit cap) - the joint/subPose/
  *  lamp halves of a sim frame, minus everything physics-driven. */
 export interface IdlePose {
   joints: Record<string, number>
-  subPoses: Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>
+  subPoses: Record<string, SubPose>
   /** emissive lamp states at this pose; absent = leave the lamps at rest */
   lamps?: Record<string, boolean>
 }
@@ -75,21 +76,38 @@ function maxJointDelta(a: Record<string, number>, b: Record<string, number>): nu
   return m
 }
 
-/** max absolute component change between two subPose maps (a link/channel absent from one side reads 0). */
-function maxSubPoseDelta(a: IdlePose['subPoses'], b: IdlePose['subPoses']): number {
+/** max absolute component change between two poses (a channel absent from one side reads 0) */
+function maxPoseDelta(a: InstancePose | null | undefined, b: InstancePose | null | undefined): number {
   let m = 0
-  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-    for (const ch of ['position', 'rotation'] as const) {
-      const va = a[k]?.[ch]
-      const vb = b[k]?.[ch]
-      if (!va && !vb) continue
-      for (let i = 0; i < 3; i++) {
-        const d = Math.abs((vb?.[i] ?? 0) - (va?.[i] ?? 0))
-        if (d > m) m = d
-      }
+  for (const ch of ['position', 'rotation', 'quat'] as const) {
+    const va = a?.[ch]
+    const vb = b?.[ch]
+    if (!va && !vb) continue
+    for (let i = 0; i < (va ?? vb)!.length; i++) {
+      const d = Math.abs((vb?.[i] ?? 0) - (va?.[i] ?? 0))
+      if (d > m) m = d
     }
   }
   return m
+}
+
+/** max absolute component change between two subPose maps (a link/channel/instance absent from one side reads 0). */
+function maxSubPoseDelta(a: IdlePose['subPoses'], b: IdlePose['subPoses']): number {
+  let m = 0
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    m = Math.max(m, maxPoseDelta(a[k], b[k]))
+    const ia = a[k]?.instances ?? []
+    const ib = b[k]?.instances ?? []
+    for (let i = 0; i < Math.max(ia.length, ib.length); i++) m = Math.max(m, maxPoseDelta(ia[i], ib[i]))
+  }
+  return m
+}
+
+/** the posable-array instance poses of `subPoses`, without any whole-link pose */
+function instancePosesOnly(subPoses: IdlePose['subPoses']): IdlePose['subPoses'] {
+  const out: IdlePose['subPoses'] = {}
+  for (const [k, v] of Object.entries(subPoses)) if (v.instances) out[k] = { instances: v.instances }
+  return out
 }
 
 /** Settle a fresh instance through `prePulses` presses to its resting pose (the pose on screen). */
@@ -125,8 +143,8 @@ function settleTo(handle: number, prePulses: number, zones?: Record<string, numb
  * settled from the last (see pulseReplay). The editor always passes 0, because a press on a stopped device is a
  * live session (IdleUseSession), not a replay. So this is a headless "what does it do after N presses" answer.
  */
-export function settleIdlePose(source: string, params: Record<string, ParamValue>, usePulses = 0, zones?: Record<string, number>, servosJson?: string): IdlePose | null {
-  const handle = create(source, JSON.stringify(params ?? {}), servosJson)
+export function settleIdlePose(source: string, params: Record<string, ParamValue>, usePulses = 0, zones?: Record<string, number>, jointsJson?: string, arraysJson?: string): IdlePose | null {
+  const handle = create(source, JSON.stringify(params ?? {}), jointsJson, arraysJson)
   if (handle === 0) return null
   try {
     let prev: Record<string, number> = {}
@@ -161,8 +179,10 @@ export function settleIdlePose(source: string, params: Record<string, ParamValue
       if (Math.abs((last[name] ?? 0) - (prev[name] ?? 0)) < SETTLE_EPS) joints[name] = last[name]!
     }
     // subPoses/lamps are all-or-nothing: only a converged device has a truthful settled value for them
-    // (a still-moving one would freeze mid-hold / mid-blink)
-    const subPoses = converged ? lastSub : {}
+    // (a still-moving one would freeze mid-hold / mid-blink). Except a posable array's copies: their rest row is
+    // not a pose the machine ever has (a sorter's carriers belong round its chain), so a part that never settles
+    // keeps where its copies stood at the end of the settle, and only its whole-link poses go back to rest.
+    const subPoses = converged ? lastSub : instancePosesOnly(lastSub)
     const lamps = converged ? lastLamps : {}
     const hasJoints = Object.keys(joints).length > 0
     const hasSubPoses = Object.keys(subPoses).length > 0
@@ -178,7 +198,7 @@ export function settleIdlePose(source: string, params: Record<string, ParamValue
  * joint still moving at its 5 s cap (continuous motion must not freeze mid-spin), but a slow discrete move is
  * dropped too: a turntable deck slewing 150 degrees at 20 deg/s with its ramps takes ~8 s. Without this it would
  * fall back to 0, and the stopped editor would show the deck square while the Inspector (and the conveying
- * surface, which reads the same binding through rotatingDeckView) said 150. A joint that declares where it
+ * surface, which reads the same binding through the turntable bed's view) said 150. A joint that declares where it
  * settles is taken at its word; a joint the behavior did settle keeps the behavior's value. Null only when there is nothing to pose.
  */
 export function withJointRests(
@@ -240,8 +260,8 @@ export class IdleUseSession {
   }
 
   /** Open a session at the authored state (null when the behavior does not instantiate). */
-  static open(source: string, params: Record<string, ParamValue>, zones?: Record<string, number>, servosJson?: string): IdleUseSession | null {
-    const handle = create(source, JSON.stringify(params ?? {}), servosJson)
+  static open(source: string, params: Record<string, ParamValue>, zones?: Record<string, number>, jointsJson?: string, arraysJson?: string): IdleUseSession | null {
+    const handle = create(source, JSON.stringify(params ?? {}), jointsJson, arraysJson)
     if (handle === 0) return null
     const start = settleTo(handle, 0, zones)
     if (!start) {

@@ -5,7 +5,7 @@ import { dracoLoader } from '../render/dracoDecoder'
 import { beginAssetLoad, whenBuildingGateOpen } from '../render/gltf'
 import { CARGO_BOX_TEXTURES } from '../render/parts/cargoBox'
 import { PALLET_TEXTURES } from '../render/parts/pallet'
-import { bundledManifests } from './bundledExamples'
+import { bundledManifests } from './parts/bundledExamples'
 
 /**
  * Start downloading the loaded scene's part assets as soon as the scene is known, instead of
@@ -87,7 +87,9 @@ export function prefetchSceneAssets(scene: SceneJSON): void {
   if (urls.some((u) => u.endsWith('.glb'))) void dracoLoader.preload()
 
   // Behind the same building-first gate the real loads use, so the environment still loads first.
-  void whenBuildingGateOpen().then(() => runPool(urls, PREFETCH_CONCURRENCY))
+  void whenBuildingGateOpen()
+    .then(() => runPool(urls, PREFETCH_CONCURRENCY))
+    .catch((e: unknown) => console.warn('[oip] prefetching scene assets failed', e))
 }
 
 // At most this many prefetches in flight. A browser allows ~6 connections per origin over HTTP/1.1,

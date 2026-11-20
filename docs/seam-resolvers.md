@@ -10,14 +10,14 @@ time, not the part in isolation. Every case has the same shape:
 
 | System | Host resolver | What it computes per instance |
 |--------|---------------|-------------------------------|
-| Roller pitch grid | [`core/rollerGrid.ts`](../src/core/rollerGrid.ts) `resolveRollerGrids` | `{anchor, nudgeLo, nudgeHi}`: roller phase and edge nudges from butted neighbours and curves |
-| Belt guard openings | [`core/guardOpenings.ts`](../src/core/guardOpenings.ts) | rectangular side-guard cutouts where a neighbour snaps in (guards only; the frame never opens) |
-| Rail/guard snap extents | [`core/guardExtents.ts`](../src/core/guardExtents.ts) | per-end rail and guard overrides onto the host's outer wall plane. A spur extends its rails out to the host it joins. A flush-butting straight or belt retracts its rails back to it (retraction only: a gapped mover never grows). Rig movers consume it directly (`rig.ts`/`rigBuild.ts` span remap). Function movers get it through the `guardExtents` param fold (`withSnapExtents`) |
+| Roller pitch grid | [`core/conveyor/rollerGrid.ts`](../src/core/conveyor/rollerGrid.ts) `resolveRollerGrids` | `{anchor, nudgeLo, nudgeHi}`: roller phase and edge nudges from butted neighbours and curves |
+| Belt guard openings | [`core/guards/guardOpenings.ts`](../src/core/guards/guardOpenings.ts) | rectangular side-guard cutouts where a neighbour snaps in (guards only; the frame never opens) |
+| Rail/guard snap extents | [`core/guards/guardExtents.ts`](../src/core/guards/guardExtents.ts) | per-end rail and guard overrides onto the host's outer wall plane. A spur extends its rails out to the host it joins. A flush-butting straight or belt retracts its rails back to it (retraction only: a gapped mover never grows). Rig movers consume it directly (`rig.ts`/`rigBuild.ts` span remap). Function movers get it through the `guardExtents` param fold (`withSnapExtents`) |
 | Belt deck-merge cluster | [`core/deckClusters.ts`](../src/core/deckClusters.ts) `computeDeckClusters` | the end-to-end butted-belt group whose decks merge into one physics body |
 | Deck-edge structure cut | [`core/structureConnections.ts`](../src/core/structureConnections.ts) → [`core/structureCuts.ts`](../src/core/structureCuts.ts) | a platform's railing gap and deck notch, and a lifted guest's rise flush to the deck, wherever a part whose `edgeMount` declares `opens` / `notch` / `lift` meets a deck edge ([part-snap-cuts.md](part-snap-cuts.md)). The resolver rewrites the rig link list, which both the `world.ts` colliders and the `rig.ts` visual apply ([part-snap-stairs.md](part-snap-stairs.md)) |
 | Per-leg footing | [`core/legRests.ts`](../src/core/legRests.ts) `computeSceneLegRests` | `[x0, x1, dy]` rows (part-local X) where the surface under a legged bed differs from its own floor plane: a platform deck crossing under it (feet stand on the deck), or the warehouse floor past the deck it stands on (overhanging feet reach the ground). Render only, because legs have no colliders. Function belts get it through the `legRests` param fold (`withLegRests`), rig beds directly in `rig.ts`'s leg-station layout. Straight beds only: a curved bed's legs get no footing rows |
-| Butted guard runs | [`core/guardRuns.ts`](../src/core/guardRuns.ts) `computeGuardRuns` | merged side-guard span overrides for butted collinear guards. Sim only: the merge is a collision concern, and two butted guards already draw as one continuous wall |
-| Sensor-beam guard holes | [`core/guardHoles.ts`](../src/core/guardHoles.ts) `computeSceneGuardHoles` | holes through a bed's side guards where a sensor beam crosses them. Render only: beams aren't physical, so the collider stays whole |
+| Butted guard runs | [`core/guards/guardRuns.ts`](../src/core/guards/guardRuns.ts) `computeGuardRuns` | merged side-guard span overrides for butted collinear guards. Sim only: the merge is a collision concern, and two butted guards already draw as one continuous wall |
+| Sensor-beam guard holes | [`core/guards/guardHoles.ts`](../src/core/guards/guardHoles.ts) `computeSceneGuardHoles` | holes through a bed's side guards where a sensor beam crosses them. Render only: beams aren't physical, so the collider stays whole |
 
 Every one is: **read all parts → compute a small per-instance struct → feed it to the
 geometry evaluator.** The resolvers act on SDK parts through what the packages declare (a
@@ -31,7 +31,7 @@ neighbours" hook. A seam is a host-computed **input**.
 ## One carrier
 
 All of them flow through one per-part bundle and one change signature,
-[`core/sceneResolve.ts`](../src/core/sceneResolve.ts). `resolveScene(parts, consumer)` runs the resolvers that
+[`core/scene/sceneResolve.ts`](../src/core/scene/sceneResolve.ts). `resolveScene(parts, consumer)` runs the resolvers that
 `consumer` reads and folds each part's outputs into a `ResolvedContext`. Render (`viewSync.ts` →
 `PartVisual.update`) and sim (`world.ts` → `buildPart`) each thread it as a single value, keyed by
 `renderResolvedKey` / `simResolvedKey`. Each key selects only the fields that consumer rebuilds on. Adding another
@@ -43,7 +43,7 @@ legRests and holes. Sim reads openings, extents, cluster, structConn and guardRu
 drag, a collab peer's drag, an Inspector scrub) every frame is a change, so every resolver wired to a consumer runs
 60 times a second. Running the other side's resolvers would spend most of render's frame on deck clusters and
 guard runs it never reads, which slows a peer's drag on every other client. Pinned by
-[`sceneResolve.test.ts`](../src/core/sceneResolve.test.ts) (the contract) and
+[`sceneResolve.test.ts`](../src/core/scene/sceneResolve.test.ts) (the contract) and
 [`verify-collab-presence-cost.mjs`](../e2e/verify-collab-presence-cost.mjs) (an observing client's per-frame cost
 while a peer drags).
 If a consumer starts reading a new field, add it to that consumer's branch **and** its `*ResolvedKey`. Don't
@@ -70,7 +70,7 @@ With both, a drag frame's resolve cost stays flat in scene size: it is the real 
 A peer's drag holds close to full frame rate at 480 parts.
 
 **Classification memo.** `isTarget`/`isInfluencer` are not cheap: they build geometry views
-(`beltLikeView`, `moverShapeOf`, `hostGeom`) to decide what a part is. They are pure in (part, registry), and
+(`bedOf`, `moverShapeOf`, `hostGeom`) to decide what a part is. They are pure in (part, registry), and
 parts are immutable, so the answers are cached on identity and dropped wholesale when the registry changes. That
 invalidation is required. A package can arrive *after* the first resolve (async load, author edit, a peer's
 part syncing in) under unchanged refs, and a stale `false` would exclude the part forever. The seam resolvers'
@@ -94,7 +94,7 @@ they are off the render drag path, but they set the sim's scene-edit cost.
 ### Why world phase
 
 `array.distribute` spreads copies **evenly and centred across the part's own local span**
-([`rigPose.ts`](../src/core/rigPose.ts) `arrayInstanceDeltas`). Spacing is even *within* a part but arbitrary
+([`rigPose.ts`](../src/core/rig/rigPose.ts) `arrayInstanceDeltas`). Spacing is even *within* a part but arbitrary
 *across* a seam: butt two beds and each places its rollers without regard to the other's, so the seam gap doubles or
 crowds. Placing rollers in **world space**, where a roller sits wherever `(W · axis)` is a multiple of the pitch,
 makes two collinear beds share grid lines with no snap-time communication (`rollerGrid.ts` `rollerStations`).
@@ -102,7 +102,7 @@ makes two collinear beds share grid lines with no snap-time communication (`roll
 ### `SeamContext` and `array.distribute.worldPhase`
 
 `arrayInstanceDeltas(array, params, seam?)` takes an optional, deterministic, `core`-only input carrying the
-part's **world placement** and the **host-resolved anchor** ([`rigPose.ts`](../src/core/rigPose.ts)):
+part's **world placement** and the **host-resolved anchor** ([`rigPose.ts`](../src/core/rig/rigPose.ts)):
 
 ```ts
 interface SeamContext {

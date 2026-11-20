@@ -13,12 +13,14 @@
 
 import type { SdkPart, PartInstance } from '../core/types'
 import { PART_DEFS } from '../core/types'
-import { partDisplayName, partTypeName } from '../core/partDisplayName'
-import type { RigLink } from '../core/partPackage'
+import { partDisplayName, partTypeName } from '../core/parts/partDisplayName'
+import { controllersUsed } from '../core/io/controllerTag'
+import type { RigLink } from '../core/parts/partPackage'
 import type { RigGeometry } from './rigTree'
 import { canDeleteRigNode } from './rigTree'
-import type { EditorState } from './store'
-import { documentSceneOf, editTarget, rigNodeKey } from './store'
+import type { EditorState } from './store/store'
+import { documentSceneOf, editTarget, rigNodeKey } from './store/store'
+import { selectionSet } from './store/selectionSet'
 
 export type TreeNodeKind = 'part' | 'rigLink'
 
@@ -141,7 +143,9 @@ export function matchesTreeFilter(part: PartInstance, label: string, q: string):
     // the type name (a custom part's package name - def.label is only the generic "Custom Part")
     partTypeName(part).toLowerCase().includes(q) ||
     def.label.toLowerCase().includes(q) ||
-    def.category.toLowerCase().includes(q)
+    def.category.toLowerCase().includes(q) ||
+    // the controller its tags are on, so filtering by Cell2 lists Cell2's parts
+    controllersUsed([part]).some((c) => c.toLowerCase().includes(q))
   )
 }
 
@@ -190,7 +194,7 @@ function buildPartNode(part: PartInstance, depth: number, state: EditorState, de
     flags: {
       hidden: part.visible === false,
       locked: part.locked === true,
-      selected: state.selectedIds.includes(part.id),
+      selected: selectionSet(state.selectedIds).has(part.id),
     },
     commitRename(next) {
       deps.store.rename(part.id, next)

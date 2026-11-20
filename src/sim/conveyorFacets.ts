@@ -4,10 +4,18 @@
 // after the behaviors drove the entries and before the solver reads them. The gates and the listeners themselves
 // live in conveyorContacts.ts.
 import type Jolt from 'jolt-physics'
-import type { ConveyorEntry } from '../core/collisionShapes'
-import { allocFacets, CONVEYOR_TAG, createConveyorContactListener, FACET_CAPACITY, FACET_STRIDE, FLANK_PROTECT_COS, freeFacets, FRICTION_COUPLING, GHOST_MIN_SEPARATION, GHOST_RAM_DEPTH, GHOST_RAM_UP_DOT, GHOST_SPEC_UP_DOT, SURFACE_GATE_COS, syncFacetBlock, writeFacetAxes } from './conveyorContacts'
+import type { ConveyorEntry } from '../core/geometry/collisionShapes'
+import { allocFacets, CONVEYOR_TAG, createConveyorContactListener, FACET_CAPACITY, FACET_STRIDE, FLANK_PROTECT_COS, freeFacets, FRICTION_COUPLING, GHOST_MIN_SEPARATION, GHOST_RAM_DEPTH, GHOST_RAM_UP_DOT, GHOST_SPEC_UP_DOT, SURFACE_GATE_COS, syncFacet, syncFacetBlock, writeFacetAxes } from './conveyorContacts'
 import type { FacetAxes } from './conveyorContacts'
 import type { JoltModule } from './worldTypes'
+
+/** What {@link ConveyorFacets.syncPart} reads of a behavior record, and the lookup it keeps on it. */
+export interface FacetOwner {
+  entry?: ConveyorEntry
+  conveyorEntries?: ConveyorEntry[]
+  copyDecks?: { entries: ConveyorEntry[] }[]
+  facetSlots?: { rev: number; entries: ConveyorEntry[]; slots: number[] }
+}
 
 export class ConveyorFacets {
   // body id -> surface-velocity entries. A single-shape conveyor body maps to a
@@ -74,6 +82,7 @@ export class ConveyorFacets {
    * participates in ghost gating only (a conveying rig's frame rail). `key` is the body's bodyKey.
    */
   register(body: Jolt.Body, key: number, entries: ConveyorEntry[], axes?: readonly (FacetAxes | null)[]): void {
+    this.rev++
     this.conveyors.set(key, entries)
     if (axes) this.conveyorAxes.set(key, [...axes])
     if (!this.nativeConveyor) return
@@ -99,6 +108,7 @@ export class ConveyorFacets {
 
   /** forget a conveyor body that is being destroyed, and hand its facet block back */
   release(key: number): void {
+    this.rev++
     this.conveyors.delete(key)
     this.conveyorAxes.delete(key)
     const block = this.facetBlocks.get(key)
@@ -124,8 +134,46 @@ export class ConveyorFacets {
     }
   }
 
+  /** moves when a body is registered or released: a part's kept slots (syncPart) are looked up again */
+  private rev = 0
+
+  /**
+   * Push one part's entries into the native facet table. SimWorld calls it for the parts whose scripts ran this
+   * step: only they can have driven an entry (deckDrive.ts), and a line's surfaces are mostly at a steady speed.
+   * Writing all 2,700 of a large line's every step took longer than its physics. Where the part's entries are in
+   * the table is looked up once and kept on `b.facetSlots` until a body is registered or released.
+   */
+  syncPart(b: FacetOwner): void {
+    const t = this.facetTable
+    if (!this.nativeConveyor || !t) return
+    let at = b.facetSlots
+    if (!at || at.rev !== this.rev) {
+      // every slot that holds one of the part's entries: an entry can stand in more than one registered body
+      at = b.facetSlots = { rev: this.rev, entries: [], slots: [] }
+      const own = new Set<ConveyorEntry>(b.conveyorEntries)
+      if (b.entry) own.add(b.entry)
+      if (b.copyDecks) for (const cd of b.copyDecks) for (const e of cd.entries) own.add(e)
+      if (own.size > 0) {
+        for (const [key, arr] of this.conveyors) {
+          const block = this.facetBlocks.get(key)
+          if (!block) continue
+          for (let i = 0; i < arr.length; i++) {
+            const e = arr[i]
+            if (e && own.has(e)) {
+              at.entries.push(e)
+              at.slots.push(block.base + i)
+            }
+          }
+        }
+      }
+    }
+    const { entries, slots } = at
+    for (let i = 0; i < entries.length; i++) syncFacet(t, entries[i]!, slots[i]!)
+  }
+
   /** drop every registration (the world's bodies are going) */
   clear(): void {
+    this.rev++
     this.conveyors.clear()
   }
 

@@ -66,7 +66,7 @@ async function main() {
       const scene = st.getState().scene
       const pkg = st.getState().bundledPackages.find((p) => p.id === 'oip.blade-stop')
       if (!pkg) return false
-      const parts = [{ id: 'blade_shot', type: 'part', packageId: 'oip.blade-stop', position: [0, 0.9, 0], rotationY: 0, params: { width: 0.5, active: false, raiseHeight: 0.06, enableComms: false, tag: '' } }]
+      const parts = [{ id: 'blade_shot', type: 'part', packageId: 'oip.blade-stop', position: [0, 0.9, 0], rotationY: 0, params: { width: 0.5, active: false, raiseHeight: 0.06, tag: '' } }]
       st.loadScene({ ...scene, parts, packages: [...(scene.packages ?? []).filter((p) => p.id !== pkg.id), pkg] })
       return true
     })
@@ -103,7 +103,7 @@ async function main() {
     // what "not an edit" is measured against: the param, the undo stack, and the saved document
     const active = () => page.evaluate(() => window.__oip.store.getState().scene.parts.find((p) => p.id === 'blade_shot')?.params.active)
     const canUndo = () => page.evaluate(() => window.__oip.store.canUndo)
-    const savedDoc = () => page.evaluate(() => localStorage.getItem('oip-web/project'))
+    const savedDoc = () => page.evaluate(async () => (await window.__oip.savedProject()))
     const doc0 = await savedDoc()
     check('the saved document holds the blade stop lowered (so an unchanged doc means something)',
       !!doc0 && doc0.includes('blade_shot'), doc0 ? `${doc0.length} chars` : 'no doc')

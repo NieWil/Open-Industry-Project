@@ -11,7 +11,7 @@
 // (same programmatic-vite shape as validate-project.mjs), so there's no second implementation.
 // A test whose scene's program is in a dialect this version does not have (core/dialect.ts) fails
 // with the reason, as Play refuses it: the runner never steps it as IEC.
-// Every run also collects FLOW FACTS (src/core/flowFacts.ts): what physically happened to the cargo - a box dropped
+// Every run also collects FLOW FACTS (src/core/flow/flowFacts.ts): what physically happened to the cargo - a box dropped
 // or lost, tipped, a sensor flickering, a box sitting still on a running conveyor. They are printed as a one-line
 // summary per test, listed before a failure's first failing check, and carried in --json. Facts never fail a test.
 
@@ -89,11 +89,11 @@ let errored = 0
 try {
   // the app's built-in parts: a format-3 project names them by id and keeps no copy (scripts/lib/builtIns.mjs)
   await declareBuiltIns(vite)
-  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/projectFolder.ts')
-  const { validateTestSpec, TraceRecorder, formatTrace } = await vite.ssrLoadModule('/src/core/projectTest.ts')
-  const { cargoRows } = await vite.ssrLoadModule('/src/core/projectProbe.ts')
-  const { runProjectTest } = await vite.ssrLoadModule('/src/editor/projectTestRunner.ts')
-  const { formatFlowFact, summarizeFlowFacts } = await vite.ssrLoadModule('/src/core/flowFacts.ts')
+  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/project/projectFolder.ts')
+  const { validateTestSpec, TraceRecorder, formatTrace } = await vite.ssrLoadModule('/src/core/project/projectTest.ts')
+  const { CargoSnapshots } = await vite.ssrLoadModule('/src/core/project/projectProbe.ts')
+  const { runProjectTest } = await vite.ssrLoadModule('/src/editor/project/projectTestRunner.ts')
+  const { formatFlowFact, summarizeFlowFacts } = await vite.ssrLoadModule('/src/core/flow/flowFacts.ts')
   const { validatePart, formatPartDiagnostics } = await vite.ssrLoadModule('/src/sim/validatePart.ts')
   const initJolt = (await vite.ssrLoadModule('jolt-physics')).default
 
@@ -119,7 +119,7 @@ try {
   // falls back to globbing tests/, which is how every project authored before tests joined the document keeps
   // working unchanged.
   //
-  // A folder from before a project held one scene splits when it is read (core/project.ts `splitOff`): each of
+  // A folder from before a project held one scene splits when it is read (core/project/project.ts `splitOff`): each of
   // its other scenes is the project it will be when the app opens it, carrying the tests that named it. Each test
   // runs against its own project, so a result here means what it meant before.
   const projects = [loaded.project, ...(loaded.splitOff ?? [])]
@@ -162,13 +162,8 @@ try {
     let result
     const trace = traceTags !== null ? new TraceRecorder(traceTags) : null
     // --cargo: the live cargo at the first step reaching each asked-for time
-    const cargo = []
-    const pending = cargoTimes ? [...cargoTimes] : []
-    const onFrame = cargoTimes
-      ? (frame) => {
-          while (pending.length > 0 && frame.simTime + 1e-9 >= pending[0]) cargo.push({ at: pending.shift(), t: frame.simTime, bodies: cargoRows(frame) })
-        }
-      : undefined
+    const snaps = cargoTimes ? new CargoSnapshots(cargoTimes) : null
+    const onFrame = snaps?.onFrame
     try {
       result = runProjectTest(Jolt, project, spec, { ...(trace ? { trace } : {}), ...(onFrame ? { onFrame } : {}) })
     } catch (e) {
@@ -209,11 +204,11 @@ try {
       ok: result.ok,
       project: project.name,
       duration: spec.duration,
-      checks: result.checks.map((c) => ({ ok: c.ok, detail: c.detail, ...(c.failedAt !== undefined ? { failedAt: c.failedAt } : {}), ...(leadOf(c) ? { leadUp: leadOf(c) } : {}) })),
+      checks: result.checks.map((c) => ({ ok: c.ok, detail: c.detail, ...(c.warning ? { warning: c.warning } : {}), ...(c.failedAt !== undefined ? { failedAt: c.failedAt } : {}), ...(leadOf(c) ? { leadUp: leadOf(c) } : {}) })),
       facts: result.facts,
       ...(result.factsOverflow > 0 ? { factsOverflow: result.factsOverflow } : {}),
       ...(trace ? { trace: trace.result() } : {}),
-      ...(cargoTimes ? { cargo } : {}),
+      ...(snaps ? { cargo: snaps.snapshots } : {}),
     })
     if (!result.ok) failures++
     if (json) continue
@@ -235,6 +230,7 @@ try {
     }
     for (const c of result.checks) {
       console.log(`    ${c.ok ? '✓' : '✗'} ${c.detail}`)
+      if (c.warning) console.log(`      ! ${c.warning}`)
       const up = leadOf(c)
       if (!up) {
         if (c === firstFail) printFactsBefore(c)
@@ -258,14 +254,14 @@ try {
         if (missing.length > 0) console.log(`      never published: ${missing.join(', ')}`)
       }
     }
-    if (cargoTimes) {
-      for (const snap of cargo) {
-        console.log(`    cargo at t=${snap.t.toFixed(3)}s (${snap.bodies.length} bod${snap.bodies.length === 1 ? 'y' : 'ies'}): id  part  kind  colour  [x, y, z]`)
+    if (snaps) {
+      for (const snap of snaps.snapshots) {
+        console.log(`    cargo at t=${snap.t.toFixed(3)}s (${snap.bodies.length} bod${snap.bodies.length === 1 ? 'y' : 'ies'}): id  part  kind  colour  [x, y, z]  tilt  yaw  velocity m/s  touching`)
         for (const b of snap.bodies) {
-          console.log(`        ${b.id}  ${b.part ?? '-'}  ${b.kind}  ${b.color}${b.colorName ? ` (${b.colorName})` : ''}  [${b.pos.join(', ')}]`)
+          console.log(`        ${b.id}  ${b.part ?? '-'}  ${b.kind}  ${b.color}${b.colorName ? ` (${b.colorName})` : ''}  [${b.pos.join(', ')}]  ${b.tiltDeg}°  ${b.yawDeg}°  ${b.vel ? `[${b.vel.join(', ')}]` : '-'}  ${b.touching?.length ? b.touching.join(', ') : '-'}`)
         }
       }
-      const missed = pending.filter((t) => t > spec.duration)
+      const missed = snaps.missed()
       if (missed.length > 0) console.log(`    cargo: the run ended (${spec.duration}s) before t=${missed.join(', ')}`)
     }
   }

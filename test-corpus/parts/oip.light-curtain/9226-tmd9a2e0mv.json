@@ -1,0 +1,264 @@
+{
+  "format": 6,
+  "id": "oip.light-curtain",
+  "name": "Light Curtain",
+  "params": {
+    "width": {
+      "type": "number",
+      "default": 1.4,
+      "min": 0.3,
+      "max": 4,
+      "step": 0.01,
+      "label": "Protected width (m)",
+      "desc": "The clear gap between the two columns, which the beams span. The part origin is its centre, on the floor."
+    },
+    "fieldBottom": {
+      "type": "number",
+      "default": 0.3,
+      "min": 0,
+      "max": 2,
+      "step": 0.01,
+      "label": "Lowest beam (m)",
+      "desc": "Height of the bottom beam above the floor. Where a conveyor passes through, put it just above the conveying surface: nothing can pass below that."
+    },
+    "fieldHeight": {
+      "type": "number",
+      "default": 0.9,
+      "min": 0.2,
+      "max": 2,
+      "step": 0.01,
+      "label": "Beam span (m)",
+      "desc": "From the lowest beam to the highest. The four beams are spread evenly across it, and the columns stand 0.1 m above the top one."
+    },
+    "showBeam": {
+      "type": "boolean",
+      "default": true,
+      "label": "Show beams",
+      "desc": "Draw the beams in the viewport. A viewing aid only - hiding them does not change what the curtain sees."
+    },
+    "tag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "OSSD tag (true = clear)",
+      "group": "Comms",
+      "desc": "The safety output: true while every beam is clear, false while anything interrupts one. Muting a load through is the program's job: feed this and the muting sensors to a muting block, and its output into the run permit."
+    },
+    "mutingLampTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Muting lamp tag",
+      "group": "Comms",
+      "desc": "Optional: the program lights the muting lamp on the emitter's cap with this while it is muting the curtain."
+    }
+  },
+  "behavior": "// Light Curtain — a multi-beam safety light grid guarding an opening: two slim columns, the emitter at local -X and\n// the receiver at +X, and four beams across the gap between them. Its output is the curtain's OSSD: TRUE while every\n// beam is clear, FALSE the moment anything breaks one, a load or a person alike. Fail-safe by construction: a curtain\n// that never publishes, or loses its wire, reads the same as a tripped one.\n//\n// It does NOT mute itself. On a conveyor opening a load breaks the beams on its way through, and what lets it pass is\n// MUTING, which on a real line is the safety program's job: the curtain's OSSD and a set of muting sensors (ordinary\n// photo-eyes, placed on the conveyor as their own parts) go to the controller, and a muting block there (PLCopen\n// Safety's SF_MutingSeq, or a muting function of the controller's own safety library) decides when a break is a load\n// arriving the way loads do and may be ignored. So the layout of those sensors, their wiring and the block's settings are all things an author\n// can get wrong, exactly as on a real line. The program lights the curtain's muting lamp through `mutingLampTag`.\n//\n// Demonstrates several beams on one part (ctx.sense per beam link), a beam-length param (`rangeParam`), an indicator\n// lamp the PLC drives (`readTag`), and procedural hardware whose lamps (geometry() `lamps` submeshes) follow\n// param-driven column heights.\n\nconst BEAMS = ['beam1', 'beam2', 'beam3', 'beam4']\n\ndefinePart({\n  lamps: ['ossd', 'stop', 'muting'],\n  params: {\n    width: { type: 'number', default: 1.4, min: 0.3, max: 4, step: 0.01, label: 'Protected width (m)', desc: 'The clear gap between the two columns, which the beams span. The part origin is its centre, on the floor.' },\n    fieldBottom: { type: 'number', default: 0.3, min: 0, max: 2, step: 0.01, label: 'Lowest beam (m)', desc: 'Height of the bottom beam above the floor. Where a conveyor passes through, put it just above the conveying surface: nothing can pass below that.' },\n    fieldHeight: { type: 'number', default: 0.9, min: 0.2, max: 2, step: 0.01, label: 'Beam span (m)', desc: 'From the lowest beam to the highest. The four beams are spread evenly across it, and the columns stand 0.1 m above the top one.' },\n    showBeam: { type: 'boolean', default: true, label: 'Show beams', desc: 'Draw the beams in the viewport. A viewing aid only - hiding them does not change what the curtain sees.' },\n    tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'OSSD tag (true = clear)', group: 'Comms', desc: 'The safety output: true while every beam is clear, false while anything interrupts one. Muting a load through is the program\\'s job: feed this and the muting sensors to a muting block, and its output into the run permit.' },\n    mutingLampTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Muting lamp tag', group: 'Comms', desc: 'Optional: the program lights the muting lamp on the emitter\\'s cap with this while it is muting the curtain.' },\n  },\n  geometry(g, p) {\n    const width = typeof p.width === 'number' && p.width > 0 ? p.width : 1.4\n    const y0 = typeof p.fieldBottom === 'number' ? p.fieldBottom : 0.3\n    const span = typeof p.fieldHeight === 'number' && p.fieldHeight > 0 ? p.fieldHeight : 0.9\n    // a column: a PW x PD aluminium profile on a floor plate, a yellow cap at each end, and the optics window down\n    // its inner face over the field. The window's face is at x = +-width/2, which is where the beams leave from.\n    const PW = 0.036, PD = 0.05, FOOT_X = 0.09, FOOT_Z = 0.11, FOOT_T = 0.01, FOOT_OUT = 0.02\n    const CAP = 0.03, WIN_Z = 0.03, WIN_T = 0.002, WIN_OVER = 0.04, TOP_OVER = 0.1\n    const top = y0 + span + TOP_OVER\n    const hw = width / 2\n    const parts = []\n    const caps = [], windows = []\n    for (const s of [-1, 1]) {\n      const cx = s * (hw + PW / 2)\n      // the profile and its plate are the column's collision (its own submesh, so the AABB is one column, not the gap)\n      const column = g.merge(\n        g.box([PW, top - FOOT_T - 2 * CAP, PD], [cx, (FOOT_T + CAP + top - CAP) / 2, 0]),\n        g.box([FOOT_X, FOOT_T, FOOT_Z], [cx + s * FOOT_OUT, FOOT_T / 2, 0]),\n      )\n      parts.push({ desc: column, material: 'housing', collision: 'box' })\n      caps.push(g.box([PW + 0.004, CAP, PD + 0.004], [cx, FOOT_T + CAP / 2, 0]), g.box([PW + 0.004, CAP, PD + 0.004], [cx, top - CAP / 2, 0]))\n      const w0 = Math.max(FOOT_T + CAP, y0 - WIN_OVER), w1 = Math.min(top - CAP, y0 + span + WIN_OVER)\n      windows.push(g.box([WIN_T, w1 - w0, WIN_Z], [s * (hw - WIN_T / 2 + 0.0005), (w0 + w1) / 2, 0]))\n    }\n    parts.push({ desc: g.merge(...caps), material: 'cap' })\n    parts.push({ desc: g.merge(...windows), material: 'window' })\n    // the receiver's status LEDs on its cap, OSSD green beside stop red; the muting lamp on the emitter's cap\n    const rx = hw + PW / 2\n    parts.push({ desc: g.box([0.016, 0.012, 0.016], [rx, top + 0.006, -0.012]), material: 'lens', lamps: [{ name: 'ossd', emissive: [0.1, 1, 0.2] }] })\n    parts.push({ desc: g.box([0.016, 0.012, 0.016], [rx, top + 0.006, 0.012]), material: 'lens', lamps: [{ name: 'stop', emissive: [1, 0.06, 0.03] }] })\n    parts.push({ desc: g.lathe([[0, 0], [0.017, 0], [0.017, 0.03], [0.012, 0.045], [0, 0.05]], { axis: 'y', center: [-rx, top, 0], segments: 16 }), material: 'lens', lamps: [{ name: 'muting', emissive: [1, 0.45, 0.02] }] })\n    return parts\n  },\n  step(ctx) {\n    const w = ctx.params.width\n    let clear = true\n    for (const b of BEAMS) {\n      const s = ctx.sense(b)\n      if (s.hit && s.distance <= w) clear = false\n    }\n    // a PLC that drives this tag is watching a real curtain (Watch only): the lamps show what that curtain reports\n    if (ctx.params.tag && ctx.tagDriven(ctx.params.tag)) clear = !!ctx.readTag(ctx.params.tag)\n    ctx.lamps.ossd = clear\n    ctx.lamps.stop = !clear\n    ctx.lamps.muting = !!ctx.params.mutingLampTag && ctx.readTag(ctx.params.mutingLampTag)\n    if (ctx.params.tag) ctx.writeTag(ctx.params.tag, clear)\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "field",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.3,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "fieldBottom"
+          }
+        ]
+      },
+      {
+        "name": "beam1",
+        "parent": "field",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -0.7,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "beam": {
+          "range": 1.4,
+          "rangeParam": "width",
+          "showParam": "showBeam",
+          "axis": [
+            1,
+            0,
+            0
+          ]
+        }
+      },
+      {
+        "name": "beam2",
+        "parent": "field",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -0.7,
+          0.3,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "width",
+            "scale": -0.5
+          },
+          {
+            "axis": 1,
+            "param": "fieldHeight",
+            "scale": 0.3333333333333333
+          }
+        ],
+        "beam": {
+          "range": 1.4,
+          "rangeParam": "width",
+          "showParam": "showBeam",
+          "axis": [
+            1,
+            0,
+            0
+          ]
+        }
+      },
+      {
+        "name": "beam3",
+        "parent": "field",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -0.7,
+          0.6,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "width",
+            "scale": -0.5
+          },
+          {
+            "axis": 1,
+            "param": "fieldHeight",
+            "scale": 0.6666666666666666
+          }
+        ],
+        "beam": {
+          "range": 1.4,
+          "rangeParam": "width",
+          "showParam": "showBeam",
+          "axis": [
+            1,
+            0,
+            0
+          ]
+        }
+      },
+      {
+        "name": "beam4",
+        "parent": "field",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -0.7,
+          0.9,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "width",
+            "scale": -0.5
+          },
+          {
+            "axis": 1,
+            "param": "fieldHeight"
+          }
+        ],
+        "beam": {
+          "range": 1.4,
+          "rangeParam": "width",
+          "showParam": "showBeam",
+          "axis": [
+            1,
+            0,
+            0
+          ]
+        }
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 1.57,
+      "width": 0.11,
+      "top": 1.4
+    }
+  },
+  "category": "Devices",
+  "materials": [
+    {
+      "id": "housing",
+      "color": [
+        0.479,
+        0.509,
+        0.539
+      ],
+      "metalness": 0.6,
+      "roughness": 0.35
+    },
+    {
+      "id": "cap",
+      "color": [
+        0.888,
+        0.508,
+        0.005
+      ],
+      "metalness": 0.1,
+      "roughness": 0.45
+    },
+    {
+      "id": "window",
+      "color": [
+        0.012,
+        0.01,
+        0.01
+      ],
+      "metalness": 0,
+      "roughness": 0.15
+    },
+    {
+      "id": "lens",
+      "color": [
+        0.18,
+        0.18,
+        0.18
+      ],
+      "metalness": 0,
+      "roughness": 0.3
+    }
+  ],
+  "sdk": {
+    "level": 12,
+    "of": "v2:7758:ka5ucdjznv"
+  }
+}

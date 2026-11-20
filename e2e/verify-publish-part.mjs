@@ -32,7 +32,7 @@ const check = (n, ok, info = '') => {
 // parts made from the drum's source: one under the signed-in account, one under another
 const vite = await createVite({ configFile: false, root: repo, logLevel: 'error', server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom', optimizeDeps: { noDiscovery: true } })
 const { buildPackage } = await vite.ssrLoadModule('/src/sim/buildPackage.ts')
-const { RIGHTS_LINE } = await vite.ssrLoadModule('/src/core/partSubmission.ts')
+const { RIGHTS_LINE } = await vite.ssrLoadModule('/src/core/parts/partSubmission.ts')
 const source = (id, name) => {
   const m = JSON.parse(readFileSync(resolve(repo, 'src/sim/fixtures/nesting-bin/manifest.json'), 'utf8'))
   return buildPackage({ ...m, id, name }, readFileSync(resolve(repo, 'src/sim/fixtures/nesting-bin/behavior.js'), 'utf8'))

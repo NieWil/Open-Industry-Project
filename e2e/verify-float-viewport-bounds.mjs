@@ -2,7 +2,7 @@
 //
 // Kept inside only the browser window, it breaks: at 1366x768 the default window hangs 32 px onto the bottom dock,
 // a header drag can park it almost entirely over the dock, and nothing re-checks it when the view changes size.
-// The rule lives in fitStEditorGeometry (src/editor/stProgram.ts) and the area it fits into in StEditor's
+// The rule lives in fitStEditorGeometry (src/editor/program/stProgram.ts) and the area it fits into in StEditor's
 // floatBounds: the view below its spatial toolbar, which draws above the window (a header parked under
 // it cannot be grabbed, and fitting to the whole view does exactly that to the default window). This drives every
 // path that can move the window against the real layout:

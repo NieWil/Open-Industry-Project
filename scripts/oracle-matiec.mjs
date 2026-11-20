@@ -44,7 +44,7 @@ import { SHIM_DECLARATIONS, declaredTypes, locatedNames, parseInstance, parseIns
 // the exact code path a user's "export" button runs is what makes this gate mean something:
 // it proves the artifact we hand people compiles with a real IEC compiler. If these ever
 // diverge, CI is verifying a file nobody receives.
-import { renderIecText } from '../src/plc/exportText.ts'
+import { renderIecText } from '../src/plc/exchange/exportText.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const WORK = join(ROOT, '.oracle')
@@ -52,7 +52,7 @@ const WORK = join(ROOT, '.oracle')
 // ---- rendering a corpus case as a spec-legal IEC program ----
 //
 // The POU peeling and the CONFIGURATION wrapper both live in
-// src/plc/exportText.ts, never duplicated here: a copy would let CI verify a rendering the
+// src/plc/exchange/exportText.ts, never duplicated here: a copy would let CI verify a rendering the
 // product never produced -- the exact drift this gate exists to prevent.
 
 /**

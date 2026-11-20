@@ -80,8 +80,9 @@ try {
     if (eyes.length < 2 || rows.length < 2) return { ok: false, eyes: eyes.length, rows: rows.length }
     const eye = eyes[eyes.length - 1] // last placed box
     const prevRow = rows[rows.length - 2] // the box before it
-    eye.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    prevRow.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+    // buttons: 1 as a real drag reports it; a row entered with no button held ends the paint (a lost release)
+    eye.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, buttons: 1 }))
+    prevRow.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, buttons: 1 }))
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
     return { ok: true, eyes: eyes.length, rows: rows.length }
   })
@@ -92,6 +93,24 @@ try {
     () => window.__oip.store.getState().scene.parts.filter((p) => p.visible === false).length,
   )
   ok(nowHidden - baseHidden === 2, `drag-paint hid 2 rows in one gesture (hidden ${baseHidden} → ${nowHidden})`)
+
+  // a lost release (Alt-Tab mid-paint): the paint starts on the last eye, then the pointer reaches a row with no
+  // button held. That ends the paint, so neither that row nor one entered after it changes.
+  const lost = await page.evaluate(() => {
+    const st = window.__oip.store
+    const vis = () => st.getState().scene.parts.map((p) => p.visible !== false).join(',')
+    const eyes = [...document.querySelectorAll('.tree-row .tree-eye')]
+    const rows = [...document.querySelectorAll('.tree-row')]
+    const eye = eyes[eyes.length - 1]
+    const prevRow = rows[rows.length - 2]
+    eye.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, buttons: 1 })) // shows the last row again
+    const afterPress = vis()
+    prevRow.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, buttons: 0 }))
+    prevRow.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, buttons: 0 }))
+    prevRow.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, buttons: 1 }))
+    return { same: vis() === afterPress }
+  })
+  ok(lost.same, 'a row entered with no button held ends the paint: no row changes after it')
 } finally {
   await browser.close()
   vite.kill()

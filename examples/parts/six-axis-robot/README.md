@@ -9,13 +9,14 @@ joint pose.
 
 ## What's here
 
-- **`part.js`** is the source to read, and a robot controller in miniature. The robot owns its jobs: short
-  programs of steps (Move to a named waypoint, stopping on it or blending through it; Vacuum on/off; Wait; Wait for
-  an input; Set an output) taught in the Inspector. A PLC runs a job by number (command tag + an Execute edge) and
-  waits for Done. An Enable input holds the arm where it is while the cell is unsafe. Motion is one coordinated
-  trapezoidal profile per move, and blend points overlap two moves so each joint's speed changes smoothly instead
-  of jumping. A robot with no jobs falls back to single moves (the command is a waypoint row). It is authored only
-  against `ctx`, with no host handles and no `Date`/`Math.random` (the determinism gate enforces it).
+- **`part.js`** is the source to read. It declares a `robot`, so it runs the app's robot controller
+  ([src/core/robot/robotController.ts](../../../src/core/robot/robotController.ts)), the one every robot part shares,
+  with `ctx.robot.step()`. The robot owns its jobs: short programs of steps (Move to a named waypoint, stopping on it
+  or blending through it; Vacuum on/off; Wait; Wait for an input; Set an output) taught in the Inspector. A PLC runs a
+  job by number (command tag + an Execute edge) and waits for Done. An Enable input holds the arm where it is while
+  the cell is unsafe. Motion is one coordinated trapezoidal profile per move, and blend points overlap two moves so
+  each joint's speed changes smoothly instead of jumping. A robot with no jobs falls back to single moves (the
+  command is a waypoint row). The script declares the params the controller reads and the job steps' labels.
   [src/sim/sixAxisRobotJobs.test.ts](../../../src/sim/sixAxisRobotJobs.test.ts) pins the job contract, and
   [src/editor/palletizerCell.test.ts](../../../src/editor/palletizerCell.test.ts) runs the demo's jobs against it.
 - **`rig.json`** is the rig: a tree of 21 links (12 transform-only `frame` pivots and 9 per-node `mesh` links) and
@@ -23,8 +24,10 @@ joint pose.
   tooling. The pivot positions, the shoulder and elbow frames, and each linkage's mesh-local placement come from
   the project's own robot model. Placements are quaternions, because they are CAD axis permutations that Euler
   angles can't express cleanly.
-- **The EOAT** (end-of-arm tooling) is drawn by `geometry()` in `part.js`, on the `eoat` frame: a resizable
-  suction tool built at the size its params ask for (a painted plate framed by slotted rails and corner caps, the
+- **The EOAT** (end-of-arm tooling) is the app's (`robot.tool`, drawn by
+  [src/core/robot/robotTools.ts](../../../src/core/robot/robotTools.ts)) on the `eoat` frame, the one the `tool` param
+  picks: the vacuum plate it always had, or a clamp gripper riding the `fingerA` / `fingerB` links. The plate is a
+  resizable suction tool built at the size its params ask for (a painted plate framed by slotted rails and corner caps, the
   adapter the wrist flange bolts to, the vacuum LED, and a pitch/margin grid of turned cups that `squash` off that
   LED). The arm keeps its model and baked textures. The tool is engineered hardware, so it is code (see
   [Code or a model?](../../../docs/part-authoring-guide.md#code-or-a-model-decide-first) in the part authoring
@@ -32,7 +35,7 @@ joint pose.
 
 ## How it's built
 
-`part.js` is the source: the kinematics, the rig (`rig()`), the EOAT `geometry()` and the controller.
+`part.js` is the source: the kinematics, the rig (`rig()`), the robot declaration and the params its controller and tool read.
 `rig.json` + `behavior.ts` are **built** from it, so edit `part.js`, not the output. The committed `rig.json`
 names its GLB + textures as URL assets (`/models/SixAxisRobot.glb` and `/models/sixaxis/…`, served from
 `public/models/`), so it loads on its own in the app. The multi-MB model files are not committed in this folder.

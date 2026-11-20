@@ -6,6 +6,7 @@ import { setWebGPUOutlineFactory } from './outline'
 import { installSchedulerYieldShim } from './schedulerYield'
 import { setBeltNodeFactory, setScrollNodeFactory, setDeckNodeFactory, setMetalNodeFactory, setTickUniformBump } from '../parts/common'
 import { setBeltBankNodeFactory } from '../parts/beltFabricBank'
+import { setFloorNodeFactory } from '../parts/building'
 import { setLampBankNodeFactory } from '../parts/lampBank'
 import { setAnimClockSink } from '../parts/animClock'
 import { setGizmoRingNodeFactory } from './gizmo'
@@ -115,7 +116,6 @@ export async function createWebGPURenderer(): Promise<WebGPURenderer> {
   const wantsBundleCam = wantsRenderBundles() && wantsBundleCameraPatch()
   const [
     { WebGPURenderer, BundleGroup },
-    { installInstancePipelineDedup },
     { installProjectionStats },
     bundleRefreshMod,
     { createWebGPUConsolidatedOutline },
@@ -129,9 +129,9 @@ export async function createWebGPURenderer(): Promise<WebGPURenderer> {
     { createScrollNodeMaterial },
     { createGizmoRingNodeMaterial },
     { createFilmNodeMaterial },
+    { createFloorNodeMaterial },
   ] = await Promise.all([
     import('three/webgpu'),
-    import('./pipelineDedup'),
     import('./projectionStats'),
     wantsBundleCam ? import('./bundleReplayRefresh') : Promise.resolve(null),
     import('./consolidatedOutlineNode'),
@@ -145,6 +145,7 @@ export async function createWebGPURenderer(): Promise<WebGPURenderer> {
     import('../parts/scrollNodeMaterial'),
     import('../gizmoRingNodeMaterial'),
     import('./filmNodeMaterial'),
+    import('../parts/floorNodeMaterial'),
   ])
   // render bundles (bundleGroups.ts, default on; `?nobundle` turns them off): hand the module three's
   // BundleGroup so the scene containers built by RenderView/InstancePoolManager (both
@@ -173,11 +174,7 @@ export async function createWebGPURenderer(): Promise<WebGPURenderer> {
   // pass). Watching the device makes that failure reportable: one deduped `[oip]` error, plus a
   // tally the e2e gates assert is empty. See gpuErrorWatch.ts.
   installGpuErrorWatch((renderer.backend as { device?: unknown } | undefined)?.device)
-  // Dedupe structurally-identical instanced-mesh pipelines so adding/duplicating a part reuses a warm
-  // pipeline instead of cold-compiling one on the draw path (the roller-conveyor duplicate hitch). Must
-  // run before any program compiles, so load-time programs are stored under the normalized key.
-  installInstancePipelineDedup(renderer)
-  // Per-pass _projectObject visit counters on globalThis.__oipProjStats: shows which render pass
+  // Per-pass projection visit counters on globalThis.__oipProjStats: shows which render pass
   // incurs the scene-graph traversal cost (sub-passes run with bundles inert, so they walk the
   // full graph). About one counter increment per visited node.
   installProjectionStats(renderer)
@@ -198,6 +195,7 @@ export async function createWebGPURenderer(): Promise<WebGPURenderer> {
     setMetalNodeFactory(createMetalNodeMaterial)
     setBeltNodeFactory(createBeltNodeMaterial)
     setDeckNodeFactory(createDeckNodeMaterial)
+    setFloorNodeFactory(createFloorNodeMaterial)
     setBeltBankNodeFactory(createBeltBankNodeMaterial)
     setLampBankNodeFactory(createLampBankNodeMaterial)
     // The shared sim-animation clock every shader-integrated animation reads (animClock.ts: belt

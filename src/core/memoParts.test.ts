@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SdkPart, PartInstance } from './types'
-import type { PartPackage } from './partPackage'
-import { clearPackages, registerPackage, unregisterPackage } from './partRegistry'
-import { memoizeByParticipants } from './memoParts'
-import { computeSceneOpenings } from './guardOpenings'
-import { resolveRollerGrids } from './rollerGrid'
-import { computeSceneExtents } from './guardExtents'
+import type { PartPackage } from './parts/partPackage'
+import { clearPackages, registerPackage, unregisterPackage } from './parts/partRegistry'
+import { memoizeByParticipants, memoizeLocalized } from './memoParts'
+import { computeSceneOpenings } from './guards/guardOpenings'
+import { resolveRollerGrids } from './conveyor/rollerGrid'
+import { computeSceneExtents } from './guards/guardExtents'
 import { computeDeckClusters } from './deckClusters'
-import { PACKAGE_FORMAT } from './partPackage'
+import { PACKAGE_FORMAT } from './parts/partPackage'
 
 // The identity-memo layer over the scene-wide neighbour passes (memoParts.ts). The invariant under
 // test: a transient scene that replaces only non-participant part objects (a dragged cargo box) must
@@ -125,6 +125,20 @@ describe('memoizeByParticipants', () => {
     expect(fn(parts)).toBe(2) // content-identical re-register is a no-op (no rev bump)
     unregisterPackage('acme.belt')
     expect(fn(parts)).toBe(3) // unregister invalidates
+  })
+})
+
+describe('memoizeLocalized', () => {
+  afterEach(() => clearPackages())
+
+  it('returns an empty map, not the last one, when a registry change meets a scene with nothing to derive', () => {
+    registerPackage(customBeltPkg())
+    registerPackage(boxPkg())
+    const conveyorish = (p: PartInstance): boolean => p.id.startsWith('c')
+    const fn = memoizeLocalized<string>({ isTarget: conveyorish, isInfluencer: conveyorish, tolerance: 0.05, derive: (t) => t.id })
+    expect([...fn([box('b1', 0, 0), belt('c1', 0, 0), belt('c2', 4, 0)]).keys()]).toEqual(['c1', 'c2'])
+    registerPackage(sdkRollerPkg()) // bumps the registry revision, which empties the per-target cache
+    expect(fn([box('b1', 0, 0)]).size).toBe(0)
   })
 })
 

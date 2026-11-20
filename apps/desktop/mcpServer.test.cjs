@@ -4,7 +4,7 @@
 // the shell and the app together in e2e/verify-agent-mcp-electron.mjs.
 
 const assert = require('node:assert/strict')
-const { mkdtempSync, rmSync, writeFileSync } = require('node:fs')
+const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const { AgentHost, MODERN_VERSIONS, PROTOCOL_VERSIONS, handleMessage, readModel, requestEra, startMcpServer } = require('./mcpServer.cjs')
@@ -80,13 +80,154 @@ async function main() {
       const got = await readModel(join(dir, 'm.glb'))
       assert.equal(got.name, 'm.glb')
       assert.deepEqual([...got.bytes], [1, 2, 3])
-      assert.match((await readModel(join(dir, 'notes.txt'))).error, /a model is a \.glb, \.step or \.stp file/)
+      assert.match((await readModel(join(dir, 'notes.txt'))).error, /a model is a \.glb, \.step, \.stp, USD .* or URDF/)
+      // a USD root brings the layers and images under its folder, keyed from there; hidden folders and other files stay out
+      mkdirSync(join(dir, 'payloads'))
+      mkdirSync(join(dir, '.thumbs'))
+      writeFileSync(join(dir, 'root.usda'), '#usda 1.0')
+      writeFileSync(join(dir, 'payloads', 'geo.usdc'), Buffer.from([4]))
+      writeFileSync(join(dir, 'payloads', 'albedo.png'), Buffer.from([5]))
+      writeFileSync(join(dir, '.thumbs', 'thumb.png'), Buffer.from([6]))
+      const usd = await readModel(join(dir, 'root.usda'))
+      assert.equal(usd.root, 'root.usda')
+      assert.deepEqual(usd.files.map((f) => f.path).sort(), ['payloads/albedo.png', 'payloads/geo.usdc', 'root.usda'])
+      // a .usdz is one file
+      writeFileSync(join(dir, 'm.usdz'), Buffer.from([7]))
+      assert.equal((await readModel(join(dir, 'm.usdz'))).files, undefined)
+      // a URDF in a ROS package's urdf folder brings the meshes it names, and nothing else there, keyed from the
+      // package folder: package:// from the package, a relative path from the URDF's folder, a missing one left out
+      mkdirSync(join(dir, 'arm', 'urdf'), { recursive: true })
+      mkdirSync(join(dir, 'arm', 'meshes'))
+      writeFileSync(
+        join(dir, 'arm', 'urdf', 'arm.urdf'),
+        '<robot name="arm"><link name="a"><visual><geometry><mesh filename="package://arm/meshes/link.stl"/></geometry></visual>' +
+          "<collision><geometry><mesh filename='../meshes/hull.obj'/></geometry></collision></link>" +
+          '<link name="b"><visual><geometry><mesh filename="package://arm/meshes/gone.stl"/></geometry></visual></link></robot>',
+      )
+      writeFileSync(join(dir, 'arm', 'meshes', 'link.stl'), Buffer.from([8]))
+      writeFileSync(join(dir, 'arm', 'meshes', 'hull.obj'), 'v 0 0 0')
+      writeFileSync(join(dir, 'arm', 'meshes', 'spare.stl'), Buffer.from([9]))
+      const robot = await readModel(join(dir, 'arm', 'urdf', 'arm.urdf'))
+      assert.equal(robot.root, 'urdf/arm.urdf')
+      assert.deepEqual(robot.files.map((f) => f.path).sort(), ['meshes/hull.obj', 'meshes/link.stl', 'urdf/arm.urdf'])
+      // a URDF anywhere in a package with a package.xml finds its package:// meshes from the package folder
+      mkdirSync(join(dir, 'pkg', 'robots', 'six'), { recursive: true })
+      mkdirSync(join(dir, 'pkg', 'meshes'))
+      writeFileSync(join(dir, 'pkg', 'package.xml'), '<package><name>pkg</name></package>')
+      writeFileSync(join(dir, 'pkg', 'robots', 'six', 'six.urdf'), '<robot name="six"><link name="a"><visual><geometry><mesh filename="package://pkg/meshes/base.stl"/></geometry></visual></link></robot>')
+      writeFileSync(join(dir, 'pkg', 'meshes', 'base.stl'), Buffer.from([8]))
+      const six = await readModel(join(dir, 'pkg', 'robots', 'six', 'six.urdf'))
+      assert.equal(six.root, 'robots/six/six.urdf')
+      assert.deepEqual(six.files.map((f) => f.path).sort(), ['meshes/base.stl', 'robots/six/six.urdf'])
+      // a lone URDF beside unrelated files reads only itself
+      writeFileSync(join(dir, 'lone.urdf'), '<robot name="lone"/>')
+      assert.deepEqual((await readModel(join(dir, 'lone.urdf'))).files.map((f) => f.path), ['lone.urdf'])
+      // a xacro reads its ROS package and the packages it $(find)s beside it, robot files only, keyed from their parent
+      const ws = join(dir, 'ws')
+      for (const d of ['bot_description/urdf', 'bot_description/meshes', 'bot_description/config/a', 'parts_lib/urdf', 'unrelated']) mkdirSync(join(ws, d), { recursive: true })
+      writeFileSync(join(ws, 'bot_description', 'package.xml'), '<package><name>bot_description</name></package>')
+      writeFileSync(join(ws, 'parts_lib', 'package.xml'), '<package><name>bot_parts</name></package>')
+      writeFileSync(join(ws, 'unrelated', 'package.xml'), '<package><name>unrelated</name></package>')
+      writeFileSync(join(ws, 'bot_description', 'urdf', 'bot.urdf.xacro'), '<robot xmlns:xacro="http://wiki.ros.org/xacro"><xacro:include filename="$(find bot_parts)/urdf/m.xacro"/></robot>')
+      writeFileSync(join(ws, 'bot_description', 'config', 'a', 'limits.yaml'), 'a: 1')
+      writeFileSync(join(ws, 'bot_description', 'meshes', 'link.stl'), Buffer.from([8]))
+      writeFileSync(join(ws, 'bot_description', 'README.md'), 'x')
+      writeFileSync(join(ws, 'parts_lib', 'urdf', 'm.xacro'), '<robot/>')
+      writeFileSync(join(ws, 'unrelated', 'u.xacro'), '<robot/>')
+      const bot = await readModel(join(ws, 'bot_description', 'urdf', 'bot.urdf.xacro'))
+      assert.equal(bot.root, 'bot_description/urdf/bot.urdf.xacro')
+      assert.deepEqual(bot.files.map((f) => f.path).sort(), [
+        'bot_description/config/a/limits.yaml',
+        'bot_description/meshes/link.stl',
+        'bot_description/package.xml',
+        'bot_description/urdf/bot.urdf.xacro',
+        'parts_lib/package.xml',
+        'parts_lib/urdf/m.xacro',
+      ])
       assert.match((await readModel('m.glb')).error, /absolute path/)
       assert.match((await readModel(join(dir, 'gone.step'))).error, /no such file/)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
     console.log('ok: model reads')
+  }
+
+  // 1d. main's own tools: listed after the window's, run here, never forwarded; their requests to the editor go on
+  // agent:shell, and a reload before the answer reads as 'reloading'
+  {
+    const sent = []
+    const own = {
+      definition: { name: 'own', description: 'runs in main', inputSchema: { type: 'object' } },
+      run: async (h, args) => ({ ok: true, text: JSON.stringify(await h.request('openFolder', args)) }),
+    }
+    const host = new AgentHost({ readyWaitMs: 50, shellTools: [own] })
+    const win = { id: 3, isDestroyed: () => false, send: (ch, msg) => sent.push([ch, msg]) }
+    host.serve(win, TOOLS)
+    assert.deepEqual((await handleMessage(host, rpc(1, 'tools/list'))).result.tools.map((t) => t.name), ['echo', 'fail', 'own'])
+    const call = handleMessage(host, rpc(2, 'tools/call', { name: 'own', arguments: { root: '/p' } }))
+    await new Promise((r) => setImmediate(r))
+    assert.deepEqual(sent.map(([ch, m]) => [ch, m.op, m.args]), [['agent:shell', 'openFolder', { root: '/p' }]], 'a shell tool asks on agent:shell, not as a tool call')
+    host.drop(3, 'the editor reloaded', true)
+    assert.equal((await call).result.content[0].text, '{"ok":true,"text":"reloading"}', 'the page reloading answers a shell request')
+    // a plain tool call dropped by a reload still fails
+    host.serve(win, TOOLS)
+    const plain = host.call('hang', {})
+    await new Promise((r) => setImmediate(r))
+    host.drop(3, 'the editor reloaded', true)
+    assert.deepEqual(await plain, { ok: false, error: 'the editor reloaded' })
+    // a navigation the page announced says why, once
+    host.serve(win, TOOLS)
+    const cut = host.call('hang', {})
+    await new Promise((r) => setImmediate(r))
+    host.leaving(3, 'the dev server reloaded the page after src/render/view.ts changed')
+    host.reloaded(3)
+    assert.match((await cut).error, /^the editor reloaded \(the dev server reloaded the page after src\/render\/view\.ts changed\); call again/)
+    host.serve(win, TOOLS)
+    const next1 = host.call('hang', {})
+    await new Promise((r) => setImmediate(r))
+    host.reloaded(3)
+    assert.match((await next1).error, /^the editor reloaded; call again/, 'the reason is not reused for the next reload')
+    // nextServe waits for the next announcement, not the one already there
+    host.serve(win, TOOLS)
+    assert.equal(await host.nextServe(30), false, 'tools already served are not a new announcement')
+    const next = host.nextServe(1000)
+    host.serve(win, TOOLS)
+    assert.equal(await next, true)
+    host.serve(win, null)
+    assert.equal(await host.nextServe(30), false, 'no window came back')
+    console.log('ok: shell tools')
+  }
+
+  // 1e. several windows, one project each: calls go to the window focused last; a closed one hands over, a reloading
+  // one is waited for
+  {
+    const host = new AgentHost({ readyWaitMs: 200 })
+    const a = fakeWindow(host, 1)
+    const b = fakeWindow(host, 2)
+    host.serve(a, TOOLS)
+    host.serve(b, TOOLS)
+    assert.equal(host.servingId(), 1, 'a second window announcing does not take the calls')
+    await host.call('echo', { n: 1 })
+    assert.equal(a.calls.length, 1)
+    host.focus(2)
+    assert.equal(host.servingId(), 2, 'the focused window does')
+    await host.call('echo', { n: 2 })
+    assert.equal(b.calls.length, 1)
+    host.focus(3) // a window still booting: calls stay where they are until it serves
+    assert.equal(host.servingId(), 2)
+    const c = fakeWindow(host, 3)
+    host.serve(c, TOOLS)
+    assert.equal(host.servingId(), 3, 'and it takes them once it serves')
+    host.drop(3, 'the editor window closed')
+    assert.equal(host.servingId(), 1, 'a closed window hands its calls to one still open')
+    host.focus(1)
+    host.drop(1, 'reloaded', true)
+    assert.equal(host.servingId(), null, 'a reloading window is waited for, not replaced')
+    const pending = host.call('echo', { n: 3 })
+    host.serve(a, TOOLS)
+    assert.equal((await pending).ok, true)
+    assert.equal(host.servingId(), 1)
+    console.log('ok: several windows')
   }
 
   // 2. over HTTP, with a window serving

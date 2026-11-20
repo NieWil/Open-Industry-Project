@@ -12,9 +12,9 @@ import {
 } from 'three'
 import type { Mesh, Object3D, Texture } from 'three'
 import type { WebGPURenderer } from 'three/webgpu'
-import { createSdkPart, createPart } from '../../core/scene'
+import { createSdkPart, createPart } from '../../core/scene/scene'
 import { unitPieces } from '../../core/frame'
-import type { PartPackage } from '../../core/partPackage'
+import type { PartPackage } from '../../core/parts/partPackage'
 import { PART_DEFS } from '../../core/types'
 import type { PartType } from '../../core/types'
 import { modelsSettled, runSpeculativeWarm } from '../gltf'
@@ -198,6 +198,9 @@ function buildContext(renderer: ThumbRenderer): ThumbContext {
     dispose() {
       disposeLights()
       renderer.dispose()
+      // dispose() leaves the WebGL context alive until GC. Thumbnails re-render on every package change,
+      // and once the browser holds too many contexts it force-loses the oldest one, the main viewport's.
+      if (renderer instanceof WebGLRenderer) renderer.forceContextLoss()
     },
   }
 }
@@ -256,6 +259,9 @@ export async function renderPackageThumbnails(pkgs: readonly PartPackage[]): Pro
 
     for (const { pkg, object } of items) {
       result.set(pkg.id, await ctx.capture(object))
+      // One card per task. A capture is a draw and a synchronous read back of its pixels, and a project with a few
+      // dozen parts of its own held the page for two seconds in one go, as the loading cover lifted.
+      await nextMacrotask()
     }
   } finally {
     // dispose in finally: a capture throw must not leak the GPU context - the caller

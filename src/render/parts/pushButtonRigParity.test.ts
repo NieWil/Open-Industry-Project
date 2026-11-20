@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, rigLampNames, validatePartPackage } from '../../core/partPackage'
-import { evalPartGeometry, geometryLampNames } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
+import { PACKAGE_FORMAT, rigLampNames } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { evalPartGeometry, geometryLampNames } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
 import { examplePart, type RigGeo } from './examplePart'
-import { instantiatePartScript } from '../../core/partScript'
+import { instantiatePartScript } from '../../core/parts/partScript'
 const { assets: PUSH_BUTTON_SDK_ASSETS, behavior: PUSH_BUTTON_SDK_BEHAVIOR, materials: PUSH_BUTTON_SDK_MATERIALS, geometry: PUSH_BUTTON_SDK_RIG } = examplePart<RigGeo>('oip.push-button')
 
 // The Push Button as a custom part (examples/parts/push-button), drawn by geometry(): it exercises C-interaction
@@ -98,10 +99,11 @@ describe('Push Button custom-part rig - parity with the built-in', () => {
       const out: { pose: Pose; tag: boolean | undefined } = { pose: {}, tag: undefined }
       const ctx = {
         dt: 1 / 60,
-        params: { emergencyStop: true, momentary: true, normallyClosed: false, enableComms: true, tag: 'EStop', lampSource: 'off', lampTag: '' },
+        params: { emergencyStop: true, momentary: true, normallyClosed: false, tag: 'EStop', lampSource: 'off', lampTag: '' },
         lamps: {} as Record<string, boolean>,
         used: () => use,
         readTag: () => false,
+        tagDriven: () => false,
         writeTag: (_t: string, v: boolean) => { out.tag = v },
         setSubPose: (_l: string, p: Pose) => { out.pose = p },
       }
@@ -172,10 +174,11 @@ describe('Push Button custom-part rig - parity with the built-in', () => {
       let tag: boolean | undefined
       const ctx = {
         dt: 1 / 60,
-        params: { emergencyStop: true, startStruck: true, momentary: true, normallyClosed: false, enableComms: true, tag: 'EStop', lampSource: 'off', lampTag: '' },
+        params: { emergencyStop: true, startStruck: true, momentary: true, normallyClosed: false, tag: 'EStop', lampSource: 'off', lampTag: '' },
         lamps: {} as Record<string, boolean>,
         used: () => false,
         readTag: () => false,
+        tagDriven: () => false,
         writeTag: (_t: string, v: boolean) => { tag = v },
         setSubPose: () => {},
       }

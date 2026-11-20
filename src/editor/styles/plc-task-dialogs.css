@@ -1,4 +1,4 @@
-/* ===== Task Properties / Program Properties (components/ControllerPropertiesDialogs.tsx) ===== */
+/* ===== Task Properties / Program Properties (components/plc/ControllerPropertiesDialogs.tsx) ===== */
 /* Reuses the shared modal chrome (.author-backdrop / .author-dialog); one page each, a form then the task's programs. */
 
 .props-dialog {

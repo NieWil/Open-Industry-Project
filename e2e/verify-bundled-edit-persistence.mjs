@@ -29,7 +29,7 @@ async function main() {
       const bundled = store.getState().bundledPackages[0]
       // a fresh user package: register it (commitPackage) AND add to the catalog (addUserPackage), mirroring
       // createBlankPart - addUserPackage alone only updates state, it doesn't register into the lookup.
-      // format 5 = PACKAGE_FORMAT (src/core/partPackage.ts); commitPackage refuses any other format
+      // format 5 = PACKAGE_FORMAT (src/core/parts/partPackage.ts); commitPackage refuses any other format
       const userPkg = { format: 6, id: 'e2e.userpart', name: 'User Part', params: {}, behavior: 'definePart({ step() {} })', geometry: { kind: 'rig', links: [{ name: 'deck', shape: { kind: 'box', size: [1, 0.1, 1] }, offset: [0, -0.05, 0], conveys: true }], joints: [], bounds: { length: 1, width: 1, top: 0.05, bottom: -0.1 } } }
       store.commitPackage('seed user', userPkg)
       store.addUserPackage(userPkg)

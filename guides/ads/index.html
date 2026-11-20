@@ -22,12 +22,13 @@
     <meta property="og:image" content="https://www.openindustryproject.org/og-image.jpg?v=20261013" />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- A hand-written page, unlike /plc/. Every label, default and status line below is read from the app (editor/components/ExternalPlcSection.tsx, editor/externalPlc.ts, editor/adsLink.ts, core/ads.ts, apps/desktop/adsIo.cjs). Change those and this goes stale. -->
+    <!-- A hand-written page, unlike /plc/. Every label, default and status line below is read from the app (editor/components/plc/ExternalPlcSection.tsx, editor/links/externalPlc.ts, editor/links/adsLink.ts, core/io/ads.ts, apps/desktop/adsIo.cjs). Change those and this goes stale. -->
 
     <link rel="preload" href="/fonts/plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
 
     <link rel="stylesheet" href="/src/site/site.css" />
+    <script type="module" src="/src/site/copyCode.js"></script>
   </head>
 
   <body class="doc">
@@ -37,7 +38,7 @@
         <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
         <nav class="nav-links" aria-label="Site">
           <a href="/plc/">PLC reference</a>
-          <a href="/guides/">Connection guides</a>
+          <a href="/guides/">Guides</a>
           <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
         <a class="btn btn-sm" href="/app/">Open the editor</a>
@@ -86,8 +87,8 @@
           <li>A <b>Photo Eye</b> beside the belt, about two thirds of the way along, facing across it.</li>
         </ol>
         <p>
-          Select each part, and in the Inspector's <span class="ui">Comms</span> group tick
-          <span class="ui">Enable Comms</span>, then type the PLC's name for its variable:
+          Select each part, and in the Inspector's <span class="ui">Comms</span> group type the PLC's name for its
+          variable:
         </p>
         <div class="scroll-x">
           <table class="map">
@@ -99,8 +100,8 @@
           </table>
         </div>
         <figure class="shot">
-          <img src="img/inspector-comms.webp" width="395" height="128" loading="lazy" decoding="async"
-            alt="The Inspector's Comms group for the Photo Eye: Enable Comms ticked and Presence Tag set to MAIN.Eye." />
+          <img src="img/inspector-comms.webp" width="395" height="94" loading="lazy" decoding="async"
+            alt="The Inspector's Comms group for the Photo Eye, with Presence Tag set to MAIN.Eye." />
           <figcaption>The photo eye's Comms group, wired by name to <code>MAIN.Eye</code>.</figcaption>
         </figure>
         <p>
@@ -116,7 +117,7 @@
         <h2>Part A. The runtime on this PC</h2>
 
         <h3>A1. The PLC program</h3>
-        <pre class="code" translate="no"><code>PROGRAM MAIN
+        <pre class="code" translate="no" data-copy><code>PROGRAM MAIN
 VAR
   Eye : BOOL;
   Run : BOOL;
@@ -137,10 +138,10 @@ END_PROGRAM</code></pre>
         </p>
 
         <h3>A3. Point the simulator at the runtime</h3>
-        <p>Open <span class="ui">Simulation &gt; External PLC…</span> and set:</p>
+        <p>Open <span class="ui">Simulation &gt; PLC Controllers…</span> and set:</p>
         <ol class="steps">
           <li><span class="ui">Runs on</span>: <b>An external PLC</b>.</li>
-          <li><span class="ui">PLC connection</span>: <b>ADS, tags by name</b>.</li>
+          <li>Under it, how the PLC connects: <b>ADS, tags by name</b>.</li>
           <li><span class="ui">AMS Net ID</span>: leave it <b>empty</b>, which means the TwinCAT runtime on this PC.</li>
           <li><span class="ui">Port</span>: <b>851</b>, the first PLC project in the runtime. A second one is 852.</li>
         </ol>
@@ -256,7 +257,7 @@ END_PROGRAM</code></pre>
           <div>
             <h4>Explore</h4>
             <ul>
-              <li><a href="/guides/">All connection guides</a></li>
+              <li><a href="/guides/">All guides</a></li>
               <li><a href="/guides/plc-server/">Guide: connect a PLC that serves its I/O (Modbus TCP, OPC UA)</a></li>
               <li><a href="/guides/s7/">Guide: connect an S7-1200 or S7-1500 over PUT/GET</a></li>
               <li><a href="/guides/reference/">Reference: defaults, address rules, timings</a></li>

@@ -199,6 +199,21 @@ body.doc.ref { --max: 1180px; }
   max-width: 72ch;
 }
 .doc pre.code code { color: inherit; font-size: inherit; }
+/* copyCode.js wraps a data-copy listing and adds its Copy button */
+.doc .code-wrap { position: relative; max-width: 72ch; margin: 4px 0 18px; }
+.doc .code-wrap pre.code { margin: 0; max-width: none; padding-right: 72px; }
+.doc .code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font: 600 12px var(--sans);
+  color: var(--text-2);
+  background: var(--bg-raised);
+  border: 1px solid var(--line-strong);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.doc .code-copy:hover { color: var(--text); border-color: var(--muted); }
 
 /* a note is a caution (amber); a tip is plain information (grey) */
 .doc .note { border-left: 2px solid var(--warn); padding: 4px 0 4px 16px; margin: 6px 0 18px; max-width: 72ch; }

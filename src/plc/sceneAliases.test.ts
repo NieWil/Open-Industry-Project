@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import { unhandledProgramTags } from './bindings'
 import { controllerFor, runnableSource } from './controller'
-import { LocalPlcLink } from './plcLink'
+import { LocalPlcLink } from './link/plcLink'
 import { wrappedProgramWarning } from './sceneProgram'
 
 /** the link a scene builds for `source`, with its default table (what Play and the CLIs attach) */

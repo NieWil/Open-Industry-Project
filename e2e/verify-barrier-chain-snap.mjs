@@ -34,7 +34,7 @@ async function main() {
     }, { timeout: 30000 })
 
     const result = await page.evaluate(async () => {
-      const { findSnap } = await import('/src/core/snapFeatures.ts')
+      const { findSnap } = await import('/src/core/snap/snapFeatures.ts')
       const getPkg = window.__oip.getPackage
       const defOf = (id) => {
         const p = getPkg(id).params ?? {}

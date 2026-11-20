@@ -55,7 +55,7 @@ async function launch() {
  */
 async function readyScenes(page) {
   await page.evaluate(async () => {
-    const demo = await import('/src/editor/demoScenes.ts')
+    const demo = await import('/src/editor/demo/demoScenes.ts')
     window.__swapDemo = () => demo.createPlcDemoScene()
     window.__swapHome = window.__oip.store.getState().scene
   })

@@ -5,6 +5,13 @@ to someone as a single file. Every built-in part is authored on this same SDK
 ([architecture.md](architecture.md)), so [`examples/parts/`](../examples/parts/) is a library of worked
 examples: whatever you are building, a shipped part already does something like it.
 
+The step-by-step part guides on the site start before this one. Four guides take one blade stop from a model to a part
+that stops product, all through the app's own UI and with no code in the part: [a part from your own model](https://www.openindustryproject.org/guides/part-model/),
+[a piece that moves on a PLC command](https://www.openindustryproject.org/guides/part-motion/) (Split into pieces, a
+joint, PLC control Two positions), [its state back to the PLC](https://www.openindustryproject.org/guides/part-feedback/)
+and [stopping product](https://www.openindustryproject.org/guides/part-product/) (a collider under the moving node).
+Their pages are `guides/part-*/`, each followed by its `e2e/guide-part-*.mjs`.
+
 The API reference is the generated SDK in [`packages/part-sdk/`](../packages/part-sdk/), the same types the
 in-app editor uses for autocomplete. This guide is the overview; those files have the details:
 
@@ -33,7 +40,8 @@ A part is one portable, deterministic package:
   function (`kind: 'drawn'`) for swept and lofted forms.
 - **What it is to the host**, declared in the manifest:
   - `conveyor`: what kind of conveyor it is, what cargo rides on, which params are its speed and reverse flag.
-  - `commsParam`: the boolean that switches its PLC link.
+  - `commsParam` (optional, and usually left out): a boolean that switches its PLC link. Without one, each tag
+    field that names a tag is connected and an empty one is not, which is how the built-in parts work.
   - `snap`: how it connects to other parts.
   - `holds`: the cargo it stores, `{ part, positions, limitParam?, params? }`: a cargo package id and its
     gripper links bottom first. `params` hands the items some of the holder's own params
@@ -109,7 +117,8 @@ out, along with any helper nothing else calls.
 place of the number. The fields and forms it fits are listed under `build-parts` in [cli.md](cli.md). It refuses a
 rig it cannot express and names the field, for example a link that appears or goes with a param. Move that shape into
 `geometry()`, or write the ref in `rig()`'s output yourself, spelled as the manifest spells it. Round your own derived
-constants (an `r8` helper), or the float noise lands in the manifest.
+constants to 8 decimals (`const r8 = (n) => +n.toFixed(8)`), or the float noise lands in the manifest. Round no
+coarser: the build checks each fit to 1e-7, and a value rounded to 6 decimals reads as not following its param.
 
 **Shared modules.** A `part.js` may import named exports from other files by relative path:
 `import { legPieces } from '../_shared/legs.js'`. The build joins each imported module into `behavior.js`, so the
@@ -154,8 +163,8 @@ validated again on import. This is also how you move a part between the browser 
 ### Deleting
 
 A part you authored or imported has a **✕** on its card. Deletion is blocked while the scene still places
-the part, while it is open in the Part Editor, and in a live room. Deleting an edited built-in reverts the card to
-the app's version (your changes are discarded). On the desktop the project's parts are files in
+the part, and while it is open in the Part Editor. In a shared project the part leaves everyone's parts. Deleting an
+edited built-in reverts the card to the app's version (your changes are discarded). On the desktop the project's parts are files in
 `<project>/parts/<slug>/`, and ✕ works the same way: the folder sync then removes the part's files. Deleting a
 part's folder by hand does not remove the part. The folder sync checks the project folder once a second, and while
 `project.json` still lists the deleted folder the folder does not load: the sync holds and shows the error until
@@ -190,8 +199,8 @@ npm run add-part -- my-test ./my-part oip.roller-conveyor oip.box --place
 ```
 
 This creates `my-test/` if needed, bakes your part into the project, and checks that the built-ins
-you name exist (`npm run catalog` lists the ids). `--place` drops one of each at the origin; then set each
-part's `position` in `scene.json`.
+you name exist (`npm run catalog` lists the ids). `--place` rests one of each on the floor at the origin; give a
+part `--at x,z` after it to rest it elsewhere, or `--at x,y,z` to put its origin exactly there.
 
 `--scaffold` instead of `--place` lays out a straight line through the editor's snap engine (code:
 [lineScaffold.ts](../src/core/lineScaffold.ts)):
@@ -212,7 +221,10 @@ physically moves (reaches the discharge eye, rides the belt, or is fed on). Repl
 do. Without a conveyor and cargo it writes no test and says why.
 
 The project holds a copy of your part. After editing, rerun `npm run add-part -- my-test ./my-part` (no
-`--place`) to refresh it, or edit `my-test/parts/<id>/` directly and treat that as the source.
+`--place`) to refresh it, or edit `my-test/parts/<id>/` directly and treat that as the source. A part written
+straight into `my-test/parts/` is added by its id (`npm run add-part -- my-test acme.my-part --at 2,0`). A part written as a
+`part.js` is copied as its built files, so build it first: `add-part` refuses a folder whose built files are not what
+its `part.js` builds.
 
 Frame conventions to place parts by (confirm any part's with `check-part` on its example folder; the
 footprint is part-local):
@@ -266,13 +278,14 @@ The spec format is in [project-tests.md](project-tests.md). Four traps:
 - An `autoWhenDriven` tag param only takes over the device when a **program output** drives it (that is what
   `ctx.tagDriven` means). A test `inputs` entry on it leaves the device on its hand state. Drive it from the
   program (`Extend := NOT Release;`) and stimulate the program's inputs.
-- `eventually … equals false` passes at t = 0 when the tag starts false. Check a transition with `at:` after
-  it has had time to happen, or check `true` first.
+- `eventually … equals false` passes at t = 0 when the tag starts false, and `test-project` marks that pass with a
+  warning. Check a transition with `at:` after it has had time to happen, or check `true` first.
 - Probe a joint directly: `"probe": { "joint": { "part": "stop", "joint": "lift" } }` reads the last value the
   part commanded (latched between commands, clamped to the joint's limits). It is absent until the part first
   commands it, so a mistyped name fails as "never appeared" instead of reading 0.
-- List the tests in `project.json` `"tests"`. Once the list has an entry, `test-project` runs only the listed
-  ones; it globs `tests/` only while the list is empty.
+- List the tests in `project.json` `"tests"`: the app runs only the listed ones. `test-project` runs every
+  `tests/*.test.json`, listed or not, and notes each one the app will not run. So keep a control you expect to fail
+  out of `tests/` (a `controls/` folder), or it turns the run red.
 
 ### 4. Run it, and run a control
 
@@ -291,6 +304,8 @@ drop is proposed; `--json` prints JSON.
 
 **Looks.** `npm run shot-part -- ./my-part [--pose lift=0]` renders the part through the real renderer from
 four sides, at rest and posed, as PNGs: use it for a texture, a carve or a lamp, which no probe reads.
+`--sub-pose 'carriage={"position":[0,0.2,0]}'` poses a link the way `ctx.setSubPose` does (`slat[3]=...` for one
+copy of a posable array), once per link.
 `--params k=v,...` sets instance params first, `--focus x,y,z,r` frames a close-up of a part-local sphere, and
 `--out <dir>` picks the folder (default `<part>/shots/`).
 
@@ -400,6 +415,10 @@ side-merge snapping, deck merging), declare it in the manifest:
 - `speedParam` names the number param the host reads outside your tick (belt scroll, roller spin, the flow
   arrow, the pilot riding the surface, the spawner-interlock seed before the first tick). Any name works.
 - `reverseParam` names a hidden boolean the snap flips to turn a curve's flow around.
+- `frictionParam` names the number param that is the surface's friction against a standard carton, the figure a
+  belt datasheet quotes (a smooth PVC belt about 0.4, a rough-top about 0.9, a low-friction modular belt about
+  0.2). Other cargo grips by its own friction against it. Without one the surface grips as its `surface` kind
+  does: 0.59 against a carton for a belt, 0.42 for rollers. The shipped conveyors call theirs `friction`.
 
 ### Tier 1: `rig` (links and joints)
 
@@ -409,14 +428,22 @@ A rig is a flat list of links, each `{ name, parent?, shape, offset, rotation?|q
 - `cosmetic: true` on a joint the behavior drives purely from its own state (rolling wheels, a piston
   tracking a lift). The rig gizmo skips it (no ring, never the IK end-effector), and the idle `pose` row
   indexes only the author-posable axes. The SDK AGV's wheels and piston are the reference.
+- `mimic: { joint, multiplier?, offset? }` on a joint that follows another: the host poses it at the leader's
+  value × `multiplier` (default 1) + `offset` (default 0), held to its own limits, everywhere the leader is posed.
+  A gripper's second finger is the usual case: the behavior commands only the leader, and `ctx.setJoint` on the
+  follower changes nothing. The leader must be another joint of the rig that follows none. The gizmo and the PLC
+  panel leave a follower out.
 - `rest: { param, scale?, add? }` on a joint the behavior slews to one param's value and holds, in the joint's
   native unit (the turntable's `{ param: 'deckAngleDeg', scale: π/180 }`). The host can then mirror the
   settled pose (the pilot's surface-carry direction on a held deck) without running the behavior.
 
 `posable: true` on the rig geometry opts the part into the **teach-by-pose gizmo**: joint rings and an IK
 end-effector handle, shown when the placed part is selected and the sim is stopped. Hovering a handle names
-the joint and shows its angle; a joint with limits draws only the arc it can reach. On an arm ending in a
-three-joint wrist, dragging the end-effector keeps the tool's orientation; hold Alt to let it turn. A dragged
+the joint and shows its angle; a joint with limits draws only the arc it can reach. Up to eight joints get rings.
+The end-effector is the rig's `tool` link (a flange or TCP frame), else the last posable joint's link, and a drag
+moves only the joints between the root and it, so a gripper's fingers beside the tool keep their place. On a chain
+of six or more joints, three of them revolute, dragging the end-effector keeps the tool's orientation, whatever the
+wrist's shape; hold Alt to let it turn. A dragged
 pose is jogging, not an edit: the Inspector says the arm is jogged and offers Reset, and nothing is saved
 until Inspector → **Capture Pose** records it (robot, gantry, AGV lift). Leave `posable` off when the sim or
 PLC drives the joints (safety gate, diverter, blade stop, turntable); they articulate the same, without a pose
@@ -476,8 +503,8 @@ Every field is data the host reads; no field changes what another means.
 
 | Body | |
 |---|---|
-| `collision` | omitted = the shape's default (`box` / `cylinder` collide as themselves; `mesh`, `cone`, `frame`, `label`, `leg` do not). `'none'` = drawn but never solid (a roller bed's rollers, where the conveying box is the real surface). `{ box: [x, y, z] }` on a `mesh` link = collide as that box, centred on the link origin |
-| `conveys` | this box is a conveying surface: cargo on its top rides at the velocity the behavior sets |
+| `collision` | omitted = the shape's default (`box` / `cylinder` collide as themselves; `mesh`, `cone`, `frame`, `label`, `leg` do not). `'none'` = drawn but never solid (a roller bed's rollers, where the conveying box is the real surface). `{ box: [x, y, z] }` on a `mesh` or `frame` link = collide as that box, centred on the link origin (on a `frame`, a solid whose look comes from `geometry()`) |
+| `conveys` | this box is a conveying surface: cargo on its top rides at the velocity the behavior sets. Under a jointed parent it follows the joint and carries its cargo along, so a vertical lift is a `conveys` deck on a prismatic joint. Turned in the part, it is built at that turn and runs on its local +Y face: a side belt is a `conveys` box stood on its edge (it grips only on a firm squeeze, since a contact up to 2 mm deep on a sideways face is ignored as a seam snag) |
 
 | On a conveyor (`'left'` is −Z; the bed runs along +X) | |
 |---|---|
@@ -496,6 +523,7 @@ Every field is data the host reads; no field changes what another means.
 |---|---|
 | `beam` | a sensor ray the behavior reads with `ctx.sense`. Cast from where its link stood at the end of the last step, so an eye on a moving link moves with it ([stretch-wrapper](../examples/parts/stretch-wrapper/)'s carriage eye). It sees cargo, the walking pilot, and a box the pilot carries. Length is the static `range`, or the `number` param named in `rangeParam` (what it senses and draws; a mount's `fitRangeParam` usually names the same one). `showParam` names a boolean that hides the drawn line. The host reads no param by its name: a param called `maxRange` does nothing until a beam names it. `axis` is the link-local direction (default +Z); `tint: 'hit'` colours a blocked beam with the cargo's tint instead of red (the colour sensor) |
 | `zone` | a cargo volume for `ctx.zone` / `ctx.despawn`. Never counts the pilot or a box the pilot carries |
+| `loadCell` | this box link is a weighing platform, read with `ctx.weight` in kg. The host measures the force from the physics: each body resting on the link and everything stacked on it, at its own mass and with its vertical acceleration, so a landing or a lift starting reads high for a moment. A load on the link alone counts in full, even hanging past its edge; one that also rests on something else (a case crossing onto it, a pallet bridging two scales) is shared by where its centre of gravity falls between the two. Works on a `conveys` deck (a weigh belt) or a plain solid box (a platform scale) |
 | `grip` | a gripper link's pickup volume: `{ zone: { size, offset?, sizeParams? } }` (an oriented box in the link's frame) or `{ radius, radiusParams? }` (a reach past the link's extents; default 0.2 m). Any link can be commanded to grip; this sizes what it takes. Add `forks: { spread \| spreadParam, bladeWidth, bladeThickness }` for a fork gripper whose blades run along the link's +X; taking a pallet through a face its blades don't fit is reported on the part ([agv](../examples/parts/agv/)) |
 
 | Lamps | |
@@ -506,8 +534,9 @@ Every field is data the host reads; no field changes what another means.
 | Layout and motion | |
 |---|---|
 | `offsetParams` | param-driven placement (a hinge at `±length/2`) |
-| `showParam` | a boolean param; the link exists (mesh and body) only while true. Works on arrayed links (zero instances), as with the platform's railing and support toggles |
-| `array` | repeat the link: `count` (a param name) + `step` (optionally `centered`; `stepParams` makes a step axis track a param); or `distribute` along a span (`spanAdd` lengthens it past the param, so a railing just outside a deck reaches the corner; `worldPhase` pins copies to the world pitch grid so butted beds align); or a `grid` crossing two param-driven axes into an X×Z lattice (a pitch per axis, or a fixed `maxSpacing`). `grid` works on a `mesh` link too. `omitFirstParam` / `omitLastParam` name booleans that drop the end copy of a 1-D array, so butted barriers don't double a post |
+| `rotationParams` | param-driven turn, per Euler axis in radians (a splay of `angle` degrees is `scale: π/180`); not with `quat` |
+| `showParam` | a boolean param; the link exists (mesh and body) only while true. Works on arrayed links (zero instances), as with the platform's railing and support toggles. `'param=value'` names an enum param instead: the link exists only while it is that value (an imported robot's own hand, `'tool=hand'`) |
+| `array` | repeat the link: `count` (a param name) + `step` (optionally `centered`; `stepParams` makes a step axis track a param); or `distribute` along a span (`spanAdd` lengthens it past the param, so a railing just outside a deck reaches the corner; `worldPhase` pins copies to the world pitch grid so butted beds align); or a `grid` crossing two param-driven axes into an X×Z lattice (a pitch per axis, or a fixed `maxSpacing`). `grid` works on a `mesh` link too. `omitFirstParam` / `omitLastParam` name booleans that drop the end copy of a 1-D array, so butted barriers don't double a post. `pitch` fits round(span ÷ pitch) copies exactly `pitch` apart (span = `spanParam × spanScale + spanAdd`, plus `param × scale` for each of `spanTerms`; at most 1024 copies), the count for carriers on a loop. `posable: true` lets the behavior move each copy ([Rows of moving carriers](#rows-of-moving-carriers-posable-arrays)) |
 | `aim` | a two-point look-at (hydraulics that stay connected as a parent moves) |
 
 More fields, each documented in [`manifest.d.ts`](../packages/part-sdk/manifest.d.ts):
@@ -515,7 +544,9 @@ More fields, each documented in [`manifest.d.ts`](../packages/part-sdk/manifest.
 - A `sizeParams` / `offsetParams` entry (and a joint's `minParam` / `maxParam`) is `param * scale + add`, with
   optional `min` / `max` clamps for a floor or ceiling the linear map can't express (a corner section that must
   stop at the centreline on a narrow lane). `mulParam` multiplies by a second param first (the chain transfer's
-  deck width = `chains` × `distance`).
+  deck width = `chains` × `distance`). Entries for one axis apply in order, each replacing it, unless it says
+  `plus: true`, which adds its value instead: an offset at `length/2 + gap` is a `length` entry, then a `gap` entry
+  with `plus`. A joint limit and a leg's `frameDepthParam` hold one ref, so they take no sum.
 - `leg` is `{ spanParam, widthParam, standParam, frameDepth, frameDepthParam?, arc? }`: a trestle row along the
   span, its height tracking the stand param; `arc: { radiusParam, sweepDeg }` fans it round a curve.
 - `label` takes `size: [w, h]` (m, default 0.05 × 0.05) and `color` (the text, r,g,b 0..1, default black).
@@ -539,6 +570,10 @@ More fields, each documented in [`manifest.d.ts`](../packages/part-sdk/manifest.
   `cargo: { forkPockets: true, heavy: true, loadBase: true }`. The built-in pallet and tote have these by kind
   ([cargo-bodies.md](cargo-bodies.md)).
 - A top-level `thumbnail` (a data URL) is the catalog card's picture.
+- A top-level `category` is the catalog tab the part is listed under. `Equipment`, `Devices`, `Products` and
+  `Structure` match in any case. Any other name (up to 64 characters) gets a tab of its own after those four, and
+  names that differ only in case share one. A part with no category is Equipment. `check-part` warns when a name is
+  a letter or two off a standard one (`Device`), since that makes a separate tab.
 
 A roller bed draws its rollers in `geometry()` on the grid `ctx.deltas` hands it; that is how
 [roller-conveyor](../examples/parts/roller-conveyor/part.js) skews its bank so cargo tracks across the bed
@@ -628,14 +663,15 @@ is not a conveyor must name it (`speed: 'fanSpeed'`) or it is refused when built
   in texture tiles along the direction of travel (`u = metres × tilesPerMeter`); the pattern travels at
   `speed` m/s toward +U. For a chain's links, a belt's weave, a cable carrier.
 - `spin: { axis, radius, center?, speed? }`: the submesh turns about `axis` through `center` at
-  `speed ÷ radius` rad/s, right-handed for a positive speed. For a pulley, fan, sprocket. On an `instances`
-  bank, every instance turns about its own axis (a roller bed). The host turns the material's grain rather
-  than the geometry, which adds no per-frame work and sets two rules:
+  `speed ÷ radius` rad/s, right-handed for a positive speed. For a pulley, fan, sprocket: the mesh itself turns,
+  teeth and all. On an `instances` bank, every instance turns about its own axis (a roller bed). The host turns
+  the material's grain rather than the geometry, which adds no per-frame work, so a bank's shape never turns
+  (draw toothed wheels as submeshes of their own), and sets two rules:
   - lay the template's axle along local Z through its origin (`axis` must be `[0, 0, 1]` or `[0, 0, -1]`;
     `check-part` reports anything else);
   - draw it in a material whose grain can turn: finish `'roller'`, or a package material with
-    `triplanar: { space: 'object' }`. The grain is sampled in the template's own units, so a template at
-    another scale shows a coarser or finer grain.
+    `triplanar: { space: 'object' }` (`check-part` reports a bank in anything else, which holds still). The
+    grain is sampled in the template's own units, so a template at another scale shows a coarser or finer grain.
 
   A roller bed carrying cargo toward +X turns about `[0, 0, -1]`.
 
@@ -662,7 +698,18 @@ A `geometry()` submesh is decorative until it declares a channel. You say what i
 | `collision: 'hull'` | a convex hull of the submesh's vertices | anything an AABB misrepresents: a round pillar, a ramp, a chamfered plinth. The submesh must be convex (split a concave solid into several submeshes). Never merged, so don't use it for guards |
 
 A hulled submesh past the host's hull-point cap falls back to its AABB box, so hull the simple shape, not a
-dense visual mesh. Example: [shape](../examples/parts/shape/behavior.ts), whose box/cylinder/cone/ramp
+dense visual mesh.
+
+A solid's surface takes a `friction`, on the scale a conveyor's `frictionParam` uses (0 to 2; the cargo's own friction
+combines with it): a slide chute's plate, a rubber stop pad. Without one, a `'box'` has none, so cargo slides along it
+like a wall, and a `'hull'` has 0.5, which a standard carton only slides down past about 27 degrees. A rig link takes
+the same field (its default is 0.6). A side guard never has friction, and a `conveys` deck takes its conveyor's
+`frictionParam`, so `check_part` refuses `friction` on either.
+
+```js
+// a slide chute's plate: a carton starts sliding at about 10 degrees
+parts.push({ desc: plate, collision: 'hull', friction: 0.06, material: 'steel' })
+``` Example: [shape](../examples/parts/shape/behavior.ts), whose box/cylinder/cone/ramp
 primitives are each one convex, hulled submesh.
 
 #### Repeated hardware: `MeshPart.instances` (instanced templates)
@@ -703,6 +750,65 @@ link (collision only) dressed by a procedural mesh. The SDK **Fence** and **Safe
 collision box (a full-span barrier, or a swinging leaf) plus a wire-mesh grid and e-stop from `geometry()`,
 with the leaf's mesh tagged `link: 'leaf'` so it swings with the hinge. See
 [fence](../examples/parts/fence/part.js) and [safety-gate](../examples/parts/safety-gate/part.js).
+
+`hidden` hides a link and everything attached to it, so the dressing can't go on the hidden box itself. For a
+solid that moves and carries its own look, make the link a `frame` with `collision: { box: [x, y, z] }` and tag
+the mesh with that link: one link, one pose, and the collider and the look move together.
+
+#### Rows of moving carriers: posable arrays
+
+A sorter's slats and shoes, a slat conveyor's pushers, a bucket elevator's buckets: many identical solids, each
+moving on its own, as many as the machine's length holds. Declare them as one array link with `posable: true`,
+counted by the `pitch` form, and pose each copy from `step()`:
+
+```js
+// rig(): one link per kind of carrier, whatever the length; the offset is where the row stands at rest
+{ name: 'shoe', shape: { kind: 'frame' }, offset: [0, 0.025, 0.34], collision: { box: [0.06, 0.05, 0.14] },
+  array: { pitch: { axis: 0, spanParam: 'length', spanAdd: -0.04, pitch: 0.076 }, posable: true } }
+
+// geometry(): the shoe's look, drawn once per instance and moving with it
+parts.push({ desc: shoeBody, material: 'shoe', link: 'shoe' })
+
+// step(): place every carrier on the chain, in the part's frame (the link's parent), as setSubPose places a link
+const n = ctx.arrayCount('shoe')
+for (let i = 0; i < n; i++) ctx.setSubPose('shoe', { position: [x(i), y(i), z(i)], rotation: [0, 0, turn(i)] }, i)
+```
+
+Each copy is a kinematic body moved like any posed link, so it pushes cargo. A pose places a copy where the same
+pose would place the link itself, so the link's offset and the array form only say how the row stands at rest: on
+a stopped part, and for any copy not posed this tick. Put the rest row somewhere sensible (a sorter's shoes home
+along the top run) and pose in the parent's frame. `ctx.arrayCount` reads the count the host built for this part's params, so the script
+never repeats the count rule. Things that ride a carrier and move against it (a shoe sliding across its slat) are
+a second posable array with the same count, posed with the same index; a link can't hang under a posable array,
+because it would follow the row, not one copy. All copies of an array draw as one instanced mesh.
+
+A carrier with its own belt (a cross-belt sorter, a vertical conveyor's powered platforms) is a posable array that
+`conveys`: each copy is a deck of its own, posed like any copy, and run on its own with
+`ctx.setSurfaceSpeed(speed, link, i)` along the copy's local +X (`ctx.setSurfaceSpeed(speed, link)` runs every
+copy). Cargo on a copy moves with the copy and along its belt. A copy given no speed this tick stands still, and
+the part-wide `setSurfaceVelocity` / `setSurfaceSpeed(speed)` never run the copies. A single deck the behavior moves
+with `setSubPose` (a shuttle's roller top) is a plain `conveys` link: it follows its pose and carries its cargo.
+A `finish: 'belt'` submesh attached to a conveying array is each copy's belt fabric, and it scrolls at that copy's
+speed; draw it as a box with its length along +X, the direction the deck conveys, so the weave runs the right way.
+A posable array with a `grip` is a gripper per copy (a magazine's positions, each holding the load it stands
+under): `ctx.setGrip(link, on, i)` closes copy `i` from where it stands, and it reports under `link#i` in
+`ctx.measured.grips`.
+
+A row whose length follows more than one param counts with `spanTerms`: a racetrack loop of two straights and two
+half turns is `{ spanParam: 'straightLength', spanScale: 2, spanTerms: [{ param: 'curveRadius', scale: 6.2832 }], pitch: 0.6 }`.
+A pose that turns about more than one axis at once (a tray tilting toward its chute while it follows a curve) is
+easiest as a quaternion: `setSubPose(link, { position, quat: [x, y, z, w] }, i)`, composed from the heading and the
+tilt, in place of Euler `rotation`.
+
+A part whose copies keep moving while the scene is stopped (a chain that runs on its own) never settles, so the
+stopped editor can't show a settled pose. It shows where the copies stood after 5 s of settling instead of their
+rest row; a whole link that never settles still goes back to rest.
+
+Publish the carriers' positions as tags rather than leaving the program to work them out. A program that
+repeats the part's count rule, pitch and loop length to track cargo breaks the moment the part's geometry changes
+(a size param, a count rule merged into one array). A real sorter's controller reads a carrier-number count and a
+home flag from the machine, so give the part outputs that say which carrier stands at each station, and let the
+program track cargo by carrier number.
 
 #### Geometry that has to meet a neighbour: the third argument, `ctx: GeometryContext`
 
@@ -789,6 +895,12 @@ A model becomes a working part as a rig (Tier 1) whose visible links are `mesh` 
 
 ### Formats
 
+The quickest way in is **Import part** in the Parts dock (or a drop on it) with a model file: it makes a new part
+named after the file and opens it at the file's import options. When a model replaces the only node of a part (a
+new part, or one made by New part), the part is fitted to it: the model stands on the origin, a hidden `collider`
+box link of its size is added, and `bounds` are set to its box. A part with other nodes is the author's arrangement
+and is left as it is.
+
 The app reads **GLB** (Draco-compressed is fine) and **STEP** (`.step` / `.stp`). **Import model…** converts
 STEP to GLB: it reads the file's units, turns its up axis into +Y, and sets the model on the node's origin
 (base at 0, centred across). It offers four choices first:
@@ -803,7 +915,27 @@ STEP to GLB: it reads the file's units, turns its up axis into +Y, and sets the 
 
 A large assembly takes about 2 s per MB of STEP. Headless, `npm run import-model -- model.step` runs the same
 conversion to `model.glb`, with the same choices as options (`--up z|y`, `--detail coarse`, `--min-part-mm <n>`,
-`--no-merge`) and the up axis guessed from the header when `--up` is not given. Convert anything else first:
+`--no-merge`) and the up axis guessed from the header when `--up` is not given.
+
+It also reads **USD** (`.usd` / `.usda` / `.usdc` / `.usdz`). A USD model is often several files: a model file
+that is only an index of layers and textures in folders beside it. A `.usdz` holds them all. On the desktop,
+picking the model file reads its folder with it. In a browser, which can read only the files it is handed, the
+model file is checked first, and one that pulls in files that are not there asks for its folder (**Pick its
+folder…**) instead of converting. The folder's model file is the USD file nearest its top (a choice is offered when
+there are several). The reader composes the model as USD does (references, payloads,
+variants as selected, overrides, instancing), takes its units and up axis from the file, and the import writes
+one mesh per material, on the node's origin like STEP. The choices:
+
+- **Detail**: reduced simplifies each mesh to about a quarter of its triangles. Models made for rendering are
+  often far heavier than a simulation needs: a 2 m roller conveyor came in at 290k triangles (72k reduced), a
+  cardboard box at 15k. Cargo spawned by the hundred needs reduced.
+- **Texture size**: the longest side of each texture, 512 to 2048 px (1024 by default).
+
+What it leaves out: physics values (mass, friction, colliders: give the part its own), animation, lights, and
+geometry other than meshes and the basic shapes (curves, points). A model's own licence travels with it and the
+import does not record it: one that asks for credit (CC BY) still does. The reader runs only in the app (the
+browser or the desktop app), not in `import-model`; an agent uses `import_model`, which reads a `.usd` model file
+with the layers and images under its folder. Convert anything else first:
 
 - `.gltf` + separate files → `npx gltf-transform copy model.gltf model.glb` (in this repo's devDependencies).
 - OBJ → `npx gltfpack -i model.obj -o model.glb` (also in the devDependencies).
@@ -812,6 +944,67 @@ conversion to `model.glb`, with the same choices as options (`--up z|y`, `--deta
 - STL → the same, but an STL is one mesh with no nodes and no units. Split the moving pieces into separate,
   named objects in Blender first (nothing can be rigged otherwise), and check the scale.
 - IGES → tessellate in a CAD tool (FreeCAD, CAD Assistant) and export GLB with the assembly's named parts.
+
+### A robot (URDF)
+
+**Import part > A robot (unzipped folder)…** takes a robot description folder (its `.urdf` or `.xacro` file and the meshes it
+names) and makes a posable part of it, with no options to set. A browser's folder dialog lists no files, so the
+folder itself is what to select. A `.zip` of that folder works too, picked in **Import part > A robot (.zip or URDF file)…** or
+dropped on the Parts dock or the 3D view, and so does the folder dropped there. A zip may unpack to 200 MB at most. Each URDF link becomes a rig link and each revolute, continuous
+or prismatic joint becomes a joint with the file's limits. A continuous joint gets ±180°. A fixed joint joins its
+links without one. Joint value 0 is the pose the robot was described in. The links keep their URDF frames, so
+nothing is re-expressed per link. URDF's +Z up becomes +Y by one turn on the root link. Each link's visuals go into
+one GLB, a node per link, drawn by that link (`node`).
+
+- **Meshes**: STL, COLLADA (`.dae`) and OBJ. `package://<package>/<path>` is matched against the picked folder by
+  its longest tail, so the folder can be the package, its parent or a workspace. A relative path is resolved
+  against the URDF file. A COLLADA file keeps its own colours, units and up axis, and an OBJ the colours of the
+  `.mtl` file it names. A material painted with an image keeps it as a texture (a UR20's grey and blue are one
+  image), shrunk to 1024 px on its longest side and stored once in the part however many meshes use it. STL, an OBJ
+  without its `.mtl`, and the primitives (box, cylinder, sphere) take the URDF material's colour, read as sRGB.
+- **Size**: past 150k triangles in all, the meshes are simplified toward that. Robot CAD exports are usually far
+  finer than a simulation needs. A mesh whose normals are stored per triangle corner (nothing to share) gets them
+  recomputed, smooth across faces that meet within 30°, which keeps its vertex count near a welded mesh's.
+- **Collision**: each `<collision>` becomes a hidden link under its URDF link: a box or cylinder as itself, a sphere
+  as the box around it, and a mesh as the box that bounds it in its own frame. So cargo meets the robot's links,
+  coarsely. A link without `<collision>` draws and does not collide, as in URDF.
+- **Tool**: the link named `tool0` (ROS-Industrial's flange frame), else one with `tcp`, `flange` or `ee` in its
+  name, becomes the rig's `tool`, the point the pose gizmo drags.
+- **A robot**: the part is a robot (see "Robots: let the host run the controller"), driving the joints between the
+  root and the tool, with waypoints, jobs and the PLC tags in its Inspector. It carries the app's tools (vacuum
+  plate or clamp gripper, picked in its Inspector's Tool), mounted along the frame's +Z (the outward direction of
+  `tool0` and of a TCP frame). An arm whose URDF has a hand (a single sliding joint beside the arm) grips with that
+  hand, its finger opening and closing with the grip, and its Tool offers "Its own hand" first. Picking another tool
+  takes the hand off: the hand's links are `showParam: 'tool=hand'` (`robot.hand` in the declaration), and the app's
+  tool mounts on the link the hand was fixed to. A hand that is part of the arm's last moving link cannot come off,
+  so that arm keeps only its hand.
+- **Ready pose**: an arm of revolute joints idles in a ready pose, also its Home waypoint: the tool pointing down in
+  front of the base (+X) at 40% of the arm's length out and 15% up, with the elbow as high as it goes. The pose an
+  arm was described in is often not a working one (a UR lies flat), and teaching by position starts from the idle
+  pose, so this keeps taught poses elbow up. An arm with a sliding joint, or one no ready pose reaches, idles at 0.
+- **mimic** becomes a joint `mimic`, so a gripper's second finger follows the first. A follower of a fixed or
+  missing joint, or of one that follows another itself, moves on its own and is listed.
+- **Not imported**: inertia, floating and planar joints (the link stays put), and Gazebo tags. Each is
+  listed in a message after the import.
+- **xacro** is expanded to URDF first (core/xacro.ts), as ROS's `xacro` tool does, so a description published only
+  as xacro imports without ROS. Properties, arguments, macros (defaults, `^`, `*block`, `**content`), includes, `if`
+  and `unless`, `insert_block`, `element` and `attribute` are read, with `$(arg)`, `$(find)`, `$(eval)`,
+  `$(optenv)`, `$(dirname)` and `$(anon)`. A `${...}` expression is the part of Python descriptions use (arithmetic,
+  comparisons, `in`, `a if c else b`, indexing, a YAML dict's keys as attributes), and `xacro.load_yaml` reads a YAML
+  file in the folder, an angle tagged `!degrees` in radians as xacro reads it (UR descriptions write joint limits and
+  mesh turns that way). `$(find pkg)` is the folder whose `package.xml` names `pkg`, so pick a folder holding every
+  package the robot uses (often the repository it came from). Arguments take their defaults. When one names a model
+  the folder lacks (a UR description's `ur_type` names none on purpose), the import asks which, from the folders that
+  hold the rest of the missing file's path, and names the part with it (`ur (ur5e)`). An on/off argument whose other
+  value adds or removes a link (Franka's `hand`) is asked about before the import, as a checkbox at its default; one
+  that changes only what ROS reads beside the robot (a controller, a simulator plugin) is not. A switch turned on
+  names the part too (`panda (hand)`). Not read: an include's `ns`,
+  `$(env)`, and Python beyond that part; each stops the import with its reason.
+
+A lone `.urdf` (from Import part's file picker or a drop) imports its primitives and lists the meshes it could not
+find. A folder with several robot descriptions at its top asks which one to import; a xacro file that only defines
+macros for others is not offered. The new part's joints can be driven
+from the PLC with no code: select a joint's node and use the Joint section's PLC control.
 
 ### 1. Read the model
 
@@ -860,6 +1053,9 @@ from the `inspect-glb` boxes before choosing the range.
 
 - `keepNode` keeps one node's subtree. A moving piece made of several sibling nodes needs `hideNodes` listing
   everything else, as above.
+- Each node is drawn by one link, the nearest that keeps it. A node a `keepNode` link keeps is left out of the
+  other whole-scene links of that asset without a `hideNodes` entry, and a piece kept from inside another piece
+  (a bit inside a motor head) is left out of that piece too. `hideNodes` is for nodes no link should draw.
 - A `node` ref (one node's mesh in its mesh-local frame, its transform reset) is for re-assembling pieces
   yourself, like a robot's links. You then transcribe each node's transform into the link's `offset` /
   `rotation`, the work carving avoids.
@@ -879,10 +1075,59 @@ from the `inspect-glb` boxes before choosing the range.
 - When the origin is a mount point, give the box's centre with `centerX` / `centerZ` (m from the origin). When
   the part's size is a param, tie the box to it with `bounds.params`: each entry sets one field (`length`,
   `width`, `top`, `bottom`, `centerX`, `centerZ`) to a linear map of a param, with the same rule as
-  `sizeParams` (`param`, `scale`, `add`, `mulParam`, `min`, `max`). Snapping, selection and drop-rest then see
+  `sizeParams` (`param`, `scale`, `add`, `mulParam`, `min`, `max`, and `plus` to add a second param's term). Snapping, selection and drop-rest then see
   the part at every setting. The [diverter](../examples/parts/diverter/rig.json) does both: its origin sits
   toward the guard it mounts on, its length and centre follow its stroke, and its bottom follows its stand
   height.
+- A `face` handle takes over its axis: a param with `handle: { kind: 'face', axis: 'x' }` IS the footprint's length
+  (`'z'` its width, `'y'` its height), whatever `bounds` says. So hardware past the body the handle sizes (a ramp, an
+  indicator head) is outside the footprint. Leave the handle off a param that is not the whole extent, and tie
+  `bounds` to it with `bounds.params` instead.
+
+#### Carving in the editor
+
+The Part Editor writes the same carving for you. Import the model onto a node (**Import model…**), then:
+
+1. **Split into pieces** on that node lists the model's nodes. Click one to give it its own node, which keeps only
+   that node (`keepNode`) from the same asset, at the offset that keeps it in place. The model node stops drawing
+   it because another node keeps it. Nothing is imported twice.
+2. To make several pieces move together, select the first split piece and click the others under its own
+   **Split into pieces**. They become its children and follow its joint. A node inside a split piece (a bit inside
+   a motor head) can be split out too, and the piece stops drawing it.
+3. **Add joint** on the piece and set its type, axis and limits.
+4. For a revolute joint, **Pivot** sets the point it turns about, in part coordinates, and **Pivot at centre**
+   puts it at the centre of everything the joint moves. A node that draws something gets a `frame` inserted
+   above it to carry the joint, with the same joint name, so the rest pose and the behavior script are unchanged.
+
+5. **Test motion** moves the joint from Min to Max and back twice, then returns it to rest, without running the
+   simulation or writing anything to the part. **Position** poses it by hand: drag across the field between Min
+   and Max (0 to 360° for a spinning joint), or type a value. Both go back to rest when another node is selected.
+6. **Spins endlessly** on a revolute joint makes it a wrapping servo (`servo.modulo` 2π, limits 0 to 2π) with a
+   **Speed** in rpm (`maxVelocity`) and a **Spin-up time** (`maxVelocity / maxAccel`). A servo is posed by the host,
+   so the behavior runs it with `ctx.servos[name].moveVelocity(...)` instead of `setJoint`. The panel shows those
+   lines with the speed filled in. Test motion then turns it at that speed.
+7. **PLC control** sets how a PLC moves the joint without code. **None** (the default) leaves the behavior to you.
+   **Two positions** writes the whole behavior script: per joint, a BOOL `Command (to B)` tag in, `At A` and `At B`
+   BOOL tags out and a **Stroke time** (s). The joint moves from A (Min) to B (Max) at a constant speed while the
+   command is TRUE and back while it is FALSE. A joint whose limits follow a param (`minParam` / `maxParam`) can't
+   take it, since the script writes Min and Max as numbers. On each placed copy the Comms fields name the PLC variables (`ToB`
+   for the built-in PLC, `MAIN.ToB` over ADS). On a joint that spins endlessly the mode is **Spin** instead: a BOOL
+   `Run` tag in (TRUE spins), an optional REAL `Speed (rpm)` tag in (empty: the copy's own Speed, up to the joint's
+   Speed), and a BOOL `At speed` tag out; the host runs the servo. The script keeps its settings on an `// oip-panel` line and is
+   written again when a joint's PLC control or limits change or its node is deleted or merged back, so edits to it
+   are lost. Each joint's param keys are kept on that line too, so a placed copy's tag names stay bound when other
+   joints change. A script you wrote is replaced
+   only after a confirm, and setting every joint back to None gives the empty template.
+
+A piece split under the wrong node can be fixed two ways. **Merge back into model** removes the piece with its
+joint, so the model draws it again, and the pieces under it move up. **Delete** does the same for the node and
+everything under it. **Parent** moves any node under another one, changing its offset so it stays where it is.
+
+Lengths show in the scene's Length. Setting **Length** to **Millimeters (mm)** in Scene Properties shows them in
+millimetres, which suits a machine's dimensions. The part always stores metres.
+
+Pieces are offered only where they still line up: the nodes between the model node and the selected node must
+carry plain offsets (no rotation, no param-driven placement).
 
 ### 4. Behavior and verify
 
@@ -902,7 +1147,7 @@ types to catch it. The check reads the source, so a read through a destructured 
 | `number` | slider/field | `min` / `max` / `step`, `unit`. With both `min` and `max` it is a slider; without them it is typed or stepped, so give an unbounded size a viewport handle instead. `unit: '%'` stores a fraction (0 to 1) and shows a percentage. See units below |
 | `boolean` | toggle | |
 | `string` | text field | |
-| `tag` | PLC tag picker | autocompletes from the scene's tags. Use it for every tag-name param |
+| `tag` | PLC tag picker | autocompletes from the scene's tags. Use it for every tag-name param. `dir`, `stType` and `unit` say what the program declares; see units below |
 | `numberList` | typed grid | fixed `arity` per row; arrives as `number[][]` (waypoints, poses). See below |
 | `color` | swatch | `#rrggbb`. `list: true` makes a row of swatches with add / remove; the value stays a `string` of `#rrggbb` entries joined by commas (`''` = none). `alpha: true` adds an A slider and makes the value `#rrggbbaa` |
 | `enum` | dropdown | options can carry `rows` + `stamps: '<numberList param>'` to stamp templates |
@@ -931,8 +1176,12 @@ and a length or speed field converts typed units (`5ft`, `600mm`; `394 fpm` in a
 trailing `(m)` in the label is also read as the unit, but only when it is exactly that: with
 `'Speed (m/s, − reverses)'` the field has no unit, no suffix and no conversion (typed `394 fpm` becomes 394).
 Put extra explanation in `desc`. `unit: 'rpm'`, `'°'` and `'°/s'` show as suffixes without converting. A
-length or speed field displays in the scene's Units (a metre field reads inches in an imperial scene, an
-`'FPM'` one reads m/s in a metric one); `step()` always reads the unit you declared.
+length field displays in the scene's Length and a speed field in its Speed (a metre field reads inches in an
+imperial scene, an `'FPM'` one reads m/s in a metric one); `step()` always reads the unit you declared.
+
+A `tag` param's `unit` is the unit of the value on the wire, shown after its type in the field's badge
+(`READ REAL m/s`) and in Device Tags, so a program declares and scales it right. Put it there, not in the label.
+The scene's Units never convert it. A `setpointFor` tag that declares none takes its param's unit.
 
 **Hidden params.** `hidden: true` makes a param storage rather than a field: resolved, defaulted, clamped and
 persisted, but never shown. Use it for engine-owned state the user must not hand-edit (compare `rest`, which the
@@ -954,12 +1203,12 @@ These declarations change how a field is edited without changing the value the p
 | `product: true` | `string` | the value is a cargo part's package id (`'oip.tote'`): a dropdown of the cargo parts, and the project holds a copy of the part named |
 | `settings: 'key'` | `string` with `product` | names a hidden `string` param holding the chosen product's settings as JSON; the Inspector shows the product's own params under the dropdown |
 | `values: [{ value: 1, label: 'red' }, ...]` | `INT` / `DINT` `tag` | what each code means, listed on the field and by `npm run catalog` |
-| `imperialUnits: true` | `boolean` | the part's units switch (true = imperial). The scene's Units (Scene Properties) write it on every part and carry each pair of values it switches between (same-label `number` twins, and `tag` twins through `setpointFor`); the Inspector never shows it. Pair it with `whenAbsent` |
+| `imperialUnits: true` | `boolean` | the part's units switch (true = imperial). The scene's Speed (Scene Properties) writes it on every part and carry each pair of values it switches between (same-label `number` twins, and `tag` twins through `setpointFor`); the Inspector never shows it. Pair it with `whenAbsent` |
 
 **Groups and labels.** Follow the Inspector's conventions so every part reads the same:
 
-- The PLC switch (`commsParam`) and every `tag` param go in `group: 'Comms'`. While the switch is off the
-  Inspector hides the rest of that section.
+- Every `tag` param goes in `group: 'Comms'`. A part that declares a PLC switch (`commsParam`) puts it there
+  too, and while the switch is off the Inspector hides the rest of that section.
 - Detail a plant program reads back but few scenes set (a conveyor's drive feedback) goes in
   `'Comms/Feedback'`. A nested section starts folded.
 - A param that is only the state the device starts in, which Use then operates (a diverter's `diverted`, a
@@ -986,7 +1235,7 @@ does not count it.
 **`whenAbsent`** (boolean params) is the value a part takes when its saved params lack the key; `default` is
 what a newly placed part gets. Use it only when a new switch changes what existing numbers mean. The conveyors'
 `fpmUnits` has `whenAbsent: false`, so a belt saved before the switch existed stays in m/s instead of reading
-its `speedTag := 2.0` as two feet per minute; a newly dropped belt takes the scene's Units, as any
+its `speedTag := 2.0` as two feet per minute; a newly dropped belt takes the scene's Speed, as any
 `imperialUnits` switch does. An ordinary new param needs only `default`.
 
 **Tag params.** Every `'tag'` param declares `dir` and `stType`, or the part is refused.
@@ -1078,15 +1327,44 @@ frame's outer face, the top flange a flange width further out), with `c` the slo
 [_shared/guardMitre.js](../examples/parts/_shared/guardMitre.js). A rig guard or rail box needs neither: the host
 cuts it.
 
+**Facts the host fills in.** A part never sees the scene, so the host works out what its surroundings mean for it and
+hands each fact to a `drawn` part as a numberList param of a fixed name. Your `geometry()` reads it, and the sim
+builds the part's colliders from the same params, so the fact reaches collision as well as the mesh. Declaring the
+param is how a part takes the fact. Leave one out and the part still loads, but that fact never reaches it: a
+diverter's arms run into a solid guard, or a sensor beam passes through one. `npm run check-part` warns about each
+fact your part's own declarations say it needs and it doesn't take
+([src/core/parts/hostFacts.ts](../src/core/parts/hostFacts.ts)). Every row is arity 3, and every param but
+`guardOpenings` is `hidden: true`, since the host overwrites it.
+
+| Param | Rows | What the host puts there | Taken by |
+|---|---|---|---|
+| `guardOpenings` | `[start, end, side ±1/0]` | a belt's openings, in arc length: authored ones and those a neighbour's end or a diverter makes | a belt with guards |
+| `guardGaps` | `[x0, x1, side ±1]` | where it opens a straight or spur bed's guards (a diverter mounted on one), in local X | a straight or spur with guards |
+| `guardHoles` | `[x, y, side ±1]` | where a sensor beam crosses a guard (a curve's `x` is its arc angle) | any conveyor with guards |
+| `guardExtents` | `[side ±1, backX, frontX]` | where rails and guards stop at a side merge: the host's wall plane | a straight, spur or belt |
+| `guardMitres` | `[x, c, side ±1]` | how a guard end at a junction is cut | a conveyor whose guards meet another's |
+| `railCuts` | `[x, c, side ±1]` | how a rail end is cut to stop against the host's frame | a straight, spur or belt with rails |
+| `legRests` | `[x0, x1, dy]` | per-leg footing over a platform crossing under the part | a legged part |
+
+A spur takes end joins only (it is itself the merge), so no conveyor end opens its guards. Only a device mounted on
+one does, through `guardGaps`. Build each solid run of a gapped guard as its own `collision: 'box'` part, so the
+collider stops at the gap as the mesh does: [_shared/guardGaps.js](../examples/parts/_shared/guardGaps.js)
+(`guardGapsParam`, `guardGapRuns`), used by both spurs. A `rig` part takes none of these params: the host cuts its
+guard and rail links itself.
+
 ## Behavior: the `ctx` surface
 
-Besides `params` and the required `step(ctx)`, `definePart` declares:
+Besides `params` and the required `step(ctx)` (or `react(ctx)` in its place, below), `definePart` declares:
 
 - `joints`, `grippers`, `lamps`, `servos`: typed name lists for `ctx.joints` / `ctx.grips` / `ctx.lamps` /
   `ctx.servos`;
 - `interactive: true`: pilot-mode Use → `ctx.used()` (and `useParam`, below);
 - `unit`: makes the part a unit load (see Product state in the table);
 - optional `init(ctx)` / `dispose(ctx)`.
+
+State a behavior keeps between ticks lives in variables at the top of the script (`let count = 0`), outside
+`definePart`. They belong to one placed part: each instance runs the script's top level afresh, so two placed parts
+never share one. There is no `ctx.state`.
 
 ### The `ctx` members
 
@@ -1095,17 +1373,18 @@ Besides `params` and the required `step(ctx)`, `definePart` declares:
 | Time + pose | `dt`, `simTime`, `position`, `forward`, `heading()` |
 | Motion math (pure) | `approach`, `approachAngle`, `approachVec`, `angleDelta`, `clamp`, `steer` |
 | Conveying | `setSurfaceVelocity(v)`, `setArcSurfaceVelocity({ center, omega })`, `setSurfaceSpeed(s \| [s…])` (along each `conveys` link's own +X, re-read every tick for hinged beds; an array runs each deck at its own speed), `conveyorRunning(id)` (is the conveyor a `partRef` param names running?) |
-| Articulation | `joints.name = rad\|m` (`setJoint(name, v)` for a computed name like `'h' + i`, which the typed bag refuses), `measured.joints` feedback, `setSubPose` |
+| Articulation | `joints.name = rad\|m` (`setJoint(name, v)` for a computed name like `'h' + i`, which the typed bag refuses), `measured.joints` feedback, `setSubPose` (with an index, one copy of a posable array), `arrayCount(link)` |
 | Servos | `servos.name` (a joint the manifest marks `servo`; `servo(name)` for a computed name): `power(on)`, `moveAbsolute(pos, { velocity, accel?, decel?, direction? })`, `moveRelative`, `moveVelocity(v)`, `follow(setpoint)`, `halt`, `stop` / `releaseStop`, `reset`, `home`; reads `position`, `velocity`, `state`, `inPosition`, `error`, `done(id)` / `aborted(id)`. See [Servos](#servos-let-the-host-run-the-motion) |
 | Grippers | `grips.name = bool` (`setGrip(name, on)` for a computed name), `measured.grips` (true = actually carrying). If something takes the load out of a closed gripper (the walking pilot, a drag), it drops its whole load, reads false, and stays open until you command it false again |
 | Mobility | `drive(forward, turn)` moves the live root; steer closed-loop off `position` / `forward` |
-| Sensing | `sense(beam)` → `{ hit, distance, color }` (hits cargo and the walking pilot, whose `color` is a mid grey that reads as no colour), `zone(name, filter?)` → cargo count (never the pilot or a box it carries; `{ part }` counts one product, `{ kind }` one kind), `zoneAge(name, filter?)` → that cargo's summed age (s) |
-| Cargo | `spawn({ part, params, color, mass, offset })` makes a product: the cargo part `part` names, as if placed, with `params` over its own ([spawner](../examples/parts/box-spawner/behavior.ts)). The other form, `spawn({ kind, size, ... })` (`kind` `'box'`, the default, `'pallet'` or `'tote'`), makes a bare body. At most 8 a tick, the rest dropped. `despawn(zone)`. See cargo conservation below |
+| Sensing | `sense(beam)` → `{ hit, distance, color }` (hits cargo and the walking pilot, whose `color` is a mid grey that reads as no colour), `zone(name, filter?)` → cargo count (never the pilot or a box it carries; `{ part }` counts one product, `{ kind }` one kind), `zoneAge(name, filter?)` → that cargo's summed age (s), `weight(link)` → kg on a `loadCell` link |
+| Cargo | `spawn({ part, params, color, mass, offset, marks })` makes a product: the cargo part `part` names, as if placed, with `params` over its own and `marks` the facts it starts with (a label's code, a destination) ([spawner](../examples/parts/box-spawner/behavior.ts)). The other form, `spawn({ kind, size, ... })` (`kind` `'box'`, the default, `'pallet'` or `'tote'`), makes a bare body. At most 8 a tick, the rest dropped. `despawn(zone)`. See cargo conservation below |
 | Product state | See below |
 | Lamps | `lamps.name = bool` (`setEmissive(name, on)` for a computed name) |
-| PLC tags | `readTag` / `writeTag` (BOOL), `readNumber` / `writeNumber` (INT/REAL), `rising` / `falling` edges |
+| PLC tags | `readTag` (BOOL) / `readNumber` (INT/REAL), `writeTag` (a boolean or a number; `writeNumber` takes only a number), `rising` / `falling` edges |
 | Ownership | `tagDriven(name)`: is the tag an attached program's output (a controller owns it)? |
 | Interaction | `used()`: one-tick pulse on pilot Use |
+| Reactive parts | `again()`: in `react`, call me on the next tick too |
 | Readouts | `report(param, value)`: a param's effective value (the Inspector's live readout; see `setpointFor`); `display(name, value)`: a live caption for a `label` link's `textFrom` |
 | Randomness | `rng()`: deterministic, seeded from the instance's params (identical params = identical stream; add a `seed` param to decorrelate) |
 
@@ -1113,11 +1392,14 @@ Besides `params` and the required `step(ctx)`, `definePart` declares:
 the line). A machine that stores cargo and gives it back holds the real items with grippers, one per storage
 position, and never despawns them to spawn stand-ins ([pallet-dispenser](../examples/parts/pallet-dispenser/)).
 
-**Product state** acts on the cargo in a zone, applied after the tick. "The load" is always the lowest pallet in
-the zone and everything resting on it inside its footprint.
+**Product state** acts on the cargo in a zone, applied after the tick. `mark` acts on every cargo body whose centre
+is in the zone. `dress` and `join` act on "the load": the lowest pallet in the zone and everything resting on it
+inside its footprint.
 
-- `mark(zone, key, value)` leaves a fact on it (a label's ID, `wrapped`), read back by `marked(zone, key)` (a
+- `mark(zone, key, value)` leaves a fact on each of them (`scanned`, `wrapped`), read back by `marked(zone, key)` (a
   count) and by a beam hit's `marks`.
+- `markHit(beam, key, value)` leaves the fact on the one body a beam hit this tick instead: the case a labeller's pad
+  touched, the item a coder printed on. Put a short beam on the pad's face and only the case against it is marked.
 - `dress(zone, { id, material, opacity?, upTo?, web? })` fits a see-through sleeve round the load in one of your
   package's materials (film, straps). `upTo` clips it at a height above your origin, and it only grows;
   `web: { link, offset, height }` draws the sheet paying out from a roll on that link.
@@ -1132,7 +1414,66 @@ the zone and everything resting on it inside its footprint.
   `courses` param above 0 stacks the standard load itself (a 48 x 40 in pallet under courses of the
   0.6 x 0.4 x 0.4 case layer) as real cargo.
 
-### Auto vs hand: gate comms on `tagDriven`, not on the param alone
+### `react`: a part that only answers its inputs
+
+`step(ctx)` runs on every tick. A photo-eye, a lamp or a stop has nothing to do on most of them: it reads a beam or
+a tag and writes the same answer as the tick before. Write such a part with `react(ctx)` in place of `step(ctx)`.
+A part has one or the other.
+
+The host calls `react`:
+
+- on the part's first tick;
+- on a tick where something it hands the part differs from the last call: a tag, a beam or zone reading, a click
+  (`used()`), a measured joint, or a conveyor's speed if the part read one;
+- on the tick after a call that asked for one with `ctx.again()`.
+
+On every other tick it is not called, and what it last commanded stands: the tags it wrote, surface speeds, joints,
+lamps, displays and outlines. A request made once (a spawn, a despawn, a mark, a log line) is made on the tick of
+the call and not repeated.
+
+```js
+definePart({
+  params: { tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '' } },
+  react(ctx) {
+    const present = ctx.sense('lens').hit
+    ctx.lamps.led = present
+    if (ctx.params.tag) ctx.writeTag(ctx.params.tag, present)
+  },
+})
+```
+
+Two rules:
+
+- **While the part is timing or moving something of its own, it calls `ctx.again()` on every call.** A drive
+  ramping to speed, a rack rising, an encoder counting travel: each needs the next tick, so it asks. `ctx.dt` is one
+  tick's length, as in `step`. A part that forgets to ask stops moving, in the editor and in every test, which is
+  easy to see.
+- **A call does not mean something changed.** The host may call `react` on a tick where nothing the part reads is
+  different (another part's tag changed the table it shares), so do not count calls as events. Detect an event the
+  usual way, with `ctx.rising` / `ctx.falling` or by keeping the last value.
+
+A part that reads a load cell (`ctx.weight`) or a zone's marks is called on every tick while it does. A part with
+a servo is too: the host moves the servo.
+
+A line of several hundred parts then costs what its busy parts cost. Measured on a 420-part sorter line, writing
+the photo-eyes, chutes and sorter sections as reactive parts left out 77% of the part calls and took the step from
+7.8 to 5.8 ms, with every value the parts and the PLC exchanged unchanged.
+
+### A sensor on a watched PLC: show the PLC's value
+
+A controller set to Watch only ([live-share.md](./live-share.md#watch-only)) reads the tags parts write from the real
+PLC instead of writing them, so such a tag is driven too. A sensor or switch that shows its state (an LED, a pressed
+cap, a swung gate) should then show what the real one reports, not what the simulator senses:
+
+```js
+const tag = ctx.params.tag
+if (tag && ctx.tagDriven(tag)) ctx.lamps.led = ctx.readTag(tag) !== !!ctx.params.normallyClosed // the real eye
+else ctx.lamps.led = present // what the beam sees
+```
+
+The first-party photo eye, push button, light curtain and safety gate do this.
+
+### Auto vs hand: gate on `tagDriven`, not on the tag name
 
 A device that is both PLC-commanded and hand-operated (a diverter, a blade stop) follows plant-floor
 semantics: the tag is in control only while a controller drives it, meaning the tag is a declared output of the
@@ -1140,10 +1481,9 @@ attached, scanning program. The rest of the time (sim stopped, no program, tag n
 controls it:
 
 ```js
-if (ctx.used()) manual = !manual                              // hand toggle (pilot E / editor C)
-if (ctx.params.enableComms && ctx.tagDriven(ctx.params.tag))  // auto wins while a program owns the tag…
-                                                              // (enableComms: the manifest's `commsParam`)
-  manual = ctx.readTag(ctx.params.tag)                        // …by overwriting the latch (bumpless release)
+if (ctx.used()) manual = !manual          // hand toggle (pilot E / editor C)
+if (ctx.tagDriven(ctx.params.tag))        // auto wins while a program owns the tag…
+  manual = ctx.readTag(ctx.params.tag)    // …by overwriting the latch (bumpless release)
 const want = manual
 ```
 
@@ -1157,24 +1497,27 @@ Mark the tag your auto gate reads with **`autoWhenDriven: true`**:
 tag: { type: 'tag', dir: 'in', stType: 'BOOL', autoWhenDriven: true, default: '', label: 'Extend tag (true extends the pusher)', group: 'Comms' }
 ```
 
-That tells the host the tag commands the device. For a part with a `commsParam` and an `autoWhenDriven` tag,
-while a program drives it the pilot crosshair prompt reads **"In auto - PLC controlled"** and a C press on the
+That tells the host the tag commands the device. For a part with an `autoWhenDriven` tag, while a program
+drives it the pilot crosshair prompt reads **"In auto - PLC controlled"** and a C press on the
 selection flashes the same hint (the press is still delivered, so your gate still decides). Don't flag tags
 the device only publishes (a button's press, a sensor's beam) or reads as an indicator (a button's `lampTag`):
 a PLC driving those never takes the device out of hand control. Likewise a spawner whose hand Use is an
 independent kill (AND-ed with the tag, not overridden by it) keeps the plain "Use" prompt.
 
-Don't gate on the comms switch alone (`comms ? readTag(tag) : manual`): that locks the device to an undriven
-tag, ignoring hand presses and stuck at `false`, whenever no program is scanning. With the `tagDriven` gate, the
+Don't gate on the tag name alone (`tag ? readTag(tag) : manual`): that locks the device to an undriven tag,
+ignoring hand presses and stuck at `false`, whenever no program is scanning. With the `tagDriven` gate, the
 stopped-scene preview poses the device from hand presses and an attaching program still takes over instantly.
 
 **The same applies to every boolean command tag**, not just hand-operable devices. A conveyor's or spawner's
-`runTag` gated on the tag name stops the part as soon as a tag is typed, until a program attaches, while the
-Inspector shows a speed that does nothing. Gate it on `tagDriven` so the authored value applies until a controller
-takes over. Two kinds of tag are not command tags and keep a plain truthiness check:
+`runTag`, or a machine's `enableTag`, gated on the tag name stops the part as soon as a tag is typed, until a program
+attaches, while the Inspector shows a speed that does nothing. Gate it on `tagDriven` so the authored value applies
+until a controller takes over (`!ctx.tagDriven(runTag) || ctx.readTag(runTag)`), and mark the param
+**`onlyWhenDriven: true`**. That tells the wiring check the part runs on its own setting while nothing drives the
+tag, so its warning says that instead of "stays at its zero value". `autoWhenDriven` implies it. Two kinds of tag are
+not command tags and keep a plain truthiness check:
 
-- Setpoints (`speedTag`, a REAL that replaces a param). It is read whenever comms are on, so undriven it reads 0
-  and the part sits still. Declare `setpointFor` (below) so the Inspector shows that.
+- Setpoints (`speedTag`, a REAL that replaces a param). It is read whenever it names a tag, so undriven it reads
+  0 and the part sits still. Declare `setpointFor` (below) so the Inspector shows that.
 - Publish-only and indicator tags (a button's press tag, a gate's state-out, a `lampTag`). A driven one must
   never flag the device as owned (`e2e/verify-tag-driven-auto.mjs` covers this).
 
@@ -1205,7 +1548,7 @@ Your script needs nothing extra: each case is `ctx.used()` delivered to your beh
 
 ### `setpointFor`: say which param an analog setpoint replaces
 
-`speedTag` doesn't gate a conveyor; it substitutes for `speed`. With comms on, the Inspector's `speed` field
+`speedTag` doesn't gate a conveyor; it substitutes for `speed`. Once it names a tag, the Inspector's `speed` field
 would otherwise show a number nothing obeys. Name the param it replaces:
 
 ```js
@@ -1237,8 +1580,8 @@ Whether the tag owns the param follows `autoWhenDriven`, so declare it the way y
 
 | your `step` gate | declare | live field shows |
 |---|---|---|
-| `comms && tag ? readNumber(tag) : param` | `setpointFor` | the tag value whenever the tag is bound (0 if nothing drives it, and the part reads 0 too) |
-| `comms && tagDriven(tag) ? readNumber(tag) : param` | `setpointFor` + `autoWhenDriven` | the tag value only while a program owns it; undriven it falls back to the authored param, like your script |
+| `tag ? readNumber(tag) : param` | `setpointFor` | the tag value whenever the tag is bound (0 if nothing drives it, and the part reads 0 too) |
+| `tagDriven(tag) ? readNumber(tag) : param` | `setpointFor` + `autoWhenDriven` | the tag value only while a program owns it; undriven it falls back to the authored param, like your script |
 
 Boolean command params need nothing extra: `useParam` plus `autoWhenDriven` is enough. Covered by
 `e2e/verify-inspector-live-setpoint.mjs`.
@@ -1304,6 +1647,45 @@ definePart({
 - A revolute servo with `"modulo": 6.283185307179586` turns without end (a rotary table, a spindle), its position
   wrapping; its `min` / `max` must cover 0 to the modulo.
 
+### Robots: let the host run the controller
+
+An arm that picks and places (any number of joints) should be a **robot**: declare it, and the host runs the robot
+controller for it, the one every robot part shares, so a fix to it reaches every robot in every project.
+
+```js
+definePart({
+  robot: { gripper: 'gripper', lamp: 'vacuumLamp' },
+  params: { /* waypoints, jobs, speed, accel, commandTag, executeTag, doneTag ... */ },
+  step(ctx) { ctx.robot.step() },
+})
+```
+
+- The controller owns the robot's **jobs**: programs of steps taught in the Inspector (Move to a waypoint, stopping
+  or blending through it; Grip on or off; Wait; Wait for an input; Set an output). The PLC picks a job by number on
+  the command tag, pulses Execute and waits for Done; an Enable input holds the arm while the cell is unsafe. A robot
+  with no jobs takes a waypoint row as the command and holds its grip from the gripper tag.
+- Motion is one coordinated trapezoidal profile per move over every joint, and blend points overlap two moves so
+  each joint's speed changes smoothly.
+- It reads the part's params by fixed names, declared like any other params (the list is on `RobotController` in
+  the SDK). Waypoints are in degrees for a revolute joint and millimetres for a prismatic one.
+- `robot: true` drives every joint that is not a servo, cosmetic or mimic, in rig order. An object names the `joints`
+  (the waypoint columns), the `gripper` link a Grip step closes, a `lamp` lit while it holds, and a `gripJoint` (a
+  finger) that opens and closes with the grip.
+- **Tools**: `tool` in the declaration names the link the app draws the robot's tool on, the one its `tool` param
+  picks (`vacuum`, `gripper` or `none`; core/robot/robotTools.ts). Both are sized by `toolSizeX` / `toolSizeZ`: the
+  vacuum plate is that big (its adapter and bolt pattern shrink to fit a plate smaller than them), and the clamp
+  gripper's paddles stand that far apart at the grip joint's 0 and are that deep. Closing, the paddles stop on the load
+  the grip holds (the sim tells the controller how far it reaches across the gripper), within 50 mm either way of that
+  width; holding nothing, they close fully. The tool
+  frame has +Y toward the wrist with the tool hanging along -Y; the robot puts its gripper link (the grip zone) at the
+  tools' grip point, and two finger links at the frame's origin on a `cosmetic` sliding joint (the `gripJoint`) and
+  its `mimic`, which the clamp's paddles ride. The six-axis robot carries all of it.
+- **A hand of its own**: `hand: { gripper, gripJoint }` is a second gripper and finger, the arm's own, used in place
+  of `gripper` and `gripJoint` while the `tool` param is `'hand'` (which it must offer). The hand's links take
+  `showParam: 'tool=hand'`, so picking a tool takes the hand off, and the grip point the pose gizmo's IK and the
+  agent's teaching read follows the tool carried. The tool's lamp stays dark while the hand grips.
+- The six-axis robot is the reference; a URDF import makes one of these for any arm.
+
 ### The PLC handshake pattern
 
 The six-axis robot, gantry and AGV all use this pattern:
@@ -1337,8 +1719,8 @@ and opening mid-stroke drops it in mid-air.
 | Mobile vehicle (root motion) | agv |
 | Sensors (presence / colour / distance) | diffuse-sensor, color-sensor, laser-sensor |
 | Safety device: several beams + a PLC-driven indicator | light-curtain (four `beam` links sized by `rangeParam`, one OSSD output, a muting lamp read from a tag. Muting is the safety program's job, not the part's; the demo's `MutingSeq` block is the example) |
-| Identify cargo once | barcode-scanner (`mark`s what it has read and counts only unmarked cases, so a case held under the arch counts once; a one-shot good-read pulse) |
-| Cargo lifecycle | box-spawner (the Spawner: a product, released at a steady interval or on each enable), despawner; palletSpawner (not in the catalog, kept for projects that use it); pallet-dispenser (stores real cargo: a gripper per magazine position posed with `setSubPose`, so a dispense releases only the bottom pallet; a zone interlock; a set-down stack gripped where it stands; stock authored through `holds`); stretch-wrapper (`dress` as the carriage climbs, then `join` + `mark`; a carriage eye moving with its link; a start / busy / done handshake) |
+| Identify cargo once | barcode-scanner (a scan line across the conveyor reads each case's code off its marks onto a code tag, and `markHit`s the case it read, so a case held under the arch is read once; a one-shot good-read pulse) |
+| Cargo lifecycle | box-spawner (the Spawner: a product, released at a steady interval or on each enable, with a cycle of colours and of one attribute's values for a mixed stream), despawner; palletSpawner (not in the catalog, kept for projects that use it); pallet-dispenser (stores real cargo: a gripper per magazine position posed with `setSubPose`, so a dispense releases only the bottom pallet; a zone interlock; a set-down stack gripped where it stands; stock authored through `holds`); stretch-wrapper (`dress` as the carriage climbs, then `join` + `mark`; a carriage eye moving with its link; a start / busy / done handshake) |
 | Param-driven structure, arrays | rack, fence, stairs, guardRail, platform |
 | Interaction + lamps | push-button, stack-light |
 | Simple joint devices | safety-gate, blade-stop, diverter |
@@ -1348,7 +1730,8 @@ and opening mid-stroke drops it in mid-air.
 The sandbox enforces the first three. The rest keep a part correct and portable.
 
 - Be deterministic. `Date`, `Math.random`, `fetch` and timers are rejected at load. The same inputs give the same
-  sim on every run.
+  sim on every run. A `window`, `document` or `process` you declare yourself (`let window = 0`) is your own variable and is not
+  rejected; a variable named `Date`, `fetch` or a timer is.
 - Loops are budgeted. One call into your part (a `step`, a `geometry` build, `init`) may run 10 million loop
   iterations; past that it is stopped with an error naming the cause. The limit is counted, not timed, so it
   fails at the same point on every machine.
@@ -1356,6 +1739,10 @@ The sandbox enforces the first three. The rest keep a part correct and portable.
   non-finite `setSurfaceVelocity`, a non-positive `spawn` size).
 - Command, don't accumulate blindly. Drive joints and velocities every tick from params, tags and `simTime`, and
   use `measured.*` for closed-loop feedback.
+- Sense what the real machine senses. A real machine has photo-eyes, encoders, position switches and load cells,
+  not a volume that counts boxes. Build it from `beam`s, a conveyor's encoder tag, `measured.joints` and `loadCell`
+  links, coordinated in the behavior or the PLC program as on the real machine, and act on the body a sensor sees
+  (`markHit`). A `zone` suits what happens to whatever stands in a place: a sink, a wrapper's turntable.
 - Parts see only themselves. There is no scene query: facts about other parts arrive as host-computed inputs
   (beams, zones, `rest` params, tag values), which keeps a part portable and the sim's inputs explicit
   ([seam-resolvers](seam-resolvers.md)).

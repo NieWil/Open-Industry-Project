@@ -50,7 +50,7 @@ async function main() {
       const pkg = st.getState().bundledPackages.find((p) => p.id === 'oip.blade-stop')
       // raiseHeight 0.06 = the stroke the model was built for (a fixed stroke: the corner guide rods stay
       // sheathed in the static AirPressure cylinders)
-      const parts = [{ id: 'blade_shot', type: 'part', packageId: 'oip.blade-stop', position: [0, 1.2, 0], rotationY: 0, params: { width, active, raiseHeight: 0.06, enableComms: false, tag: '' } }]
+      const parts = [{ id: 'blade_shot', type: 'part', packageId: 'oip.blade-stop', position: [0, 1.2, 0], rotationY: 0, params: { width, active, raiseHeight: 0.06, tag: '' } }]
       st.loadScene({ ...scene, parts, packages: [...(scene.packages ?? []).filter((p) => p.id !== pkg.id), pkg] })
       st.setState({ selectedIds: [] })
       return !!pkg

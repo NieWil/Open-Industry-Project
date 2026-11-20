@@ -10,7 +10,7 @@ import { tickUniformGroup } from './tickUniformGroup'
  * texture × the material's colour, at the source material's metalness/roughness.
  *
  * Why a node material: a scroll channel animates by advancing its private texture copy's offset.x
- * each running frame (sdk/rig.ts procTick), exactly like the belt fabric. On WebGPU three's
+ * each running frame (sdk/rigProcedural.ts procTick), exactly like the belt fabric. On WebGPU three's
  * NodeMaterialObserver never inspects texture.offset/matrix, so a plain material's uv transform is
  * not re-uploaded and the scroll freezes. Also, parts sharing one material share its single
  * observer, whose renderId gate then lets only the first mesh drawn each frame refresh.

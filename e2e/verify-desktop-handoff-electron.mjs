@@ -1,5 +1,5 @@
-// A browser's solo project, handed over to the desktop app (src/collab/handoff.ts, src/editor/desktopLink.ts,
-// src/editor/desktopHandoff.ts), end to end against the real collab server.
+// A browser's solo project, handed over to the desktop app (src/collab/handoff.ts, src/editor/desktop/desktopLink.ts,
+// src/editor/desktop/desktopHandoff.ts), end to end against the real collab server.
 //
 //   1. a browser tab with a named project of its own presses Help > Open in Desktop App: it fires a
 //      `openindustry://open?handoff=<secret>` link and uploads the project's .oip bytes to that private document;

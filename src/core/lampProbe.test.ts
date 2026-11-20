@@ -3,9 +3,9 @@
 
 import { describe, expect, it } from 'vitest'
 import type { BoxFrame } from './frame'
-import { ProbeSampler } from './projectProbe'
-import { describeProbe, probeKey, validateTestSpec } from './projectTest'
-import type { TestCheck } from './projectTest'
+import { ProbeSampler } from './project/projectProbe'
+import { describeProbe, probeKey, validateTestSpec } from './project/projectTest'
+import type { TestCheck } from './project/projectTest'
 
 const frame = (lamps?: BoxFrame['lamps']): BoxFrame =>
   ({ count: 0, positions: new Float32Array(), quats: new Float32Array(), halfExtents: new Float32Array(), colors: new Float32Array(), kinds: new Uint8Array(), partIds: [], simTime: 0, ...(lamps ? { lamps } : {}) }) as unknown as BoxFrame

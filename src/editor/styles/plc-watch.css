@@ -1,0 +1,178 @@
+/* ===== Watch dock (components/plc/WatchPanel.tsx) ===== */
+/* The scan times along the top, the watched variables, and the box that adds one. */
+
+.plc-watch {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: light-dark(#f9f9f9, #1d1e22);
+  color: var(--text);
+  font: 12px ui-sans-serif, system-ui, sans-serif;
+}
+
+.plc-watch-scan {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.plc-watch-scan-lines {
+  flex: 1;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.plc-watch-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 8px;
+}
+
+.plc-watch-name {
+  font: 12px ui-monospace, monospace;
+}
+
+.plc-watch-member {
+  padding-left: 18px !important;
+}
+
+.plc-watch-value {
+  min-width: 110px;
+  font: 12px ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 0.6s ease-out;
+}
+
+/* a value that just changed: marked, then faded back as the next poll drops the class */
+/* blue, not amber: amber is a forced value's colour (.plc-watch-forced), and a value that just changed must not read as held */
+.plc-watch-value.plc-watch-flash {
+  background: light-dark(rgba(56, 139, 253, 0.22), rgba(56, 139, 253, 0.25));
+  transition: none;
+}
+
+/* a value written by a click: reads as the value, shows it can be clicked on hover */
+.plc-watch-cell {
+  min-width: 60px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plc-watch-cell:hover {
+  border-color: var(--line-soft);
+  background: var(--control);
+}
+
+.plc-watch-bool.on {
+  color: light-dark(#1d8135, #7bd88f);
+}
+
+/* (qualified: ladder.css loads after this file, and its .ld-vars-field fills the cell) */
+.plc-watch-table .plc-watch-set {
+  width: 120px;
+  min-width: 60px;
+}
+
+.plc-watch-type {
+  font: 11px ui-monospace, monospace;
+}
+
+.plc-watch-wired {
+  white-space: nowrap;
+}
+
+.plc-watch-part {
+  margin-right: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: light-dark(#276cdc, #8ab4f8);
+  font: inherit;
+  cursor: pointer;
+}
+
+.plc-watch-part:hover {
+  text-decoration: underline;
+}
+
+/* the column the expand arrow takes, held on rows without one so the names line up */
+.plc-watch-caret {
+  display: inline-block;
+  width: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: 10px ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.plc-watch-btn {
+  padding: 1px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  background: var(--control);
+  color: var(--text);
+  font: 11px ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.plc-watch-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* a forced value (EditorController.forcePlcValue): marked in the warning colour, since a forgotten force is the
+   commissioning mistake that costs the most time */
+.plc-watch-forced .plc-watch-cell {
+  color: var(--warn);
+}
+.plc-watch-forced-badge {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--warn);
+  color: light-dark(#fff, #1f2023);
+  font: bold 10px ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase;
+}
+.plc-watch-actions {
+  white-space: nowrap;
+}
+.plc-watch-force {
+  margin-right: 4px;
+}
+.plc-watch-force.on {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.plc-watch-add {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.plc-watch-add > .ld-vars-field {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.plc-watch-error {
+  flex: none;
+  padding: 0 8px 4px;
+}

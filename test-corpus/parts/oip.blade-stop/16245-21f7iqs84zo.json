@@ -1,0 +1,213 @@
+{
+  "format": 6,
+  "id": "oip.blade-stop",
+  "name": "Blade Stop",
+  "params": {
+    "width": {
+      "type": "number",
+      "default": 1.524,
+      "min": 0.1,
+      "max": 2,
+      "step": 0.05,
+      "label": "Width (m)",
+      "desc": "Blade width across the lane. Size it to span the conveying surface, or cargo rides past the end of the blade."
+    },
+    "active": {
+      "type": "boolean",
+      "default": false,
+      "label": "Active",
+      "group": "Start state",
+      "desc": "Raise the blade to stop cargo. This is the state it starts in; Use cycles it by hand. While a program drives the tag below, that program owns it instead."
+    },
+    "raiseHeight": {
+      "type": "number",
+      "default": 0.04,
+      "min": 0.02,
+      "max": 0.5,
+      "step": 0.01,
+      "label": "Raise height (m)",
+      "desc": "How far the blade top stands above the conveying surface once raised - the height of the stop cargo meets. At rest the top parks just below the surface, so raising this lengthens the stroke."
+    },
+    "airPressureHeight": {
+      "type": "number",
+      "default": 0.07,
+      "min": 0,
+      "max": 0.12,
+      "step": 0.005,
+      "label": "Air pressure height (m)",
+      "desc": "Mount height of the whole moving assembly - pistons, blade and rods together - above the housing. Trim it to sit the mechanism correctly against a particular deck; it shifts the REST position, not the stroke."
+    },
+    "tag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "autoWhenDriven": true,
+      "default": "",
+      "label": "Raise tag (true raises the blade)",
+      "group": "Comms",
+      "desc": "Raise the blade from the program. While a program drives this tag it OWNS the blade stop, so a hand Use in pilot mode is refused with \"In auto - PLC controlled\"."
+    }
+  },
+  "behavior": "// Blade Stop — a pop-up blade that rises through the belt to stop cargo. The blade sections (middle +\n// corners) ride a prismatic 'raise' joint; the housing and the pneumatic cylinders stay static, so the corner\n// guide rods sit sheathed inside the cylinders and slide up through them on raise. 'airPressureHeight' is the\n// mount height of the whole moving assembly above the housing, so the blade rest top sits at\n// airPressureHeight + HOUSING_TOP (−0.05 at the 0.07 default). 'raiseHeight' is an absolute top height, so\n// the joint commands raiseHeight − restTop; its 0.04 default is a real stop's rise. The guide rods are authored\n// for a 0.06 raise (0.108 m of travel), and a longer stroke lengthens the rods and cylinders to match (geometry()).\n// Driven by an authored 'active' toggle, or by a PLC bool tag while a program drives it.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, without\n// `manifest` and `rig()`) and rig.json (the manifest, with the rig compiled from rig()).\n//\n// The shapes are kept in native units. geometry() scales them by S and maps a native z in two bands: |z| ≤ 1 (the\n// middle sections) stretches to ±cornerZ, and beyond that (the corner nodes) keeps its size and slides out with it.\n\nconst r8 = (n) => Math.round(n * 1e8) / 1e8 // derived constants at 8 decimals, so 0.07 stays 0.07\nconst S = 0.45 // native → metres\nconst NATIVE_TOP = 0.2494 // blade/base top in native units\nconst NATIVE_BLADE_X = 0.1036 // blade centreline in native units\nconst LOWERED_TOP = -0.05 // blade-top rest height (below the belt surface)\nconst HOUSING_TOP = -0.12 // housing top pinned under the surface (clears every roller class)\nconst RAISE_MAX = 0.5 // raiseHeight's max\n// The corner guide rods sink about 0.119 m into the static cylinders when both share the blade's rest frame.\n// Their length is authored for a 0.06 raiseHeight (0.108 m of travel from the rest top); a longer raise\n// lengthens the rods and cylinders.\nconst RODS_RAISE = 0.06\nconst RAISE_DEFAULT = 0.04 // a typical blade stop's rise: 20 mm to 1-7/8 in above the roller top\n// Mount height of the whole moving assembly above the housing. The blade rest top = airPressureHeight + HOUSING_TOP.\nconst AIR_DEFAULT = r8(LOWERED_TOP - HOUSING_TOP)\nconst X0 = r8(-NATIVE_BLADE_X * S) // shifts the blade centreline to x = 0\nconst BLADE_Y = r8(LOWERED_TOP - S * NATIVE_TOP) // the blade's native origin at rest, in bladeRoot's frame\nconst BASE_Y = r8(HOUSING_TOP - S * NATIVE_TOP) // the housing's native origin\n// Track-snapping onto a bed fits `width` to the host's usable width; this default is a free-standing drop's,\n// the full 1.524 m belt width.\nconst WIDTH_DEFAULT = 1.524\n// cornerZ = width/2 − S·0.2, floored at S·0.01\nconst CORNER_REACH = r8(S * 0.2)\nconst CORNER_MIN = r8(S * 0.01)\nconst ROD_TRAVEL = r8(RODS_RAISE - LOWERED_TOP) // the travel the rods are authored for\n\nconst RAISE_SECONDS = 0.15 // travel time lowered↔raised\nlet raised = null // 0 lowered .. 1 raised; seeded from 'active' on the first step, then chases\nlet active = false // runtime state — follows the 'active' param and a Use/click (pilot mode)\nlet lastActive // adopt the Inspector 'active' toggle whenever it changes\n\ndefinePart({\n  interactive: true, // a Use/click raises/lowers the blade\n  useParam: 'active', // the hand state is the param: the state a run starts from. The Inspector sets it; Use never writes it\n  joints: ['raise'],\n  params: {\n    width: { type: 'number', default: WIDTH_DEFAULT, min: 0.1, max: 2, step: 0.05, label: 'Width (m)', desc: 'Blade width across the lane. Size it to span the conveying surface, or cargo rides past the end of the blade.' },\n    active: { type: 'boolean', default: false, label: 'Active', group: 'Start state', desc: 'Raise the blade to stop cargo. This is the state it starts in; Use cycles it by hand. While a program drives the tag below, that program owns it instead.' },\n    raiseHeight: { type: 'number', default: RAISE_DEFAULT, min: 0.02, max: RAISE_MAX, step: 0.01, label: 'Raise height (m)', desc: 'How far the blade top stands above the conveying surface once raised - the height of the stop cargo meets. At rest the top parks just below the surface, so raising this lengthens the stroke.' },\n    airPressureHeight: { type: 'number', default: AIR_DEFAULT, min: 0, max: 0.12, step: 0.005, label: 'Air pressure height (m)', desc: 'Mount height of the whole moving assembly - pistons, blade and rods together - above the housing. Trim it to sit the mechanism correctly against a particular deck; it shifts the REST position, not the stroke.' },\n    // autoWhenDriven: this tag COMMANDS the blade (the step's auto gate reads it), so a program driving it\n    // owns the device — the pilot prompt shows \"In auto - PLC controlled\" instead of a dead \"Use\".\n    tag: { type: 'tag', dir: 'in', stType: 'BOOL', autoWhenDriven: true, default: '', label: 'Raise tag (true raises the blade)', group: 'Comms', desc: 'Raise the blade from the program. While a program drives this tag it OWNS the blade stop, so a hand Use in pilot mode is refused with \"In auto - PLC controlled\".' },\n  },\n  // Everything visible. Shapes are in native units and mapped to metres here: x·S + X0, y·S + the piece's\n  // mount, and z by mz() — |z| ≤ 1 is the middle, stretched to ±cornerZ; past 1 is corner hardware, rigid,\n  // sliding out with cornerZ. Every box has the model's 0.002 bevel. Housing + cylinders sit on the part root\n  // (static); the blade and its hardware ride 'bladeRoot'.\n  geometry(g, p) {\n    var B = 0.002\n    var width = typeof p.width === 'number' ? p.width : WIDTH_DEFAULT\n    var apH = typeof p.airPressureHeight === 'number' ? p.airPressureHeight : AIR_DEFAULT\n    var cz = Math.max(width / 2 - CORNER_REACH, CORNER_MIN)\n    // Cylinders are sized to the stroke. The model's cylinder + guide rods are authored for a ROD_TRAVEL\n    // (rest top to raiseHeight); a longer one would pull the rods clean out of the cylinders and leave the blade\n    // floating. So the extra travel lengthens the rods and the cylinder body DOWNWARD by the same amount (same\n    // sheath at full raise as the default), stopping 1 cm above the housing's floor slab.\n    var raise = typeof p.raiseHeight === 'number' ? p.raiseHeight : RAISE_DEFAULT\n    var travel = raise - (apH + HOUSING_TOP)\n    var room = apH + (0.6124 - 0.3385) * S - 0.01\n    var ext = Math.max(0, Math.min(travel - ROD_TRAVEL, room)) / S // native units\n    var mz = function (z) { var a = Math.abs(z); return a <= 1 ? z * cz : (z < 0 ? -1 : 1) * (cz + (a - 1) * S) }\n    var X = function (x) { return x * S + X0 }\n    var D2R = Math.PI / 180\n    // a chamfered box from native extents at a mount height (x, y scaled; z through mz: every box ends in the rigid\n    // corner region, so its chamfer is B·S all round)\n    var box = function (list, yOff, x0, x1, y0, y1, z0, z1, square) {\n      var a = [X(x0), y0 * S + yOff, mz(z0)], b = [X(x1), y1 * S + yOff, mz(z1)]\n      list.push(g.bevelBox([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], B * S, square))\n    }\n    // a round rod along y about native (x, z): profile [r, y] in native units, 8 facets, smooth\n    var rodY = function (list, yOff, x, z, prof) {\n      list.push(g.lathe(prof.map(function (q) { return [q[0] * S, q[1] * S] }), { axis: 'y', center: [X(x), yOff, mz(z)], segments: 8 }))\n    }\n    // a hex bolt along z at native (x, y): profile [r, z] for the +z side; the −z side is its mirror, walked the\n    // other way so the outside stays on the right\n    var hexZ = function (list, yOff, x, y, prof, deg, side) {\n      var mapped = prof.map(function (q) { return [q[0] * S, mz(side * q[1])] })\n      if (side < 0) mapped.reverse()\n      list.push(g.lathe(mapped, { axis: 'z', center: [X(x), y * S + yOff, 0], segments: 6, startAngle: deg * D2R, smooth: false }))\n    }\n    // a 45° flare strip where a panel meets the slab or rail, the full run long, facing away from corner c\n    var flare = function (list, yOff, p, q, c) {\n      var s = g.surface(), z0 = mz(-1.15), z1 = mz(1.15)\n      var P = [X(p[0]), p[1] * S + yOff], Q = [X(q[0]), q[1] * S + yOff], C = [X(c[0]), c[1] * S + yOff]\n      var a = s.vertex(P[0], P[1], z0), b = s.vertex(Q[0], Q[1], z0), cc = s.vertex(Q[0], Q[1], z1), d = s.vertex(P[0], P[1], z1)\n      // a→b→cc→d faces the right-hand side of P→Q; keep that if it points away from c, else wind it the other way\n      var away = (P[0] - C[0]) * (Q[1] - P[1]) - (P[1] - C[1]) * (Q[0] - P[0]) > 0\n      if (away) s.quad(a, b, cc, d)\n      else s.quad(a, d, cc, b)\n      list.push(s.build())\n    }\n\n    var steel = [], plate = [], belt = []\n    // housing: bottom slab, the core wall (light panel faces both sides), the top rail on the +x side, the black\n    // strip on top, and an end plate closing each end; faces meeting a neighbour flush stay square\n    box(steel, BASE_Y, 0, 0.4, -0.6606, -0.6124, -1.15, 1.15)\n    box(steel, BASE_Y, 0.2682, 0.4, 0.2083, 0.2293, -1.15, 1.15, ['x-', 'y+'])\n    box(plate, BASE_Y, 0.2, 0.2662, -0.6124, 0.2293, -1.15, 1.15, ['y-', 'y+'])\n    box(belt, BASE_Y, 0.2, 0.4, 0.2293, 0.2494, -1.152, 1.152, ['y-'])\n    flare(plate, BASE_Y, [0.2662, -0.6104], [0.2682, -0.6124], [0.2662, -0.6124])\n    flare(plate, BASE_Y, [0.2, -0.6104], [0.198, -0.6124], [0.2, -0.6124])\n    flare(plate, BASE_Y, [0.2662, 0.2063], [0.2682, 0.2083], [0.2662, 0.2083])\n    box(steel, BASE_Y, 0, 0.4, -0.6606, 0.2494, 1.15, 1.2)\n    box(steel, BASE_Y, 0, 0.4, -0.6606, 0.2494, -1.2, -1.15)\n    // pneumatic cylinders: two black blocks, the round body between them, a cap on top (the bottom block and the\n    // body reach down by ext for a long stroke)\n    var airY = BASE_Y + apH\n    for (var side = -1; side <= 1; side += 2) {\n      var zlo = side > 0 ? 1.0463 : -1.1527, zhi = side > 0 ? 1.1527 : -1.0463\n      box(belt, airY, 0.0506, 0.1569, -0.1177, -0.0761, zlo, zhi)\n      box(belt, airY, 0.0506, 0.1569, -0.3385 - ext, -0.2969 - ext, zlo, zhi)\n      rodY(plate, airY, 0.10375, side * 1.0995, [[0, -0.3042 - ext], [0.0431, -0.3042 - ext], [0.0431, -0.1104], [0, -0.1104]])\n      rodY(steel, airY, 0.10375, side * 1.09945, [[0, -0.083], [0.02615, -0.083], [0.02615, -0.0652], [0.02405, -0.0632], [0, -0.0632]])\n    }\n\n    var bBlade = [], bSteel = [], bPlate = []\n    box(bBlade, BLADE_Y, 0.0786, 0.1288, 0, 0.2461, -1.0843, 1.0843)\n    for (var sd = -1; sd <= 1; sd += 2) {\n      var zl = function (z0, z1) { return sd > 0 ? z0 : -z1 }, zh = function (z0, z1) { return sd > 0 ? z1 : -z0 }\n      // the end post the blade is bolted to, and the clamp at its foot\n      box(bSteel, BLADE_Y, 0.0786, 0.1288, -0.0437, 0.2462, zl(1.0877, 1.1113), zh(1.0877, 1.1113))\n      box(bSteel, BLADE_Y, 0.086, 0.1214, -0.0561, -0.0111, zl(1.0758, 1.1232), zh(1.0758, 1.1232))\n      // the guide rod down into the cylinder\n      rodY(bPlate, BLADE_Y, 0.10375, sd * 1.09945, [[0, -0.3271 - ext], [0.01445, -0.3271 - ext], [0.01445, -0.0556], [0, -0.0556]])\n      // the hex bolt through the clamp, and the two bolt heads on the post's outer face\n      hexZ(bPlate, BLADE_Y, 0.10293, -0.03405, [[0, 1.0701], [0.00989, 1.0701], [0.01212, 1.0721], [0.01212, 1.1255], [0.00989, 1.1275], [0, 1.1275]], 49.8, sd)\n      hexZ(bPlate, BLADE_Y, 0.10367, 0.21218, [[0, 1.1091], [0.01056, 1.1091], [0.01056, 1.1145], [0.00832, 1.1165], [0, 1.1165]], 10.8, sd)\n      hexZ(bPlate, BLADE_Y, 0.10367, 0.02902, [[0, 1.1091], [0.01061, 1.1091], [0.01061, 1.1145], [0.00824, 1.1165], [0, 1.1165]], 32, sd)\n    }\n\n    var both = { doubleSided: true }\n    var m = function (list) { return g.merge.apply(g, list) }\n    return [\n      Object.assign({ desc: m(steel), material: 'steel' }, both),\n      Object.assign({ desc: m(plate), material: 'plate' }, both),\n      Object.assign({ desc: m(belt), material: 'belt' }, both),\n      Object.assign({ desc: m(bBlade), material: 'blade', link: 'bladeRoot' }, both),\n      Object.assign({ desc: m(bSteel), material: 'steel', link: 'bladeRoot' }, both),\n      Object.assign({ desc: m(bPlate), material: 'plate', link: 'bladeRoot' }, both),\n    ]\n  },\n  step(ctx) {\n    // Signal handoff: the tag commands the blade only while a controller actually drives it (the tag is an\n    // attached program's output, ctx.tagDriven). Any other time the manual signal rules: the\n    // 'active' param (adopted when toggled in the Inspector) or a pilot Use/click.\n    if (ctx.params.active !== lastActive) { active = ctx.params.active; lastActive = ctx.params.active }\n    if (ctx.used()) active = !active\n    // auto wins by overwriting the hand latch (bumpless transfer): a press while owned is undone the same\n    // tick, and when ownership releases the blade holds its last commanded state.\n    if (ctx.tagDriven(ctx.params.tag)) active = ctx.readTag(ctx.params.tag)\n    // the hand latch AFTER the auto gate — what the device is really doing, for the Inspector readout\n    ctx.report('active', active)\n    const want = active ? 1 : 0\n    if (raised === null) raised = want\n    raised = ctx.approach(raised, want, ctx.dt / RAISE_SECONDS)\n    const restTop = ctx.params.airPressureHeight + HOUSING_TOP // −0.05 at the default mount\n    ctx.joints.raise = (ctx.params.raiseHeight - restTop) * raised // blade top lands exactly at raiseHeight\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "bladeRoot",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "airPressureHeight",
+            "scale": 1,
+            "add": -0.07
+          }
+        ]
+      },
+      {
+        "name": "collider",
+        "parent": "bladeRoot",
+        "hidden": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.03,
+            0.19,
+            1.524
+          ],
+          "sizeParams": [
+            {
+              "axis": 1,
+              "param": "raiseHeight",
+              "scale": 1,
+              "add": 0.15
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.145,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "raiseHeight",
+            "scale": -0.5,
+            "add": -0.125
+          }
+        ]
+      },
+      {
+        "name": "baseCollider",
+        "hidden": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.16,
+            0.1,
+            1.524
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.1,
+          0
+        ]
+      }
+    ],
+    "joints": [
+      {
+        "name": "raise",
+        "link": "bladeRoot",
+        "type": "prismatic",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": 0,
+        "max": 0.62
+      }
+    ],
+    "bounds": {
+      "length": 0.2,
+      "width": 2,
+      "top": 0.5,
+      "bottom": -0.5295
+    }
+  },
+  "category": "Equipment",
+  "interactive": true,
+  "useParam": "active",
+  "snap": {
+    "track": {
+      "fitWidthParam": "width"
+    }
+  },
+  "materials": [
+    {
+      "id": "steel",
+      "color": [
+        0.2204,
+        0.2204,
+        0.2204
+      ],
+      "metalness": 0.1,
+      "roughness": 0.5
+    },
+    {
+      "id": "plate",
+      "color": [
+        0.8809,
+        0.8809,
+        0.8809
+      ],
+      "metalness": 0.1,
+      "roughness": 0.4657
+    },
+    {
+      "id": "belt",
+      "color": [
+        0.0122,
+        0.0122,
+        0.0122
+      ],
+      "metalness": 0,
+      "roughness": 1
+    },
+    {
+      "id": "blade",
+      "color": [
+        0.8006,
+        0.3333,
+        0.0482
+      ],
+      "metalness": 0,
+      "roughness": 0.7886
+    }
+  ],
+  "sdk": {
+    "level": 6,
+    "of": "v2:14778:fhoo878l4p"
+  }
+}

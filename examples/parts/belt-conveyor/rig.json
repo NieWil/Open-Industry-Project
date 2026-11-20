@@ -5,9 +5,9 @@
   "conveyor": {
     "bed": "path",
     "surface": "belt",
-    "speedParam": "speed"
+    "speedParam": "speed",
+    "frictionParam": "friction"
   },
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "drawn",
     "bounds": {

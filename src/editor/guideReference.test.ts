@@ -6,14 +6,14 @@
 
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { adsPointsFromTags, adsTypeName, bindAdsPoint } from '../core/ads'
-import { modbusPointFor, registerImagePointFor, registerImagePointWhere } from '../core/externalIo'
-import { s7AddressName, s7ClientFromTags } from '../core/s7Io'
+import { adsPointsFromTags, adsTypeName, bindAdsPoint } from '../core/io/ads'
+import { modbusPointFor, registerImagePointFor, registerImagePointWhere } from '../core/io/externalIo'
+import { s7AddressName, s7ClientFromTags } from '../core/io/s7Io'
 import { planIoAssignment } from '../plc/ioAssign'
 import type { IoTagUse } from '../plc/ioAssign'
-import { CLIENT_ANSWER_MS, CLIENT_POLL_MS, CLIENT_RETRY_MS, POLL_TIMEOUT_MS } from './externalPlc'
-import { builtinFor } from './opcUaServer'
-import { DEFAULT_EXTERNAL_PLC } from './storePrefs'
+import { CLIENT_ANSWER_MS, CLIENT_POLL_MS, CLIENT_RETRY_MS, POLL_TIMEOUT_MS } from './links/externalPlc'
+import { builtinFor } from './links/opcUaServer'
+import { DEFAULT_EXTERNAL_PLC } from './store/storePrefs'
 
 const html = readFileSync(new URL('../../guides/reference/index.html', import.meta.url), 'utf8')
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { InstanceTransform, MeshPart } from '../../core/partApi'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { InstanceTransform, MeshPart } from '../../core/parts/partApi'
 import { examplePart, type FuncGeo } from './examplePart'
 const { behavior: SPUR_BEHAVIOR, geometry: SPUR_GEO } = examplePart<FuncGeo>('oip.spur-conveyor')
 const { behavior: BELT_BEHAVIOR } = examplePart('oip.belt-conveyor')
@@ -10,7 +11,7 @@ const { behavior: BELT_BEHAVIOR } = examplePart('oip.belt-conveyor')
 // built-in Spur Belt Conveyor. A spur has a splayed (parallelogram) deck so it merges flush at an angle: the
 // geometry() staircases `conveyorCount` conveying strips across the width, each clipped to independent front/back
 // splay faces, wraps a rounded nose on each strip end, and frames it with straight L-rails + toggleable guards +
-// a tail leg. Realized here through core/geometryEval (render's in-layer evaluator, the same parts the sim
+// a tail leg. Realized here through core/geometry/geometryEval (render's in-layer evaluator, the same parts the sim
 // builds from).
 //
 // The bed and steel are emitted as instanced templates (MeshPart.instances, the unitBox discipline). The strip
@@ -229,7 +230,7 @@ describe('Spur Belt Conveyor (geometry-function tier - splayed parallelogram dec
   })
 
   it('the length face handle declares the spur (angleFrontParam/angleBackParam) - the host-recognition marker', () => {
-    // the marker spurConveyorView keys on: without it the host would treat the part as a plain straight
+    // the marker the spur bed's view keys on: without it the host would treat the part as a plain straight
     // conveyor (square ends, rectangular footprint, no host guard opening, no snap extents).
     expect(SPUR_BEHAVIOR).toMatch(/angleFrontParam:\s*'angleFrontDeg'/)
     expect(SPUR_BEHAVIOR).toMatch(/angleBackParam:\s*'angleBackDeg'/)

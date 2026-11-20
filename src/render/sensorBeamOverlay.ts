@@ -7,7 +7,7 @@ import { BEAM_GREEN, BEAM_RADIUS, beamGeo } from './parts/sensor'
 
 /**
  * Scene-level renderer for every sensor's beam line (the green/red light-barrier cylinder declared
- * by a `beam` rig link, parts/sdk/rig.ts), drawn as one instanced draw from the overlay pass.
+ * by a `beam` rig link, parts/sdk/rigBeams.ts), drawn as one instanced draw from the overlay pass.
  *
  * Why the beams can't live in their rig group: a beam is `depthWrite: false` (it must not occlude the
  * cargo it stops at), so it must be drawn after what it appears in front of. In the rig it would sit

@@ -248,7 +248,7 @@ async function main() {
     row('phase1', P.phase1Items, P.phase1Build, r.ph1)
     row('phase2', P.phase2Items, P.phase2Build, r.ph2)
     row('post-cover', '-', P.extras, r.post)
-    log(`\n   phase1 ${Math.round(P.phase1 ?? 0)} ms (await ${Math.round(P.phase1Await ?? 0)}) · phase2 ${Math.round(P.phase2 ?? 0)} ms (await ${Math.round(P.phase2Await ?? 0)})`)
+    log(`\n   phase1 ${Math.round(P.phase1 ?? 0)} ms · phase2 ${Math.round(P.phase2 ?? 0)} ms`)
     log(`   yields (rAF fallback count) ${r.yields}`)
 
     const ph2b = P.phase2Build ?? 0

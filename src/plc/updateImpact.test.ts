@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { partChanges } from '../core/partChanges'
-import { PACKAGE_FORMAT, type PartPackage } from '../core/partPackage'
-import { clearPackages, registerPackage } from '../core/partRegistry'
+import { partChanges } from '../core/parts/partChanges'
+import { PACKAGE_FORMAT, type PartPackage } from '../core/parts/partPackage'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
 import type { TaggedPart } from './bindings'
 import { impactText, updateImpact } from './updateImpact'
 

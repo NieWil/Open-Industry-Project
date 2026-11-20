@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { computeStructureConnections, platformConnectionKey } from './structureConnections'
-import { clearPackages, registerPackage } from './partRegistry'
-import type { PartPackage } from './partPackage'
+import { clearPackages, registerPackage } from './parts/partRegistry'
+import type { PartPackage } from './parts/partPackage'
 import type { PartInstance } from './types'
 import { STAIRS_LANDING_DEPTH, STAIRS_STANDARD_RISE, STAIRS_STANDARD_TREAD } from './types'
-import { PACKAGE_FORMAT } from './partPackage'
+import { PACKAGE_FORMAT } from './parts/partPackage'
 
 // fixture packages mirroring the shipped SDK platform (a `deck` surface with heightParam) + stairs (an edgeMount facing
 // into the deck: the contact is the landing end, `landingDepth` along X and `topOffset` up, as the format 3 upgrade maps it)

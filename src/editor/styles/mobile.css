@@ -103,6 +103,30 @@
   display: none;
 }
 
+/* Live share's chip (Toolbar LiveControl) shrinks to its dot and a word, and the view-only badge steps aside
+   while it shows: at 390px both beside the transport pushed the badge off screen */
+.app.phone .live-chip-full {
+  display: none;
+}
+
+.app.phone .live-chip-short {
+  display: inline;
+}
+
+.app.phone .live-chip {
+  padding: 3px 8px;
+}
+
+/* watching or waiting shows an eye there, not a dot as well */
+.app.phone .live-chip.watching::before,
+.app.phone .live-chip.waiting::before {
+  display: none;
+}
+
+.app.phone:has(.live-chip) .collab-viewonly {
+  display: none;
+}
+
 /* Share/Invite goes icon-only */
 .app.phone .share-label {
   display: none;

@@ -1,6 +1,6 @@
 // Checks in the real running editor that the shipped SDK Stairs snap onto the shipped SDK Platform (the
 // stairs-to-platform snap). Boots /app/, waits for the bundled first-party parts to register, then dynamically
-// imports the app's own core/snapFeatures.ts and runs findSnap on real oip.stairs + oip.platform instances.
+// imports the app's own core/snap/snapFeatures.ts and runs findSnap on real oip.stairs + oip.platform instances.
 // Vite serves source in dev, so this is the same module singleton the editor uses, sharing the live part registry.
 // This covers the app-side wiring: loadBundledExamples registers both parts with their snap blocks, and the live
 // snap engine sizes the flight to the deck and seats it. See docs/part-snap-stairs.md.
@@ -24,7 +24,7 @@ async function main() {
     )
 
     const result = await page.evaluate(async () => {
-      const { findSnap } = await import('/src/core/snapFeatures.ts')
+      const { findSnap } = await import('/src/core/snap/snapFeatures.ts')
       // a floor-rested 4×4 platform, deck top at y=2 (floor at 0); a stairs at 5 steps dropped just outside +X edge
       const platform = { id: 't', type: 'part', packageId: 'oip.platform', position: [0, 2, 0], rotationY: 0, params: { length: 4, width: 4, height: 2 } }
       const stair = { id: 'm', type: 'part', packageId: 'oip.stairs', position: [4.8, 0, 0], rotationY: 0, params: { numSteps: 5, width: 1.2 } }

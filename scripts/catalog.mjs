@@ -16,7 +16,7 @@
 // (scripts/lib/builtIns.mjs), through vite's SSR module loader, so there is no second reading of a
 // manifest or a behavior to drift from the app. The projection and the frame facts (footprint, origin,
 // conveyor ends, zones, beams; at default params, or at `--params` read and applied as snap-part / add-part do,
-// src/core/partParamArgs.ts) are src/core/partCatalog.ts.
+// src/core/parts/partParamArgs.ts) are src/core/parts/partCatalog.ts.
 // Exit 0 = catalog emitted, 1 = a part failed to build, 2 = usage/IO error.
 
 import { dirname, resolve } from 'node:path'
@@ -67,11 +67,11 @@ const vite = await createServer({
 
 try {
   const { packages, failures } = await declareBuiltIns(vite)
-  const { catalogEntry, formatEntry } = await vite.ssrLoadModule('/src/core/partCatalog.ts')
+  const { catalogEntry, formatEntry } = await vite.ssrLoadModule('/src/core/parts/partCatalog.ts')
   const { UNLISTED_BUILT_INS } = await vite.ssrLoadModule('/src/core/builtInVersion.ts')
   let args
   if (paramsText !== null) {
-    const { parseParamArgs } = await vite.ssrLoadModule('/src/core/partParamArgs.ts')
+    const { parseParamArgs } = await vite.ssrLoadModule('/src/core/parts/partParamArgs.ts')
     try {
       args = parseParamArgs(paramsText)
     } catch (e) {

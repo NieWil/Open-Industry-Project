@@ -54,7 +54,7 @@ const EYE_Y = 0.025 //          beam height over the roller tops: LOW, as zone e
 //                               or a bag is seen too - an eye at case-middle height lets anything shorter pass under it
 const EYE_OUT = 0.018 //        the eye's lens, this far outside the roller ends: its housing is tucked in against the -z
 //                               scissor side at roller level (the reflector against the +z side), not up on a bracket
-// The cross-section the editor's footprint reads (core/partGeometry.ts partFootprint, which lays it along the fitted
+// The cross-section the editor's footprint reads (core/parts/partGeometry.ts partFootprint, which lays it along the fitted
 // sections, since the bed bends): across, the bed and its scissor frame, 0.11 m outside the bed width each side; along,
 // the bed length plus the casters' 0.075 m overhang at each end; down to the caster bottoms at the stand height.
 const FRAME_SIDE = 0.11
@@ -154,7 +154,6 @@ definePart({
     name: 'Flex Conveyor',
     category: 'Equipment',
     conveyor: { surface: 'roller', speedParam: 'speed' },
-    commsParam: 'enableComms',
     materials: [
       { id: 'steel', color: srgb('#c4c9cf'), metalness: 0.7, roughness: 0.32 }, // galvanised: rollers, scissor links, caster plates
       { id: 'dark', color: srgb('#1b1d20'), metalness: 0.1, roughness: 0.7 }, // black stands, drive box, tyres
@@ -218,12 +217,11 @@ definePart({
     standHeight: { type: 'number', default: STAND_DEFAULT, min: 0.4, max: 1.6, step: 0.01, label: 'Stand height (m)', desc: 'Height of the roller tops above the floor. The legs under every hinge reach down to their casters.' },
     ...speedUnitParams(1),
     speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 1, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'Surface speed along the bed. Negative runs it back toward the infeed.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
-    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands the bed speed here, replacing the Speed field above. Once bound it takes over even if no program drives it, and an undriven tag reads 0.' },
+    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag', group: 'Comms', desc: 'The program commands the bed speed here, replacing the Speed field above. Once bound it takes over even if no program drives it, and an undriven tag reads 0.' },
     ...speedFpmTagParam('Comms'),
-    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Run tag (rollers run while true)', group: 'Comms', desc: 'Start/stop gate: while a program drives this tag false the bed stands still, and true it runs at its speed. Until a program actually drives it the bed runs, so a merely-typed tag does not stop it.' },
+    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (rollers run while true)', group: 'Comms', desc: 'Start/stop gate: while a program drives this tag false the bed stands still, and true it runs at its speed. Until a program actually drives it the bed runs, so a merely-typed tag does not stop it.' },
     accumulate: { type: 'boolean', default: false, label: 'Zone accumulation', group: 'Accumulation', desc: 'Zero-pressure accumulation: each section is a zone with its own photo-eye, and a zone holding a case stops while the zone ahead is full, so product queues with gaps and never pushes. Off, the whole bed runs as one. Sections must be longer than the product.' },
-    releaseTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Release tag (discharge zone runs while true)', group: 'Accumulation', desc: 'With accumulation on: the discharge zone lets its case go only while a program drives this true, so the line takes product when it wants it. Unbound, or not driven by a program, the discharge zone always releases.' },
+    releaseTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Release tag (discharge zone runs while true)', group: 'Accumulation', desc: 'With accumulation on: the discharge zone lets its case go only while a program drives this true, so the line takes product when it wants it. Unbound, or not driven by a program, the discharge zone always releases.' },
     meterGap: { type: 'number', default: 0, min: 0, max: 10, step: 0.1, label: 'Release spacing (s)', group: 'Accumulation', desc: 'With accumulation on: the least time between two cases leaving the discharge end. A queue released all at once goes out a zone apart; this meters it wider, to the spacing the line downstream is set up for.' },
     fullTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Full tag (first zone eye covered)', group: 'Accumulation', desc: 'True while the first zone eye is covered: the last case has not cleared it, or the queue has backed up to it. Put the next case down (a case length and a gap behind that eye) only while this is false, and cases can never land on each other.' },
     showBeam: { type: 'boolean', default: false, label: 'Show beams', group: 'Accumulation', desc: 'Draw each zone photo-eye beam across the bed: green where the zone is clear, red from the eye to the case it sees.' },
@@ -373,10 +371,10 @@ definePart({
     }
     const fpm = p.fpmUnits === true
     const setpointTag = fpm ? p.speedFpmTag : p.speedTag
-    const setpointMs = (p.enableComms && setpointTag ? ctx.readNumber(setpointTag) : fpm ? p.speedFpm : p.speed) * (fpm ? FPM_MS : 1)
+    const setpointMs = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? p.speedFpm : p.speed) * (fpm ? FPM_MS : 1)
     const setpoint = setpointMs
     // the run gate belongs to the program only while it drives the tag (ctx.tagDriven), never to a typed name
-    const running = !(p.enableComms && ctx.tagDriven(p.runTag)) || ctx.readTag(p.runTag)
+    const running = !ctx.tagDriven(p.runTag) || ctx.readTag(p.runTag)
     const commanded = running ? setpoint : 0
     ctx.report('speed', commanded) // the rollers turn on 'speed' (m/s) whichever unit the Inspector shows
     reportSpeed(ctx, fpm, commanded)
@@ -385,7 +383,7 @@ definePart({
     // queue has backed up to it. A loader puts the next case down BEHIND that eye (a case length and a gap back), so
     // one waiting on a clear eye can never land on the one before it.
     const loadCovered = ctx.sense('e0').hit
-    if (p.enableComms && p.fullTag) ctx.writeTag(p.fullTag, loadCovered)
+    if (p.fullTag) ctx.writeTag(p.fullTag, loadCovered)
     if (!p.accumulate) {
       ctx.setSurfaceSpeed(commanded)
       return
@@ -395,7 +393,7 @@ definePart({
     // case it has not been told to release, so a queue backs up from the discharge end, one case a zone, never touching.
     const eye = []
     for (let i = 0; i < N; i++) eye.push(ctx.sense('e' + i).hit)
-    const released = !(p.enableComms && ctx.tagDriven(p.releaseTag)) || ctx.readTag(p.releaseTag)
+    const released = !ctx.tagDriven(p.releaseTag) || ctx.readTag(p.releaseTag)
     // the release is metered: a case that has just left the discharge eye holds the next one for meterGap seconds
     if (lastEye && !eye[N - 1]) lastExit = clock
     lastEye = eye[N - 1]

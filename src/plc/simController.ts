@@ -5,7 +5,7 @@
 // same controller works whether the logic is a local ST program or (later) a real PLC over WebSocket, and
 // whoever hosts it: the sim worker's step loop (sim/plcHost.ts), or a test fake.
 
-import type { PlcLink } from './plcLink'
+import type { PlcLink } from './link/plcLink'
 import type { TagValue, TaskInfo } from './types'
 
 /** A device-side process image: each tag's value at one scan boundary. */

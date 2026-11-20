@@ -1,5 +1,5 @@
 import { InstancedMesh, Matrix4, Quaternion, Sphere, Vector3, type Material } from 'three'
-import type { InstanceTransform, MeshDescription } from '../../core/partApi'
+import type { InstanceTransform, MeshDescription } from '../../core/parts/partApi'
 import { bucketCapacity } from './instanceCapacity'
 import { realizeMeshDescription } from './meshDescriptionGeometry'
 

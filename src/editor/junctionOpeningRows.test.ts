@@ -1,14 +1,14 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { hostSurfaceY } from '../core/guardExtents'
-import { deriveGuardOpenings } from '../core/guardOpenings'
+import { hostSurfaceY } from '../core/guards/guardExtents'
+import { deriveGuardOpenings } from '../core/guards/guardOpenings'
 import { junctionOpeningRows } from '../core/junctionOpeningRows'
-import type { PartPackage } from '../core/partPackage'
-import { conveyorEndsOf } from '../core/partGeometry'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import { createSdkPart } from '../core/scene'
+import type { PartPackage } from '../core/parts/partPackage'
+import { conveyorEndsOf } from '../core/parts/partGeometry'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import { createSdkPart } from '../core/scene/scene'
 import type { PartInstance } from '../core/types'
 import { buildPackage } from '../sim/buildPackage'
-import { bundledBehaviors, bundledManifests } from './bundledExamples'
+import { bundledBehaviors, bundledManifests } from './parts/bundledExamples'
 
 // Guard-openings mode must not offer a gap a neighbour already cut as solid guard (a sweep there would author a
 // row on top of a cut that exists anyway). junctionOpeningRows gives those gaps in the authored rows' own space:

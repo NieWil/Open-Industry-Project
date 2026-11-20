@@ -1,17 +1,19 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { registerPackage } from '../core/partRegistry'
-import { computeSceneGuardHoles, deriveGuardHoles, beamSegments } from '../core/guardHoles'
+import { registerPackage } from '../core/parts/partRegistry'
+import { computeSceneGuardHoles, deriveGuardHoles, beamSegments } from '../core/guards/guardHoles'
 import { GUARD_HOLE_PANEL } from '../core/types'
 import type { PartInstance, SdkPart } from '../core/types'
 import { buildPackage } from '../sim/buildPackage'
-import { bundledBehaviors, bundledManifests } from './bundledExamples'
+import { evalPartGeometry } from '../core/geometry/geometryEval'
+import { resolvePartParams } from '../core/parts/partScript'
+import { bundledBehaviors, bundledManifests } from './parts/bundledExamples'
 
-// Sensor-beam holes through conveyor side guards, derived from the scene (core/guardHoles.ts) with the real bundled
+// Sensor-beam holes through conveyor side guards, derived from the scene (core/guards/guardHoles.ts) with the real bundled
 // packages: a diffuse eye seated where its conveyorGuard mount snaps (lens 0.02 proud of the bed edge, origin 0.037
 // behind it, 0.02 below the deck) must cut the guard it stands against and the far one its beam reaches.
 
 const behaviors = bundledBehaviors()
-const IDS = ['oip.roller-conveyor', 'oip.belt-conveyor', 'oip.curved-conveyor', 'oip.diffuse-sensor']
+const IDS = ['oip.roller-conveyor', 'oip.belt-conveyor', 'oip.curved-conveyor', 'oip.spur-conveyor', 'oip.diffuse-sensor']
 const real = bundledManifests().filter((m) => IDS.includes(m.id)).map((m) => buildPackage(m, behaviors.get(m.id)!))
 beforeEach(() => real.forEach((p) => registerPackage(p)))
 
@@ -69,6 +71,19 @@ describe('sensor-beam guard holes', () => {
     expect(deriveGuardHoles(spur, beamSegments(eye('e', 1.2)))).toBeNull()
   })
 
+  it("a spur's guards are holed along their own runs, which its splay offsets from the bed's ends", () => {
+    // the shipped spur: length 2, front face splayed 30°, so its +Z guard runs to 1 + tan30°·HW (about 1.44) and its
+    // −Z guard stops at 1 − tan30°·HW (about 0.56)
+    const spur = part('spur', 'oip.spur-conveyor', [0, Y, 0], 0, { length: 2, width: W, angleFrontDeg: 30, angleBackDeg: 0 })
+    const reach = 1 + Math.tan(Math.PI / 6) * HW
+    // past the bed's end but on the long guard: holed there, and not on the short one, which ends before it
+    const holes = deriveGuardHoles(spur, beamSegments(eye('e', 1.25)))!
+    expect(holes.right.map(([x]) => x)).toEqual([1.25])
+    expect(holes.left).toEqual([])
+    // past the long guard's own end: nothing to hole
+    expect(deriveGuardHoles(spur, beamSegments(eye('e', reach + 0.1)))).toBeNull()
+  })
+
   it('a beam over the guard top cuts nothing, and a lowered guard is not cut', () => {
     expect(deriveGuardHoles(roller(), beamSegments(eye('e', 0, W + 0.04, 0.2)))).toBeNull()
     const holes = deriveGuardHoles(roller({ rightGuard: false }), beamSegments(eye('e', 0)))!
@@ -81,6 +96,24 @@ describe('sensor-beam guard holes', () => {
     const holes = deriveGuardHoles(belt, beamSegments(eye('e', 2.5)))!
     expect(holes.right[0]![0]).toBeCloseTo(2.5, 3)
     expect(holes.left[0]![0]).toBeCloseTo(2.5, 3)
+  })
+
+  it("a belt's guards run on around its end drums, and a beam crossing one there holes it too", () => {
+    // the shipped belt's drum radius is half its 0.17 height, so its guards run from -0.085 to 4.085
+    const belt = part('belt', 'oip.belt-conveyor', [0, Y, 0], 0, { segments: [[4, 0]], width: W, height: 0.17 })
+    for (const x of [-0.03, 4.03]) {
+      const holes = deriveGuardHoles(belt, beamSegments(eye('e', x)))!
+      expect(holes.right.map(([hx]) => hx)).toEqual([x])
+      expect(holes.left.map(([hx]) => hx)).toEqual([x])
+    }
+    // past the drum face there is no guard to hole
+    expect(deriveGuardHoles(belt, beamSegments(eye('e', -0.15)))).toBeNull()
+    // and the belt draws a hole there: its rows arrive in arc length, which runs negative around the tail drum. A
+    // hole whose panel would overhang the guard's end is left uncut.
+    const pkg = real.find((p) => p.id === 'oip.belt-conveyor')!
+    const draw = (rows: number[][]) => JSON.stringify(evalPartGeometry(pkg.behavior, resolvePartParams(pkg.params, { ...(belt.params as Record<string, unknown>), guardHoles: rows } as never)))
+    expect(draw([[-0.03, 0.08, 1]])).not.toBe(draw([]))
+    expect(draw([[-0.07, 0.08, 1]])).toBe(draw([]))
   })
 
   it('a curve takes its holes as an arc angle, on the guard (inner or outer) the beam crosses', () => {

@@ -1,13 +1,13 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 import { describe, expect, it } from 'vitest'
 import type { PartInstance, SdkPart } from '../core/types'
-import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/partPackage'
-import { createSdkPart } from '../core/scene'
-import { registerPackage } from '../core/partRegistry'
+import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/parts/partPackage'
+import { createSdkPart } from '../core/scene/scene'
+import { registerPackage } from '../core/parts/partRegistry'
 import { buildPackage } from './buildPackage'
-import { computeSceneOpenings, deriveGuardOpenings } from '../core/guardOpenings'
-import { computeSceneExtents, deriveGuardExtents } from '../core/guardExtents'
-import { isConveyorLike } from '../core/partGeometry'
+import { computeSceneOpenings, deriveGuardOpenings } from '../core/guards/guardOpenings'
+import { computeSceneExtents, deriveGuardExtents } from '../core/guards/guardExtents'
+import { isConveyorLike } from '../core/parts/partGeometry'
 
 const RIGS = import.meta.glob('../../examples/parts/*/rig.json', { eager: true, import: 'default' }) as Record<
   string,

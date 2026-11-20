@@ -2,10 +2,10 @@
 // state of its own is whether a drag has been published to peers (DragPresence); the drag itself, and the
 // store and view it reports to, come in as narrow dependencies.
 
-import { subtreeIds } from '../../core/hierarchy'
+import { subtreeIds } from '../../core/scene/hierarchy'
 import type { PartInstance } from '../../core/types'
 import { hasCollabProvider, setLocalDrag } from '../../collab/session'
-import type { EditorState } from '../store'
+import type { EditorState } from '../store/store'
 import type { EditorController } from '../controller'
 
 /** the parts a live pointer drag is currently moving, or null when no such drag is active */

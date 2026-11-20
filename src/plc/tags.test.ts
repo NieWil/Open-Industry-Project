@@ -342,3 +342,112 @@ END_VAR
     expect(editTag(SRC, line, 'Nope', { name: 'X', type: 'INT', section: 'VAR', description: '' })).toBe(SRC)
   })
 })
+
+describe('tags: go to definition', () => {
+  const SRC = `TYPE Pos : STRUCT X : REAL; Y : REAL; END_STRUCT; END_TYPE
+TYPE Mode : (Idle, Run); END_TYPE
+
+VAR_GLOBAL
+  Speed : REAL;
+  Count : INT;
+END_VAR
+
+FUNCTION_BLOCK Base
+VAR
+  Ticks : INT;
+END_VAR
+Ticks := Ticks + 1;
+END_FUNCTION_BLOCK
+
+FUNCTION_BLOCK Axis EXTENDS Base
+VAR_INPUT
+  Target : Pos;
+END_VAR
+VAR_EXTERNAL
+  Speed : REAL;
+END_VAR
+METHOD Home
+VAR
+  Count : INT;
+END_VAR
+Count := Ticks;
+END_METHOD
+Target.X := Speed;
+END_FUNCTION_BLOCK
+
+FUNCTION Twice : INT
+VAR_INPUT
+  N : INT;
+END_VAR
+Twice := N * 2;
+END_FUNCTION
+
+PROGRAM Line
+VAR
+  A : Axis;
+  M : Mode := Run;
+  Count : INT;
+END_VAR
+A(Target := A.Target);
+A.Home();
+Count := Twice(N := Count) + A.Ticks;
+A.Target.Y := Speed;
+END_PROGRAM
+`
+  // the line holding the declaration of the last name in `before` (the caret at its end), and that name's first letters
+  const goTo = async (before: string): Promise<string | null> => {
+    const { definitionAt } = await import('./tags')
+    const from = SRC.indexOf(before)
+    expect(from).toBeGreaterThanOrEqual(0)
+    const at = definitionAt(SRC, from + before.length)
+    if (at === null) return null
+    const start = SRC.lastIndexOf('\n', at - 1) + 1
+    return `${SRC.slice(start, SRC.indexOf('\n', at)).trim()} @${SRC.slice(at, at + 4)}`
+  }
+
+  it('finds a POU variable before the controller variable of the same name', async () => {
+    const { definitionAt } = await import('./tags')
+    const use = SRC.indexOf('Twice(N := Count') + 'Twice(N := Count'.length
+    expect(definitionAt(SRC, use)).toBe(SRC.indexOf('Count : INT;', SRC.indexOf('PROGRAM Line')))
+    expect(await goTo('A.Target.Y := Speed')).toBe('Speed : REAL; @Spee')
+  })
+
+  it('follows a VAR_EXTERNAL to the global it names', async () => {
+    const { definitionAt } = await import('./tags')
+    expect(definitionAt(SRC, SRC.indexOf('Target.X := Speed') + 'Target.X := Speed'.length)).toBe(SRC.indexOf('Speed : REAL;'))
+  })
+
+  it("resolves a METHOD's own variable, then what the block inherits", async () => {
+    const { definitionAt } = await import('./tags')
+    const inMethod = SRC.indexOf('Count := Ticks')
+    expect(definitionAt(SRC, inMethod + 2)).toBe(SRC.indexOf('Count : INT;', SRC.indexOf('METHOD Home')))
+    expect(definitionAt(SRC, inMethod + 'Count := Ticks'.length)).toBe(SRC.indexOf('Ticks : INT;'))
+  })
+
+  it('looks a member up in the instance, through EXTENDS and into a struct', async () => {
+    expect(await goTo('A.Home')).toBe('METHOD Home @Home')
+    expect(await goTo('A.Ticks')).toBe('Ticks : INT; @Tick')
+    expect(await goTo('A.Target.Y')).toBe('TYPE Pos : STRUCT X : REAL; Y : REAL; END_STRUCT; END_TYPE @Y : ')
+    expect(await goTo('A(Target := A.Target')).toBe('Target : Pos; @Targ')
+  })
+
+  it("takes a formal argument from the callee's declarations", async () => {
+    expect(await goTo('A(Target')).toBe('Target : Pos; @Targ')
+    expect(await goTo('Twice(N')).toBe('N : INT; @N : ')
+  })
+
+  it('jumps from a type, a POU or an enumeration value to where it is defined', async () => {
+    expect(await goTo('A : Axis')).toBe('FUNCTION_BLOCK Axis EXTENDS Base @Axis')
+    expect(await goTo('EXTENDS Base')).toBe('FUNCTION_BLOCK Base @Base')
+    expect(await goTo('Target : Pos')).toBe('TYPE Pos : STRUCT X : REAL; Y : REAL; END_STRUCT; END_TYPE @Pos ')
+    expect(await goTo('Mode := Run')).toBe('TYPE Mode : (Idle, Run); END_TYPE @Run)')
+    expect(await goTo('Count := Twice')).toBe('FUNCTION Twice : INT @Twic')
+  })
+
+  it('answers null off a declared name', async () => {
+    const { definitionAt } = await import('./tags')
+    expect(definitionAt(SRC, SRC.indexOf('END_PROGRAM') + 3)).toBeNull()
+    expect(definitionAt(SRC, SRC.indexOf('INT;') + 1)).toBeNull()
+    expect(definitionAt('PROGRAM P\nVAR t : TON; END_VAR\nt(IN := TRUE);\nEND_PROGRAM', 'PROGRAM P\nVAR t : TON; END_VAR\nt(IN'.length)).toBeNull()
+  })
+})

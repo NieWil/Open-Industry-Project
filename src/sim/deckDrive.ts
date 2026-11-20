@@ -5,6 +5,27 @@ import type { BehaviorRecord } from './worldTypes'
 
 /** drive every conveying deck of `b` from this tick's output; `sv` is `parsed.surfaceVelocity` */
 export function driveDeckEntries(b: BehaviorRecord, parsed: BehaviorOutput, sv: BehaviorOutput['surfaceVelocity']): void {
+  // a posable conveying array's copies: each runs only at the speed set for it this tick, along its own local +X
+  if (b.copyDecks) {
+    for (const cd of b.copyDecks) {
+      const speeds = parsed.copySpeeds?.[cd.link]
+      for (let i = 0; i < cd.entries.length; i++) {
+        const m = cd.entries[i]!
+        const s = speeds?.[i] ?? 0
+        if (s === 0) {
+          m.vx = 0
+          m.vy = 0
+          m.vz = 0
+          continue
+        }
+        const q = cd.bodies[i]!.GetRotation()
+        const qx = q.GetX(), qy = q.GetY(), qz = q.GetZ(), qw = q.GetW()
+        m.vx = s * (1 - 2 * (qy * qy + qz * qz))
+        m.vy = s * 2 * (qx * qy + qw * qz)
+        m.vz = s * 2 * (qx * qz - qw * qy)
+      }
+    }
+  }
   // C-convey: drive all of this part's conveying decks in place, with an arc field (curved conveyor) or a
   // linear velocity (belt/roller). Mutating each entry's kind+fields updates what the live contact
   // listener reads (the entry objects are the same references the conveyors map holds). Arc takes

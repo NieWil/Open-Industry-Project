@@ -18,7 +18,7 @@ export interface ISelectionOutline {
   /**
    * One-time load warm of the selection mask pass (WebGPU outline only). Its
    * materials are substituted at renderObject time (setRenderObjectFunction), so compileAsync /
-   * _projectObject can never reach them. Without this they codegen + pipeline-compile on the
+   * drawingPipeline.project can never reach them. Without this they codegen + pipeline-compile on the
    * first selection of the session (measured: ~180ms main-thread + ~550ms GPU queue stall on the
    * demo). The view calls it once from compileStaged's held-loop bracket with a synthetic
    * everything-selected membership staged. The implementation renders one off-screen mask pass.

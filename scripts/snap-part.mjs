@@ -15,23 +15,24 @@
 // the scene, as the editor's drop does. Everything printed is in WORLD coordinates of that placement, plus the
 // pose in the host's local frame (x along it, z across, y up from its origin).
 //
-// The mover is proposed at --at (default: the host's footprint centre, on its top surface; `--local` reads --at in
-// the host's frame) with yaw --rot (default 0). --at is where the MOVER'S ORIGIN goes, not its centre: `npm run
+// The mover is proposed at --at (default: the host's footprint centre, on its top surface; a placed part being
+// re-seated, where it stands; `--local` reads --at in the host's frame) with yaw --rot (default 0; a re-seated part,
+// its own yaw). --at is where the MOVER'S ORIGIN goes, not its centre: `npm run
 // catalog -- <part>` prints where a part's origin sits ("origin: x -X end, z centre" for a belt conveyor, whose origin
-// is its TAIL end), and a "no snap" says it too. Core's REAL snap engine answers: src/core/snapFeatures.ts
+// is its TAIL end), and a "no snap" says it too. Core's REAL snap engine answers: src/core/snap/snapFeatures.ts
 // `findSnap`, which the editor's live snap (controller.ts applyLiveSnap) calls on every pointer-move.
 // --params sets the mover's params before it snaps (a sensor's tag, a box size). Params are `k=v` pairs or a JSON
 // object; `length` / `width` / `height` on a part with no such param are extents through its resize handle (a
-// belt's `length=3` stretches its segments): core/partParamArgs.ts.
+// belt's `length=3` stretches its segments): core/parts/partParamArgs.ts.
 //
 // Printed: the connectors matched (`via`, e.g. `mounts[1] -> face`, docs/part-snap-connectors.md), the world
 // pose, the params the snap FITS on the mover (paramOverrides) and host (targetParamOverrides), a soft-parent
 // `attach`, and the junction - or "no snap" and why. Then "on commit": railing gaps, deck notches, an edge-mounted
 // guest's lift, guard openings - the app's own resolvers, run on the snapped pose. Those are DERIVED from the scene
-// whenever it resolves (core/sceneResolve.ts), so nothing writes them: committing the pose, the fits and the
+// whenever it resolves (core/scene/sceneResolve.ts), so nothing writes them: committing the pose, the fits and the
 // parent is the whole edit.
 //
-// --write (needs --project) makes that edit in the project folder through core/snapCommit.ts, the code the
+// --write (needs --project) makes that edit in the project folder through core/snap/snapCommit.ts, the code the
 // editor's drop and the agent door's snap_part commit with: the part is added to the scene (as --id, default
 // `<stem>-<n>`; an --id already placed is re-seated) at the snapped pose with its fitted params and parent, and
 // the host gets its fitted params. A part the project lacks is copied into it first, the way add-part
@@ -98,7 +99,6 @@ if (!ontoArg === !projectArg) usage('give the host as --onto <part> (a fresh one
 if (ontoArg && (hostIdArg || write || newIdArg)) usage('--host, --write and --id need --project')
 if (projectArg && (flag('--host-params') !== undefined || flag('--host-at') !== undefined || flag('--host-rot') !== undefined)) usage('a --project host is the placed part as it stands: --host-params/--host-at/--host-rot are for --onto')
 const at = vec3('--at')
-if (projectArg && !hostIdArg && !at) usage('without --host, say where it is dropped with --at')
 if (local && !at) usage('--local reads --at in the host frame: give --at')
 if (local && projectArg && !hostIdArg) usage('--local needs a host (--host)')
 const rotDeg = degrees('--rot')
@@ -125,16 +125,16 @@ const vite = await createServer({
 
 let code = 1
 try {
-  const { registerPackage, getPackage } = await vite.ssrLoadModule('/src/core/partRegistry.ts')
-  const { partFootprint, isConveyorLike, toWorldXZ, toLocalXZ } = await vite.ssrLoadModule('/src/core/partGeometry.ts')
-  const { createSdkPart } = await vite.ssrLoadModule('/src/core/scene.ts')
-  const { findSnap } = await vite.ssrLoadModule('/src/core/snapFeatures.ts')
-  const { commitSnap } = await vite.ssrLoadModule('/src/core/snapCommit.ts')
-  const { subtreeIds } = await vite.ssrLoadModule('/src/core/hierarchy.ts')
+  const { registerPackage, getPackage } = await vite.ssrLoadModule('/src/core/parts/partRegistry.ts')
+  const { partFootprint, isConveyorLike, toWorldXZ, toLocalXZ } = await vite.ssrLoadModule('/src/core/parts/partGeometry.ts')
+  const { createSdkPart } = await vite.ssrLoadModule('/src/core/scene/scene.ts')
+  const { findSnap } = await vite.ssrLoadModule('/src/core/snap/snapFeatures.ts')
+  const { commitSnap } = await vite.ssrLoadModule('/src/core/snap/snapCommit.ts')
+  const { subtreeIds } = await vite.ssrLoadModule('/src/core/scene/hierarchy.ts')
   const { computeStructureConnections } = await vite.ssrLoadModule('/src/core/structureConnections.ts')
-  const { deriveGuardOpenings } = await vite.ssrLoadModule('/src/core/guardOpenings.ts')
-  const { parseParamArgs, withParamArgs } = await vite.ssrLoadModule('/src/core/partParamArgs.ts')
-  const { originAlong } = await vite.ssrLoadModule('/src/core/partCatalog.ts')
+  const { deriveGuardOpenings } = await vite.ssrLoadModule('/src/core/guards/guardOpenings.ts')
+  const { parseParamArgs, withParamArgs } = await vite.ssrLoadModule('/src/core/parts/partParamArgs.ts')
+  const { originAlong } = await vite.ssrLoadModule('/src/core/parts/partCatalog.ts')
 
   const parseParams = (name) => {
     const text = flag(name)
@@ -218,9 +218,12 @@ try {
     const w = toWorldXZ(host, p[0], p[2])
     return [w.x, host.position[1] + p[1], w.z]
   }
+  if (!host && !at && !existing) throw fail('without --host, say where it is dropped with --at', 2)
   const hfp = host ? partFootprint(host) : null
-  const proposedPos = at ? (local ? toWorld(at) : at) : toWorld([hfp.cx ?? 0, hfp.y1, hfp.cz ?? 0])
-  const rotationY = (rotDeg * Math.PI) / 180 + (local ? hostRot : 0)
+  // a placed part being re-seated is proposed where it stands, at its own yaw, unless --at / --rot say otherwise: the
+  // host's centre would move it to wherever the host's nearest feature is, far from where it was put
+  const proposedPos = at ? (local ? toWorld(at) : at) : existing ? [...existing.position] : toWorld([hfp.cx ?? 0, hfp.y1, hfp.cz ?? 0])
+  const rotationY = existing && flag('--rot') === undefined ? existing.rotationY : (rotDeg * Math.PI) / 180 + (local ? hostRot : 0)
   // a new part's id: --id, else the next free `<stem>-<n>` in the project (what add-part --place names it)
   const freeId = () => {
     const stem = moverPkg.id.split('.').pop()
@@ -244,7 +247,7 @@ try {
   const target = c ? sceneParts.find((p) => p.id === c.targetId) : host
 
   // name the connectors that matched: the engine labels every candidate `<mover plug> -> <host socket>`
-  // (core/snapConnectors.ts), so this is read, not guessed. A few get a plain-words gloss.
+  // (core/snap/snapConnectors.ts), so this is read, not guessed. A few get a plain-words gloss.
   const GLOSS = {
     conveyor: 'conveyor ends (end-to-end, side merge, curve or spur: the conveyor engine)',
     'track -> rollerBed': 'track (roller-bed seat)',
@@ -281,7 +284,7 @@ try {
     reason += `. (The proposed position is ${moverPkg.id}'s ORIGIN, which sits at its x ${originAlong(x0, x1, 'X')}, z ${originAlong(z0, z1, 'Z')}: its footprint spans x ${r4(x0)}..${r4(x1)}, z ${r4(z0)}..${r4(z1)} about it at yaw 0; npm run catalog -- ${moverPkg.id})`
   }
 
-  // The committed scene: the snap through core/snapCommit (what the editor's drop writes), rounded the way a
+  // The committed scene: the snap through core/snap/snapCommit (what the editor's drop writes), rounded the way a
   // written file keeps it.
   let committed = null
   if (c) {

@@ -2,7 +2,7 @@
 class {}
 footprint {cx:0.7025,hx:1.3775,hz:0.6300,y0:0,y1:2.8000}
 plugs []
-params reserved=[enableComms] tags=[commandTag:in:INT,executeTag:in:BOOL,doneTag:out:BOOL,forkTag:in:BOOL]
+params reserved=[] tags=[commandTag:in:INT,executeTag:in:BOOL,doneTag:out:BOOL,forkTag:in:BOOL]
 lamps [beacon] animates=false
   link body {shape:mesh}
   link mast {shape:mesh}
@@ -25,10 +25,11 @@ lamps [beacon] animates=false
 class {}
 footprint {hx:0.5850,hz:0.1000,y0:0,y1:1.6600}
 plugs []
-params reserved=[enableComms] tags=[readTag:out:BOOL,countTag:out:DINT]
+params reserved=[] tags=[readTag:out:BOOL,countTag:out:DINT,codeTag:out:DINT]
 lamps [read,scan] animates=false
   link surface {shape:frame}
   link read {shape:frame,zone:true}
+  link scanLine {sensesBeam:true,shape:frame}
   drawn[0] {collision:static,material:housing}
   drawn[1] {collision:static,material:housing}
   drawn[2] {collision:static,material:cap}
@@ -40,7 +41,7 @@ lamps [read,scan] animates=false
 class {beltLike:true,beltWidth:1.5240,conveyor:true,tailOrigin:true}
 footprint {cx:2.0000,hx:2.0850,hz:0.7620,y0:-0.1700,y1:0.0500}
 plugs []
-params reserved=[speed,enableComms] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
+params reserved=[speed] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
 lamps [] animates=false
   drawn[0] {instances:2.0000,look:belt}
   drawn[1] {instances:2.0000,look:belt}
@@ -53,7 +54,7 @@ lamps [] animates=false
 class {}
 footprint {hx:0.1000,hz:1.0000,y0:-0.5295,y1:0.5000}
 plugs [track]
-params reserved=[enableComms] tags=[tag:in:BOOL]
+params reserved=[] tags=[tag:in:BOOL]
 lamps [] animates=false
   link bladeRoot {shape:frame}
   link collider {body:true,hidden:true,shape:box}
@@ -86,7 +87,7 @@ lamps [] animates=false
 class {}
 footprint {hx:0.2500,hz:0.2500,y0:-0.4600,y1:0.5000}
 plugs []
-params reserved=[enableComms] tags=[runTag:in:BOOL,countTag:out:DINT]
+params reserved=[] tags=[runTag:in:BOOL,countTag:out:DINT]
 lamps [] animates=false
   link marker {outline:true,shape:box}
   link dropCone {shape:cone}
@@ -95,7 +96,7 @@ lamps [] animates=false
 class {}
 footprint {hx:0.8250,hz:1.0000,y0:-0.3622,y1:0.2000}
 plugs [track]
-params reserved=[speed,enableComms] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,popupTag:in:BOOL]
+params reserved=[speed] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,popupTag:in:BOOL]
 lamps [] animates=true
   link deck {conveys:true,hidden:true,shape:box}
   link chainBank {shape:frame}
@@ -107,7 +108,7 @@ lamps [] animates=true
 class {}
 footprint {hx:0.0225,hz:0.0365,y0:0,y1:0.1600}
 plugs [mounts[0]]
-params reserved=[enableComms] tags=[colorTag:out:INT]
+params reserved=[] tags=[colorTag:out:INT]
 lamps [led] animates=false
   link lens {sensesBeam:true,shape:frame}
   link led {body:true,lamps:[led],shape:box}
@@ -121,7 +122,7 @@ lamps [led] animates=false
 class {conveyor:true,curved:true,tailOrigin:false}
 footprint {hx:2.4340,hz:2.4340,y0:-0.4000,y1:0.0500}
 plugs []
-params reserved=[speed,enableComms] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
+params reserved=[speed] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
 lamps [] animates=false
   drawn[0] {look:belt}
   drawn[1] {look:frame}
@@ -133,7 +134,7 @@ lamps [] animates=false
 class {conveyor:true,curved:true,tailOrigin:false}
 footprint {hx:2.4340,hz:2.4340,y0:-0.4000,y1:0.0500}
 plugs []
-params reserved=[speed,enableComms] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
+params reserved=[speed] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
 lamps [] animates=true
   drawn[0] {look:frame}
   drawn[1] {collision:static,look:guard}
@@ -146,16 +147,16 @@ lamps [] animates=true
 class {}
 footprint {hx:1.0000,hz:1.0000,y0:0,y1:1.0000}
 plugs []
-params reserved=[enableComms] tags=[countTag:out:INT,rateTag:out:REAL,cycleTag:out:REAL,blockTag:in:BOOL]
+params reserved=[] tags=[countTag:out:INT,rateTag:out:REAL,cycleTag:out:REAL,blockTag:in:BOOL]
 lamps [] animates=false
   link mouth {outline:true,shape:box,zone:true}
-  link readout {shape:label}
+  link readout {shape:label,toggledBy:showReadout}
 
 ## oip.diffuse-sensor (rig)
 class {}
 footprint {hx:0.0225,hz:0.0365,y0:0,y1:0.1600}
 plugs [mounts[0]]
-params reserved=[enableComms] tags=[tag:out:BOOL]
+params reserved=[] tags=[tag:out:BOOL]
 lamps [led] animates=false
   link lens {sensesBeam:true,shape:frame}
   link led {body:true,lamps:[led],shape:box}
@@ -169,7 +170,7 @@ lamps [led] animates=false
 class {guardPusher:true}
 footprint {cz:-0.4270,hx:0.3650,hz:0.6760,y0:-0.3847,y1:0.6600}
 plugs [mounts[0]]
-params reserved=[enableComms] tags=[tag:in:BOOL]
+params reserved=[] tags=[tag:in:BOOL]
 lamps [green,red] animates=false
   link pusher {shape:frame}
   link partEnd {shape:frame}
@@ -202,7 +203,7 @@ lamps [] animates=false
 class {}
 footprint {cx:4.0000,cz:0,hx:4.0750,hz:0.4100,y0:-0.8000,y1:0.1200}
 plugs []
-params reserved=[speed,enableComms] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,releaseTag:in:BOOL,fullTag:out:BOOL]
+params reserved=[speed] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,releaseTag:in:BOOL,fullTag:out:BOOL]
 lamps [] animates=false
   link s0 {shape:frame}
   link d0 {conveys:true,hidden:true,shape:box}
@@ -323,7 +324,7 @@ lamps [] animates=false
 class {}
 footprint {hx:2.3000,hz:1.3000,y0:0,y1:1.4000}
 plugs []
-params reserved=[speed,enableComms] tags=[enableTag:in:BOOL,commandTag:in:INT,targetXTag:in:REAL,targetYTag:in:REAL,targetZTag:in:REAL,executeTag:in:BOOL,doneTag:out:BOOL,faultTag:out:BOOL,actualXTag:out:REAL,actualYTag:out:REAL,actualZTag:out:REAL,gripperTag:in:BOOL]
+params reserved=[speed] tags=[enableTag:in:BOOL,commandTag:in:INT,targetXTag:in:REAL,targetYTag:in:REAL,targetZTag:in:REAL,executeTag:in:BOOL,doneTag:out:BOOL,faultTag:out:BOOL,actualXTag:out:REAL,actualYTag:out:REAL,actualZTag:out:REAL,gripperTag:in:BOOL]
 lamps [vacuumLamp] animates=false
   link legLF {shape:frame}
   link legLFMain {shape:mesh}
@@ -370,7 +371,7 @@ lamps [] animates=false
 class {}
 footprint {hx:0.0578,hz:0.0737,y0:0,y1:0.1600}
 plugs [mounts[0]]
-params reserved=[enableComms] tags=[distanceTag:out:REAL]
+params reserved=[] tags=[distanceTag:out:REAL]
 lamps [led] animates=false
   link lens {sensesBeam:true,shape:frame}
   link led {body:true,lamps:[led],shape:box}
@@ -385,7 +386,7 @@ lamps [led] animates=false
 class {}
 footprint {hx:0.7850,hz:0.0550,y0:0,y1:1.4000}
 plugs []
-params reserved=[enableComms] tags=[tag:out:BOOL,mutingLampTag:in:BOOL]
+params reserved=[] tags=[tag:out:BOOL,mutingLampTag:in:BOOL]
 lamps [muting,ossd,stop] animates=false
   link field {shape:frame}
   link beam1 {sensesBeam:true,shape:frame}
@@ -409,23 +410,14 @@ lamps [] animates=false
 
 ## oip.pallet-dispenser (rig)
 class {}
-footprint {hx:1.2800,hz:0.8300,y0:-1.0000,y1:2.1500}
+footprint {cz:0.0425,hx:1.2800,hz:0.8725,y0:-1.0000,y1:2.1500}
 plugs []
-params reserved=[enableComms] tags=[dispenseTag:in:BOOL,enableTag:in:BOOL,busyTag:out:BOOL,bayTag:out:BOOL,countTag:out:DINT,levelTag:out:INT]
+params reserved=[] tags=[dispenseTag:in:BOOL,enableTag:in:BOOL,busyTag:out:BOOL,bayTag:out:BOOL,countTag:out:DINT,levelTag:out:INT]
 lamps [low,ready] animates=false
   link carriage {shape:frame}
   link forkW {shape:frame}
   link forkE {shape:frame}
-  link p0 {gripZone:true,shape:frame}
-  link p1 {gripZone:true,shape:frame}
-  link p2 {gripZone:true,shape:frame}
-  link p3 {gripZone:true,shape:frame}
-  link p4 {gripZone:true,shape:frame}
-  link p5 {gripZone:true,shape:frame}
-  link p6 {gripZone:true,shape:frame}
-  link p7 {gripZone:true,shape:frame}
-  link p8 {gripZone:true,shape:frame}
-  link p9 {gripZone:true,shape:frame}
+  link pos {gripZone:true,shape:frame}
   link colWN {body:true,hidden:true,shape:box}
   link colWS {body:true,hidden:true,shape:box}
   link colEN {body:true,hidden:true,shape:box}
@@ -451,7 +443,7 @@ lamps [low,ready] animates=false
 class {}
 footprint {hx:0.2500,hz:0.2500,y0:-0.4600,y1:0.5000}
 plugs []
-params reserved=[enableComms] tags=[runTag:in:BOOL,countTag:out:DINT]
+params reserved=[] tags=[runTag:in:BOOL,countTag:out:DINT]
 lamps [] animates=false
   link marker {outline:true,shape:box}
   link dropCone {shape:cone}
@@ -506,7 +498,7 @@ lamps [] animates=false
 class {}
 footprint {hx:0.0450,hz:0.0300,y0:0,y1:0.0900}
 plugs [mounts[0]]
-params reserved=[enableComms] tags=[tag:out:BOOL,lampTag:in:BOOL]
+params reserved=[] tags=[tag:out:BOOL,lampTag:in:BOOL]
 lamps [cap] animates=false
   link cap {shape:frame}
   link label {shape:label}
@@ -541,7 +533,7 @@ lamps [] animates=false
 class {conveyor:true,straight:{length:4.0000,width:1.5240},tailOrigin:false,worldPhaseRollers:true}
 footprint {hx:2.0000,hz:0.7620,y0:-0.4000,y1:0.0500}
 plugs []
-params reserved=[speed,enableComms] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
+params reserved=[speed] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
 lamps [] animates=true
   link deck {conveys:true,hidden:true,shape:box}
   link roller {shape:frame}
@@ -563,7 +555,7 @@ lamps [] animates=true
 class {}
 footprint {hx:0.5000,hz:0.1000,y0:0,y1:2.0000}
 plugs [chain]
-params reserved=[enableComms] tags=[tag:out:BOOL]
+params reserved=[] tags=[tag:out:BOOL]
 lamps [] animates=false
   link hinge {shape:frame}
   link leaf {body:true,hidden:true,shape:box}
@@ -585,7 +577,7 @@ lamps [] animates=false
 class {}
 footprint {hx:0.9400,hz:0.4150,y0:0,y1:3.4900}
 plugs []
-params reserved=[speed,enableComms] tags=[commandTag:in:INT,executeTag:in:BOOL,doneTag:out:BOOL,enableTag:in:BOOL,gripperTag:in:BOOL,in1Tag:in:BOOL,in2Tag:in:BOOL,in3Tag:in:BOOL,in4Tag:in:BOOL,out1Tag:out:BOOL,out2Tag:out:BOOL,out3Tag:out:BOOL,out4Tag:out:BOOL]
+params reserved=[speed] tags=[commandTag:in:INT,executeTag:in:BOOL,doneTag:out:BOOL,enableTag:in:BOOL,gripperTag:in:BOOL,in1Tag:in:BOOL,in2Tag:in:BOOL,in3Tag:in:BOOL,in4Tag:in:BOOL,out1Tag:out:BOOL,out2Tag:out:BOOL,out3Tag:out:BOOL,out4Tag:out:BOOL]
 lamps [vacuumLamp] animates=true
   link base {shape:mesh}
   link basePivot {shape:frame}
@@ -608,6 +600,8 @@ lamps [vacuumLamp] animates=true
   link toolSuction {shape:mesh}
   link gripper {gripZone:true,shape:frame}
   link eoat {shape:frame}
+  link fingerA {shape:frame}
+  link fingerB {shape:frame}
   drawn[0] {material:eoatPaint,rides:eoat}
   drawn[1] {material:eoatRail,rides:eoat}
   drawn[2] {material:eoatSteel,rides:eoat}
@@ -620,7 +614,7 @@ lamps [vacuumLamp] animates=true
 class {conveyor:true,spur:true,straight:{length:2.0000,width:1.5240},tailOrigin:false}
 footprint {cx:0.2200,hx:1.2200,hz:0.7620,y0:-0.4000,y1:0.0500}
 plugs []
-params reserved=[speed,enableComms] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
+params reserved=[speed] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
 lamps [] animates=false
   drawn[0] {instances:40.0000,look:belt}
   drawn[1] {instances:40.0000,look:belt}
@@ -637,7 +631,7 @@ lamps [] animates=false
 class {conveyor:true,spur:true,straight:{length:2.0000,width:1.5240},tailOrigin:false}
 footprint {cx:0.2200,hx:1.2200,hz:0.7620,y0:-0.4000,y1:0.0500}
 plugs []
-params reserved=[speed,enableComms] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
+params reserved=[speed] tags=[speedTag:in:REAL,speedFpmTag:in:REAL,runTag:in:BOOL,runningTag:out:BOOL,velocityTag:out:REAL,pulseTag:out:BOOL,encoderTag:out:REAL]
 lamps [] animates=true
   drawn[0] {instances:32.0000,look:roller,spins:true}
   drawn[1] {instances:64.0000,look:roller,noShadow:true,spins:true}
@@ -655,7 +649,7 @@ lamps [] animates=true
 class {}
 footprint {hx:0.0365,hz:0.0365,y0:0,y1:0.3850}
 plugs []
-params reserved=[enableComms] tags=[tag:in:INT]
+params reserved=[] tags=[tag:in:INT]
 lamps [seg1,seg2,seg3,seg4,seg5,seg6,seg7,seg8] animates=false
   link foot {shape:cylinder}
   link stem {shape:cylinder}
@@ -719,7 +713,7 @@ lamps [] animates=false
 class {}
 footprint {hx:2.0000,hz:1.4500,y0:-1.0000,y1:2.2500}
 plugs []
-params reserved=[enableComms] tags=[startTag:in:BOOL,enableTag:in:BOOL,busyTag:out:BOOL,doneTag:out:BOOL,inPositionTag:out:BOOL]
+params reserved=[] tags=[startTag:in:BOOL,enableTag:in:BOOL,busyTag:out:BOOL,doneTag:out:BOOL,inPositionTag:out:BOOL]
 lamps [beacon] animates=false
   link arm {shape:frame}
   link carriage {shape:frame}
@@ -744,7 +738,7 @@ lamps [beacon] animates=false
 class {conveyor:true,rotatingDeck:true,tailOrigin:false}
 footprint {hx:1.1430,hz:1.1430,y0:-0.4000,y1:0.0500}
 plugs []
-params reserved=[speed,enableComms] tags=[angleTag:in:REAL,speedTag:in:REAL,speedFpmTag:in:REAL,doneTag:out:BOOL,enableTag:in:BOOL]
+params reserved=[speed] tags=[angleTag:in:REAL,speedTag:in:REAL,speedFpmTag:in:REAL,doneTag:out:BOOL,enableTag:in:BOOL]
 lamps [] animates=true
   link deck {body:true,gripZone:true,look:frame,shape:cylinder}
   link drum {look:frame,shape:cylinder}

@@ -1,0 +1,682 @@
+{
+  "format": 6,
+  "id": "oip.roller-conveyor",
+  "name": "Roller Conveyor",
+  "params": {
+    "length": {
+      "type": "number",
+      "default": 4,
+      "min": 0.5,
+      "step": 0.1,
+      "label": "Length (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "x"
+      },
+      "group": "Size",
+      "desc": "Bed length along travel. Drag the dot on either end face to resize in the viewport; there is no upper limit, so one bed can stand in for a long run."
+    },
+    "width": {
+      "type": "number",
+      "default": 1.524,
+      "min": 0.2,
+      "step": 0.05,
+      "label": "Width (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "z"
+      },
+      "group": "Size",
+      "desc": "Bed width across travel. Drag the dot on either side face to resize in the viewport."
+    },
+    "frameHeight": {
+      "type": "number",
+      "default": 0.17,
+      "min": 0.1,
+      "max": 0.6,
+      "step": 0.01,
+      "label": "Frame height (m)",
+      "group": "Size",
+      "desc": "Depth of the side frame channel below the rollers. Set it to the Frame height of the conveyor this bed butts against so the two frames line up at the joint. The legs shorten or lengthen to meet the frame bottom; the deck height does not move."
+    },
+    "fpmUnits": {
+      "type": "boolean",
+      "default": true,
+      "whenAbsent": false,
+      "imperialUnits": true,
+      "label": "PLC speed in FPM",
+      "desc": "The unit the PLC commands this conveyor in. On: feet per minute. Off: metres per second. The speed tag is a REAL either way, so switching changes what its value means and never how the program declares it. Set by the scene Units (Scene Properties), which switch every conveyor together, so the Inspector does not show it. A conveyor saved before this switch existed is in metres per second."
+    },
+    "speedFpm": {
+      "type": "number",
+      "default": 197,
+      "min": -600,
+      "max": 600,
+      "step": 1,
+      "unit": "FPM",
+      "label": "Speed",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "Surface speed in feet per minute. Negative runs it backwards. A program can command this through the FPM speed tag below."
+    },
+    "speed": {
+      "type": "number",
+      "unit": "m/s",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "default": 1,
+      "min": -3,
+      "max": 3,
+      "step": 0.1,
+      "label": "Speed",
+      "desc": "Surface speed carried along the bed. Negative runs the rollers backwards, which is the ONLY way to reverse flow - rotating the part 180 degrees moves its ends instead. A program can command this through the speed tag below."
+    },
+    "accelTime": {
+      "type": "number",
+      "unit": "s",
+      "default": 0.2,
+      "min": 0,
+      "max": 30,
+      "step": 0.1,
+      "label": "Accel time",
+      "desc": "How long the drive takes to bring the conveyor from stopped up to its rated speed (the speed that reads 30, under Comms > Feedback), like the acceleration time set on a VFD. A smaller change takes proportionally less. 0 starts instantly."
+    },
+    "decelTime": {
+      "type": "number",
+      "unit": "s",
+      "default": 0.2,
+      "min": 0,
+      "max": 30,
+      "step": 0.1,
+      "label": "Decel time",
+      "desc": "How long the drive takes to bring the conveyor from rated speed down to a stop. Cargo keeps travelling while it does, so a box stopped at a photo-eye ends up past it. 0 stops instantly."
+    },
+    "skew": {
+      "type": "number",
+      "unit": "°",
+      "default": 0,
+      "min": -60,
+      "max": 60,
+      "step": 1,
+      "label": "Roller skew",
+      "desc": "Angle the rollers so cargo drifts sideways as it travels and squares itself against a side guard - the standard way to align product before a merge or a labeller. The surface velocity follows the angle, and the guard does the squaring, so leave the guard on that side up."
+    },
+    "tiltDeg": {
+      "type": "number",
+      "unit": "°",
+      "default": 0,
+      "min": -30,
+      "max": 30,
+      "step": 1,
+      "label": "Incline",
+      "desc": "Tilt the bed about its centre, positive lifting the head. Incline a roller bed this way, not by rotating the part, which tips its snap ends too; the legs regrow to the floor. Capped at 30 degrees: rollers shed product on a steeper grade, where a belt holds it."
+    },
+    "leftGuard": {
+      "type": "boolean",
+      "default": true,
+      "label": "Left guard",
+      "group": "Guards",
+      "desc": "Guard wall down the left side, looking along travel. This is a real barrier, so turning it off lets cargo leave the bed sideways."
+    },
+    "rightGuard": {
+      "type": "boolean",
+      "default": true,
+      "label": "Right guard",
+      "group": "Guards",
+      "desc": "Guard wall down the right side, looking along travel. This is a real barrier, so turning it off lets cargo leave the bed sideways."
+    },
+    "guardOpenings": {
+      "type": "numberList",
+      "columns": [
+        "start m",
+        "end m",
+        "side ±1/0"
+      ],
+      "arity": 3,
+      "default": [],
+      "label": "Guard openings",
+      "group": "Guards",
+      "desc": "Gaps cut in the guard wall, measured as distance ALONG the bed from the tail. Side -1 is left, +1 is right, 0 cuts both. Each gap opens the collision as well as the mesh, which is how a transfer or a diverter gets product off the lane. Press G with the bed selected to drag them in the viewport."
+    },
+    "standHeight": {
+      "type": "number",
+      "default": 2,
+      "min": 0.1,
+      "max": 3,
+      "step": 0.01,
+      "rest": "surfaceBelow",
+      "label": "Stand height (m)",
+      "desc": "Height of the deck above whatever is beneath it, which sets the leg length. The host fills this in when you drop or snap the conveyor, so the legs reach the floor - or a platform crossing underneath - without you measuring. Pin it by hand when you want a deliberate height."
+    },
+    "speedTag": {
+      "type": "tag",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "dir": "in",
+      "stType": "REAL",
+      "setpointFor": "speed",
+      "default": "",
+      "label": "Speed tag (m/s)",
+      "group": "Comms",
+      "desc": "The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed."
+    },
+    "speedFpmTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "REAL",
+      "setpointFor": "speedFpm",
+      "default": "",
+      "label": "Speed tag (FPM)",
+      "group": "Comms",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0."
+    },
+    "runTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "onlyWhenDriven": true,
+      "default": "",
+      "label": "Run tag (rollers run while true)",
+      "group": "Comms",
+      "desc": "Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the bed."
+    },
+    "runningTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Running tag (true while moving)",
+      "group": "Comms",
+      "desc": "Feedback the conveyor publishes for the program to read: true whenever it is actually moving. This is the EFFECTIVE speed, gates included, so a run tag holding it at zero reads false here."
+    },
+    "speedAt30": {
+      "type": "number",
+      "default": 1,
+      "min": 0.01,
+      "max": 10,
+      "step": 0.01,
+      "label": "Speed that reads 30 (m/s)",
+      "group": "Comms/Feedback",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "desc": "The surface speed this conveyor reaches when its drive turns at 30. It scales the velocity tag: running at exactly this speed reads 30."
+    },
+    "speedAt30Fpm": {
+      "type": "number",
+      "default": 197,
+      "min": 1,
+      "max": 2000,
+      "step": 1,
+      "label": "Speed that reads 30 (FPM)",
+      "group": "Comms/Feedback",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "The surface speed, in feet per minute, this conveyor reaches when its drive turns at 30. It scales the velocity tag: running at exactly this speed reads 30."
+    },
+    "velocityTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "REAL",
+      "default": "",
+      "label": "Velocity tag (30 at the speed above)",
+      "group": "Comms/Feedback",
+      "desc": "Drive feedback the program reads: the effective speed as a share of the speed at 30 revolutions, times 30. Stopped reads 0, and a run tag holding the conveyor still counts as stopped."
+    },
+    "inchesPerPulse": {
+      "type": "number",
+      "default": 1,
+      "min": 0.05,
+      "max": 100,
+      "step": 0.05,
+      "label": "Travel per pulse (in)",
+      "group": "Comms/Feedback",
+      "desc": "How far the surface travels between pulses on the pulse tag. A pulse cannot be finer than one simulation step, so a fast conveyor at a fine pitch needs a higher project simHz."
+    },
+    "pulseTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Pulse tag (one per pitch)",
+      "group": "Comms/Feedback",
+      "desc": "An encoder for the program to count: TRUE for one simulation step each time the surface has travelled the inches above, in either direction, and FALSE otherwise."
+    },
+    "encoderTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "REAL",
+      "default": "",
+      "label": "Encoder tag (travel, m)",
+      "group": "Comms/Feedback",
+      "desc": "Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station."
+    }
+  },
+  "behavior": "// Roller Conveyor — a powered roller bed. Demonstrates a conveying deck link: the behavior sets the surface\n// velocity along the flow axis (+X) and the host carries any cargo on the bed. A negative speed reverses it;\n// a PLC run tag can start/stop it. The rollers are decorative (the deck is the surface).\n//\n// The rig is a conveying deck under a world-phased pitch grid: the rollers are geometry() drawn on the grid's\n// stations, render-only, so coplanar roller bodies can't fight the deck for the contact.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// ---- from examples/parts/_shared/conveyorUnits.js ----\n/** metres per second in one foot per minute */\nconst FPM_MS = 0.00508\n\n/** `{ group }` to spread into a param, or nothing when there is no group */\nconst paramGroup = (group) => (group ? { group } : {})\n\n/** Spread into the part's own m/s `speed` and `speedTag` params: shown only while the PLC speaks metres per second. */\nconst METRIC_ONLY = { visibleWhen: { param: 'fpmUnits', is: false } }\n\n/** Params to stand BEFORE the part's own `speed`: the unit switch, and the speed in the other unit. */\nfunction speedUnitParams(speedMs) {\n  return {\n    fpmUnits: { type: 'boolean', default: true, whenAbsent: false, imperialUnits: true, label: 'PLC speed in FPM', desc: 'The unit the PLC commands this conveyor in. On: feet per minute. Off: metres per second. The speed tag is a REAL either way, so switching changes what its value means and never how the program declares it. Set by the scene Units (Scene Properties), which switch every conveyor together, so the Inspector does not show it. A conveyor saved before this switch existed is in metres per second.' },\n    speedFpm: { type: 'number', default: Math.round(speedMs / FPM_MS), min: -600, max: 600, step: 1, unit: 'FPM', label: 'Speed', visibleWhen: { param: 'fpmUnits', is: true }, desc: 'Surface speed in feet per minute. Negative runs it backwards. A program can command this through the FPM speed tag below.' },\n  }\n}\n\n/** The param to stand right AFTER the part's own `speedTag`: the same setpoint, in FPM. */\nfunction speedFpmTagParam(group) {\n  return {\n    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag (FPM)', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },\n  }\n}\n\n/** In step(): the Inspector readout of whichever speed field is in use. `v` is the effective m/s. */\nfunction reportSpeed(ctx, fpm, v) {\n  if (fpm) ctx.report('speedFpm', Math.round(v / FPM_MS)); else ctx.report('speed', v)\n}\n\n// ---- from examples/parts/_shared/conveyorDrive.js ----\n/** Params to stand right AFTER the part's own `speed`: the drive's ramp, in seconds from stopped to rated. */\nfunction driveRampParams(accelTime, decelTime) {\n  return {\n    accelTime: { type: 'number', unit: 's', default: accelTime, min: 0, max: 30, step: 0.1, label: 'Accel time', desc: 'How long the drive takes to bring the conveyor from stopped up to its rated speed (the speed that reads 30, under Comms > Feedback), like the acceleration time set on a VFD. A smaller change takes proportionally less. 0 starts instantly.' },\n    decelTime: { type: 'number', unit: 's', default: decelTime, min: 0, max: 30, step: 0.1, label: 'Decel time', desc: 'How long the drive takes to bring the conveyor from rated speed down to a stop. Cargo keeps travelling while it does, so a box stopped at a photo-eye ends up past it. 0 stops instantly.' },\n  }\n}\n\n/** Params to stand after the part's `runningTag`: the velocity feedback, the pulse and the encoder, in a\n *  `Feedback` section under `group`. */\nfunction driveFeedbackParams(speedMs, group) {\n  const fpm = Math.round(speedMs / FPM_MS)\n  const g = paramGroup(group ? `${group}/Feedback` : 'Feedback')\n  return {\n    speedAt30: { type: 'number', default: speedMs, min: 0.01, max: 10, step: 0.01, label: 'Speed that reads 30 (m/s)', ...g, visibleWhen: { param: 'fpmUnits', is: false }, desc: 'The surface speed this conveyor reaches when its drive turns at 30. It scales the velocity tag: running at exactly this speed reads 30.' },\n    speedAt30Fpm: { type: 'number', default: fpm, min: 1, max: 2000, step: 1, label: 'Speed that reads 30 (FPM)', ...g, visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The surface speed, in feet per minute, this conveyor reaches when its drive turns at 30. It scales the velocity tag: running at exactly this speed reads 30.' },\n    velocityTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Velocity tag (30 at the speed above)', ...g, desc: 'Drive feedback the program reads: the effective speed as a share of the speed at 30 revolutions, times 30. Stopped reads 0, and a run tag holding the conveyor still counts as stopped.' },\n    inchesPerPulse: { type: 'number', default: 1, min: 0.05, max: 100, step: 0.05, label: 'Travel per pulse (in)', ...g, desc: 'How far the surface travels between pulses on the pulse tag. A pulse cannot be finer than one simulation step, so a fast conveyor at a fine pitch needs a higher project simHz.' },\n    pulseTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Pulse tag (one per pitch)', ...g, desc: 'An encoder for the program to count: TRUE for one simulation step each time the surface has travelled the inches above, in either direction, and FALSE otherwise.' },\n    encoderTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Encoder tag (travel, m)', ...g, desc: 'Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station.' },\n  }\n}\n\n/** What a conveyor remembers between steps for its ramp, its pulse and its encoder. Make one at the top level. */\nfunction conveyorDrive() {\n  return {\n    pulseTravel: 0, // surface travel since the last pulse (in)\n    odo: 0, // encoder odometer: surface travel (m), signed with the direction of travel\n    driven: 0, // what the drive is actually doing (m/s): the command, through the accel/decel ramp\n    rampStarted: false, // past the first step, from which every change of command ramps\n  }\n}\n\n/** In step(): the unit the conveyor is set up in and the commanded speed, `{ fpm, setpointTag, commanded }`.\n *  `commanded` is always m/s, so everything after this call is m/s. */\nfunction commandedSpeed(ctx) {\n  const fpm = ctx.params.fpmUnits === true\n  const setpointTag = fpm ? ctx.params.speedFpmTag : ctx.params.speedTag\n  const unit = fpm ? FPM_MS : 1\n  const commanded = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * unit\n  return { fpm, setpointTag, commanded }\n}\n\n/** In step(), after commandedSpeed(): the speed the surface actually runs at (m/s), `target` (the command, gates\n *  applied) through the drive's ramp. Away from 0 it accelerates at rated / accelTime; toward 0 it decelerates at\n *  rated / decelTime; a reversal runs down to 0 before it turns round.\n *  THE FIRST STEP: a conveyor whose speed or run gate a program owns starts from rest, because the program is\n *  starting the line; one running on its authored speed is already running at it, since nothing started it. */\nfunction rampedSpeed(ctx, drive, cmd, target) {\n  // rates are rated speed over the accel / decel time\n  const rated = cmd.fpm ? ctx.params.speedAt30Fpm * FPM_MS : ctx.params.speedAt30\n  let want = target\n  if (!drive.rampStarted) {\n    drive.rampStarted = true\n    // no program commands this conveyor: its authored speed is a belt that is running, not one being started\n    if (!(cmd.setpointTag || (ctx.params.runTag && ctx.tagDriven(ctx.params.runTag)))) drive.driven = want\n  }\n  if (want * drive.driven < 0) { if (ctx.params.decelTime > 0) want = 0; else drive.driven = 0 } // reversing: stop first\n  const rampTime = Math.abs(want) > Math.abs(drive.driven) ? ctx.params.accelTime : ctx.params.decelTime\n  drive.driven = rampTime > 0 && rated > 0 ? ctx.approach(drive.driven, want, (rated / rampTime) * ctx.dt) : want\n  return drive.driven\n}\n\n/** In step(): the velocity feedback, the pulse and the encoder, from the effective speed `v` (m/s). */\nfunction publishDrive(ctx, drive, cmd, v) {\n  // the velocity as a share of the speed at 30\n  const at30 = cmd.fpm ? ctx.params.speedAt30Fpm * FPM_MS : ctx.params.speedAt30\n  if (ctx.params.velocityTag) ctx.writeNumber(ctx.params.velocityTag, at30 > 0 ? (v / at30) * 30 : 0)\n  // the encoder pulse\n  const pitch = ctx.params.inchesPerPulse > 0 ? ctx.params.inchesPerPulse : 1\n  drive.pulseTravel += (Math.abs(v) * ctx.dt) / 0.0254\n  const pulse = drive.pulseTravel >= pitch - 1e-9 // (a hair of tolerance: twelve twelfths of an inch do not sum to exactly one)\n  if (pulse) drive.pulseTravel = Math.max(0, drive.pulseTravel - pitch * Math.max(1, Math.floor(drive.pulseTravel / pitch + 1e-9)))\n  if (ctx.params.pulseTag) ctx.writeTag(ctx.params.pulseTag, pulse)\n  drive.odo += v * ctx.dt\n  if (ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)\n}\n\n// ---- from examples/parts/_shared/rollerBed.js ----\n/** the drive-band urethane (a warm amber, matte) as a package material: linear RGB of #d9772b */\n\n// The roller's profile, [radius, z] from the axle out to the tube, in the template's native units (radius 0.12):\n// the hub face, the chamfered bearing housing, the rim, and the tube.\nconst ROLLER_PROFILE = [[0, 0.938], [0.0689, 0.938], [0.0718, 0.9362], [0.0787, 0.9199], [0.1072, 0.9199], [0.1072, 0.9351], [0.1092, 0.9371], [0.118, 0.9371], [0.12, 0.9351]]\nconst ROLLER_TEMPLATE_R = 0.12, ROLLER_TEMPLATE_BODY = 2 * 0.9371 // tube radius, and the rim-to-rim length a body is fitted by\n// a roller shorter than this is a sliver at a clipped corner: dropped rather than drawn\nconst ROLLER_SLIVER = 0.02\n// Drive-band proportions as fractions of the ROLLER RADIUS, so every roller class keeps one look: on a 24 mm roller a\n// 4.8 mm cord (the common 3/16\" round band) in grooves 20 and 38 mm in from the bed edge.\nconst BAND_CORD_PER_R = 1 / 5, BAND_INSET_PER_R = 5 / 6, BAND_SPACING_PER_R = 3 / 4\n\n// the tube: the profile walked from the -Z hub to the +Z hub, turned about Z. Axle = local Z, centred.\nfunction rollerTemplate(g) {\n  var walk = []\n  for (var i = 0; i < ROLLER_PROFILE.length; i++) walk.push([ROLLER_PROFILE[i][0], -ROLLER_PROFILE[i][1]])\n  for (var k = ROLLER_PROFILE.length - 1; k >= 0; k--) walk.push([ROLLER_PROFILE[k][0], ROLLER_PROFILE[k][1]])\n  return g.lathe(walk, { axis: 'z', segments: 18, startAngle: Math.PI / 18 })\n}\n// an axle stub: a capped unit cylinder along Z, centred\nfunction stubTemplate(g) {\n  return g.lathe([[0, -0.5], [1, -0.5], [1, 0.5], [0, 0.5]], { axis: 'z', segments: 16 })\n}\n// a drive band's half-ring: a torus of loop radius lr and cord radius t over the -X half of the XY plane (the side of\n// a roller facing AWAY from the neighbour the band runs to). Axle = local Z.\nfunction bandArcTemplate(g, lr, t) {\n  var s = g.surface(), T = 10, N = 6, rows = []\n  for (var i = 0; i <= T; i++) {\n    var u = Math.PI * i / T, row = []\n    for (var j = 0; j < N; j++) {\n      var v = 2 * Math.PI * j / N, rr = lr + t * Math.cos(v)\n      row.push(s.vertex(-rr * Math.sin(u), rr * Math.cos(u), t * Math.sin(v)))\n    }\n    rows.push(row)\n  }\n  for (var a = 0; a < T; a++) for (var b = 0; b < N; b++) s.quad(rows[a][b], rows[a + 1][b], rows[a + 1][(b + 1) % N], rows[a][(b + 1) % N])\n  return s.build()\n}\n// a band's straight run: an open unit cylinder along X (its ends bury in the half-rings)\nfunction bandStrandTemplate(g) {\n  return g.lathe([[1, -0.5], [1, 0.5]], { axis: 'x', segments: 6 })\n}\nfunction yawQuat(yaw) { return [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)] }\n\n// Where the bands go, from the rollers in bed order ({x, z, yaw, length}). A groove sits on the line\n// z = side * (zWall - inset) (or one spacing further in); pair k uses the first groove when k is even, the second when\n// odd, as a two-groove roller does. The band runs in the plane across the axles, so its far end is the near groove\n// point projected onto the next roller's axle. A pair is skipped when a groove point falls off its (clipped) roller,\n// when the two rollers aren't parallel, or when the gap is a dropped roller wide (over 1.5x the tightest pair).\nfunction layoutRollerBands(rollers, bands, fullAxle, radius) {\n  var side = bands.side || 1\n  var zWall = typeof bands.zWall === 'number' ? bands.zWall : fullAxle / 2\n  var cord = typeof bands.cord === 'number' ? bands.cord : radius * BAND_CORD_PER_R\n  var inset = typeof bands.inset === 'number' ? bands.inset : radius * BAND_INSET_PER_R\n  var spacing = typeof bands.spacing === 'number' ? bands.spacing : radius * BAND_SPACING_PER_R\n  var grooves = [side * (zWall - inset), side * (zWall - inset - spacing)]\n  var out = [], minSpan = Infinity\n  for (var k = 0; k + 1 < rollers.length; k++) {\n    var a = rollers[k], b = rollers[k + 1]\n    if (Math.abs(a.yaw - b.yaw) > 1e-4) continue\n    var sin = Math.sin(a.yaw), cos = Math.cos(a.yaw)\n    if (Math.abs(cos) < 1e-3) continue // an axle along the flow has no wall to measure a groove from\n    var zg = grooves[k % 2]\n    var ta = (zg - a.z) / cos\n    if (Math.abs(ta) > a.length / 2 - cord) continue\n    var px = a.x + ta * sin, pz = zg\n    var d = (b.x - px) * cos - (b.z - pz) * sin // across to b's axle, along the axle normal (cos, -sin)\n    if (Math.abs(d) < 1e-4) continue\n    var qx = px + d * cos, qz = pz - d * sin\n    var tb = (qx - b.x) * sin + (qz - b.z) * cos\n    if (Math.abs(tb) > b.length / 2 - cord) continue\n    minSpan = Math.min(minSpan, Math.abs(d))\n    out.push({ px: px, pz: pz, qx: qx, qz: qz, span: Math.abs(d) })\n  }\n  return { cord: cord, bands: out.filter(function (b) { return b.span <= minSpan * 1.5 }) }\n}\n\n// A roller bed as MeshParts: the tubes (spinning), their axle stubs (spinning with them) and, on a powered bed, the\n// drive bands (static - an even band looks the same moving or still, and a static bank merges across every bed).\n//   rollers  [{x, z, yaw, length}] in bed order: part-local centre, yaw about +Y (axle = local +Z yawed), body length\n//   o.radius the tube radius, which also sets the no-slip spin rate (speed / radius)\n//   o.y      the axle height in the frame the parts are drawn in\n//   o.link   the rig link to hang them on (optional)\n//   o.stub   { radius, length, protrude }: two shafts per roller, centred protrude past each (clipped) end\n//   o.bands  a band spec ({ zWall, inset, spacing, cord, side }, all optional) - omit for an unpowered bed\n//   o.fullAxle the unclipped axle length the bands measure the bed edge from (default the first roller's length)\n//   o.dropSlivers  skip rollers of length <= ROLLER_SLIVER\n//   o.bandMaterial the package material id the bands are drawn in (default 'band')\n//   o.speed  the reported value (ctx.report) that turns the rollers, m/s at the tube surface (default 'speed')\n// A positive speed turns the tubes the way that carries cargo toward +X on a bed whose axles run along Z: about -Z.\nfunction rollerBed(g, rollers, o) {\n  var R = o.radius, y = o.y || 0\n  var sxy = R / ROLLER_TEMPLATE_R\n  var spin = { axis: [0, 0, -1], radius: R }\n  if (o.speed) spin.speed = o.speed\n  var bodies = [], stubs = [], drawn = []\n  for (var i = 0; i < rollers.length; i++) {\n    var r = rollers[i]\n    if (o.dropSlivers && r.length <= ROLLER_SLIVER) continue\n    drawn.push(r)\n    var q = yawQuat(r.yaw)\n    bodies.push({ position: [r.x, y, r.z], quaternion: q, scale: [sxy, sxy, Math.max(0.01, r.length) / ROLLER_TEMPLATE_BODY] })\n    if (o.stub) {\n      var ax = Math.sin(r.yaw), az = Math.cos(r.yaw), so = r.length / 2 + o.stub.protrude\n      var ss = [o.stub.radius, o.stub.radius, o.stub.length]\n      stubs.push({ position: [r.x + ax * so, y, r.z + az * so], quaternion: q, scale: ss })\n      stubs.push({ position: [r.x - ax * so, y, r.z - az * so], quaternion: q, scale: ss })\n    }\n  }\n  var out = [{ desc: rollerTemplate(g), finish: 'roller', instances: bodies, spin: spin }]\n  if (o.stub) out.push({ desc: stubTemplate(g), finish: 'roller', instances: stubs, spin: spin, castShadow: false })\n  if (o.bands) {\n    var full = typeof o.fullAxle === 'number' ? o.fullAxle : (rollers.length ? rollers[0].length : 0)\n    var laid = layoutRollerBands(drawn, o.bands, full, R)\n    var cord = laid.cord, lr = R + cord * 0.4 // seated on the tube: the cord's inner edge just under the facet flats\n    var arcs = [], strands = []\n    for (var b = 0; b < laid.bands.length; b++) {\n      var bd = laid.bands[b]\n      var yaw = Math.atan2(-(bd.qz - bd.pz), bd.qx - bd.px) // band frame: local X toward q, local Z the axle\n      arcs.push({ position: [bd.qx, y, bd.qz], quaternion: yawQuat(yaw + Math.PI) })\n      arcs.push({ position: [bd.px, y, bd.pz], quaternion: yawQuat(yaw) })\n      var mx = (bd.px + bd.qx) / 2, mz = (bd.pz + bd.qz) / 2, sc = [bd.span, cord / 2, cord / 2]\n      strands.push({ position: [mx, y + lr, mz], quaternion: yawQuat(yaw), scale: sc })\n      strands.push({ position: [mx, y - lr, mz], quaternion: yawQuat(yaw), scale: sc })\n    }\n    // finish 'mesh' says plainly what they are: a finish-less submesh of a CONVEYING function part is read as its belt\n    // fabric, which would draw the bands in the belt weave\n    var bm = o.bandMaterial || 'band'\n    out.push({ desc: bandArcTemplate(g, lr, cord / 2), finish: 'mesh', material: bm, instances: arcs, castShadow: false })\n    out.push({ desc: bandStrandTemplate(g), finish: 'mesh', material: bm, instances: strands, castShadow: false })\n  }\n  if (o.link) for (var m = 0; m < out.length; m++) out[m].link = o.link\n  return out\n}\n\n// ---- from examples/parts/_shared/rollerFrame.js ----\n/** The roller beds' `frameHeight` param: the side frame channel's height (deck-side top 5 mm under the\n *  conveying plane, as on every bed). Same meaning and default as the belt's `height`, whose frame wall is that deep,\n *  so a roller bed set to a belt's Frame height meets its frame flush. A geometry()-tier bed reads its frame bottom\n *  through frameBottom(); a rig bed tracks it with sizeParams / offsetParams / leg frameDepthParam.\n *  Same range as the belt's, so every Frame height has a roller bed that matches it; on a shallow frame the legs'\n *  mounting brackets shorten to stay under the deck (legPieces' frameDepth, _shared/legs.js). */\nfunction frameHeightParam(group) {\n  return {\n    frameHeight: { type: 'number', default: 0.17, min: 0.1, max: 0.6, step: 0.01, label: 'Frame height (m)', ...(group ? { group } : {}), desc: 'Depth of the side frame channel below the rollers. Set it to the Frame height of the conveyor this bed butts against so the two frames line up at the joint. The legs shorten or lengthen to meet the frame bottom; the deck height does not move.' },\n  }\n}\n\n/** The frame bottom's y (negative, below the deck) for a geometry()-tier bed.\n *  Rounded to the micrometre exactly as the belt's is, so at the default it is the literal -0.175 the pooled rail\n *  template is shared by value with (0.17 + 0.005 is 0.17500000000000002 in binary). */\n\nvar R = 0.024, PITCH = 0.075 // rendered roller radius (the roller template's 0.12 scaled down), roller pitch (the rig's grid spacing)\nconst STUB_R = R * 0.34 //   thin axle-shaft stubs poking through the frame\n\nconst drive = conveyorDrive() // the ramp, the pulse and the encoder, remembered between steps\n\n// Each roller's placement, from the grid the host resolved (ctx.deltas: the world-phased pitch grid shared with\n// butted beds). Straight: full-length rollers (yaw 0) at every grid line. Skewed: rotate each about +Y by `skew`,\n// lengthen to axle/cos so it spans the bed, and clip to the frame corners. With no grid (a headless call), a\n// centred one at the same pitch.\nfunction layoutRollers(deltas, p) {\n  var skewRad = (typeof p.skew === 'number' ? p.skew : 0) * Math.PI / 180\n  var width = typeof p.width === 'number' ? p.width : 1.524\n  var length = typeof p.length === 'number' ? p.length : 4\n  var axle = width - 0.004 // the body recessed just behind the frame walls\n  if (!deltas || deltas.length === 0) {\n    deltas = []\n    var n = Math.max(1, Math.floor((length - 2 * R) / PITCH) + 1)\n    for (var d = 0; d < n; d++) deltas.push([(d - (n - 1) / 2) * PITCH, 0, 0])\n  }\n  var out = []\n  var sin = Math.sin(skewRad)\n  if (Math.abs(sin) < 1e-6) {\n    for (var i = 0; i < deltas.length; i++) out.push({ x: deltas[i][0], z: 0, yaw: 0, length: axle })\n    return out\n  }\n  // skewed: the rotated shaft is parameterised by t in [-full/2, full/2]; clip t to BOTH the shaft extent and the\n  // frame ends X = +-halfLen (X = dx + t*sin). The visible segment's length + centre offset give the roller.\n  var cos = Math.cos(skewRad)\n  var full = axle / Math.abs(cos) // width/cos - spans wall-to-wall when rotated\n  var halfShaft = full / 2\n  var halfLen = length / 2 - R * Math.abs(cos) // effective half-length (inset a roller radius)\n  for (var k = 0; k < deltas.length; k++) {\n    var dx = deltas[k][0]\n    var tPos = (halfLen - dx) / sin, tNeg = (-halfLen - dx) / sin\n    var tMin, tMax\n    if (sin > 0) { tMax = Math.min(halfShaft, tPos); tMin = Math.max(-halfShaft, tNeg) }\n    else { tMax = Math.min(halfShaft, tNeg); tMin = Math.max(-halfShaft, tPos) }\n    var clipLen = tMax - tMin\n    if (clipLen <= 0.02) continue // a sliver at the very corner - drop it\n    var offset = (tMax + tMin) / 2\n    out.push({ x: dx + offset * sin, z: offset * cos, yaw: skewRad, length: clipLen })\n  }\n  return out\n}\n\ndefinePart({\n  params: {\n    // 'face' handles add viewport resize dots: a ±X dot drives length, ±Z drives width (clamped to the\n    // param's min/max); the host reflows the rig live. length has no max — a roller bed can be any length.\n    length: { type: 'number', default: 4, min: 0.5, step: 0.1, label: 'Length (m)', handle: { kind: 'face', axis: 'x' }, group: 'Size', desc: 'Bed length along travel. Drag the dot on either end face to resize in the viewport; there is no upper limit, so one bed can stand in for a long run.' },\n    width: { type: 'number', default: 1.524, min: 0.2, step: 0.05, label: 'Width (m)', handle: { kind: 'face', axis: 'z' }, group: 'Size', desc: 'Bed width across travel. Drag the dot on either side face to resize in the viewport.' },\n    ...frameHeightParam('Size'),\n    ...speedUnitParams(1.0),\n    speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 1.0, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'Surface speed carried along the bed. Negative runs the rollers backwards, which is the ONLY way to reverse flow - rotating the part 180 degrees moves its ends instead. A program can command this through the speed tag below.' },\n    ...driveRampParams(0.2, 0.2),\n    // skew — angle the rollers for angled product movement: cargo tracks across the bed and squares against\n    // a side guard. layoutRollers() rotates the rollers (lengthened to width/cos, clipped to the frame\n    // corners) and step() angles the surface velocity to match; the guard collision does the squaring.\n    skew: { type: 'number', unit: '°', default: 0, min: -60, max: 60, step: 1, label: 'Roller skew', desc: 'Angle the rollers so cargo drifts sideways as it travels and squares itself against a side guard - the standard way to align product before a merge or a labeller. The surface velocity follows the angle, and the guard does the squaring, so leave the guard on that side up.' },\n    // incline — tilt the whole rigid bed about its centre, +X head up. Host-owned via the rig inclineParam\n    // marker: geometry + collision tilt as one, the trestle legs regrow to the floor, and the deck's surface\n    // velocity gets the tilted tangent — so step() needs no incline math. ±30°: rollers shed product on a\n    // steeper grade, unlike belts which hold it.\n    tiltDeg: { type: 'number', unit: '°', default: 0, min: -30, max: 30, step: 1, label: 'Incline', desc: 'Tilt the bed about its centre, positive lifting the head. Incline a roller bed this way, not by rotating the part, which tips its snap ends too; the legs regrow to the floor. Capped at 30 degrees: rollers shed product on a steeper grade, where a belt holds it.' },\n    // guard toggles — a false showParam removes the wall's render AND its collision body (a real opening,\n    // not just hidden), so cargo can be diverted off / loaded on. Left = −Z, right = +Z (belt convention).\n    leftGuard: { type: 'boolean', default: true, label: 'Left guard', group: 'Guards', desc: 'Guard wall down the left side, looking along travel. This is a real barrier, so turning it off lets cargo leave the bed sideways.' },\n    rightGuard: { type: 'boolean', default: true, label: 'Right guard', group: 'Guards', desc: 'Guard wall down the right side, looking along travel. This is a real barrier, so turning it off lets cargo leave the bed sideways.' },\n    // side-guard openings as [start m, end m, side] rows — measured from the TAIL (upstream end), side −1 =\n    // left, +1 = right, 0 = both. Same rows, same meaning as the belt conveyor's; press G with the bed\n    // selected to drag them in the viewport. Cuts a gap in the guard wall's render AND collision (a sensor,\n    // a hand transfer). The rig guard links are what get split, so the host consumes this param rather than\n    // geometry() — declaring it is the opt-in (core/guardOpenings.ts addAuthoredOpenings).\n    // Neighbour-auto openings (a guard opening itself where another conveyor butts) stay a host concern.\n    guardOpenings: { type: 'numberList', columns: ['start m', 'end m', 'side ±1/0'], arity: 3, default: [], label: 'Guard openings', group: 'Guards', desc: 'Gaps cut in the guard wall, measured as distance ALONG the bed from the tail. Side -1 is left, +1 is right, 0 cuts both. Each gap opens the collision as well as the mesh, which is how a transfer or a diverter gets product off the lane. Press G with the bed selected to drag them in the viewport.' },\n    // deck height above the floor — drives the leg length. rest:'surfaceBelow' lets the host auto-fill it\n    // from the surface beneath at drop/snap, so the legs auto-adjust to reach the floor (or a platform).\n    standHeight: { type: 'number', default: 2.0, min: 0.1, max: 3, step: 0.01, rest: 'surfaceBelow', label: 'Stand height (m)', desc: 'Height of the deck above whatever is beneath it, which sets the leg length. The host fills this in when you drop or snap the conveyor, so the legs reach the floor - or a platform crossing underneath - without you measuring. Pin it by hand when you want a deliberate height.' },\n    // Comms trio: speedTag = REAL setpoint in (replaces the speed param), runningTag = BOOL feedback out\n    // (effective speed ≠ 0); runTag = BOOL run/stop gate (back-compat).\n    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed.' },\n    ...speedFpmTagParam('Comms'),\n    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (rollers run while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the bed.' },\n    runningTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Running tag (true while moving)', group: 'Comms', desc: 'Feedback the conveyor publishes for the program to read: true whenever it is actually moving. This is the EFFECTIVE speed, gates included, so a run tag holding it at zero reads false here.' },\n    ...driveFeedbackParams(1.0, 'Comms'),\n  },\n  // Geometry — the roller bed, and the skew transfer plates: the light-steel corner dead-plates that fill the\n  // triangular gaps the angled rollers leave at the head/tail once skewed. Render-only, emitted on the 'roller'\n  // rig link so they ride the incline.\n  //\n  // `ctx` is the host-resolved seam (GeometryContext): the world-phase roller grid this bed landed on, plus\n  // which of its ends abut a collinear neighbour. The plate needs it because it REPLACES the rollers the skew\n  // clipped away, so at a butt it has to finish where a roller would have. Ending it flush at the bed end\n  // leaves up to (pitch - R) of bare deck at the transfer — the neighbour's first roller is on the shared\n  // grid, wherever the pair happens to sit in world X — against the ONE roller gap an unskewed bed shows\n  // there. See the lip below.\n  geometry(g, p, ctx) {\n    // the rollers: the kit's bed on the grid's stations (tubes + axle stubs + drive bands), drawn on the 'roller'\n    // link at its axle datum (y 0 there). Stubs poke 9.5 mm past each (clipped) end and follow its yaw; the\n    // bands chain each roller to the next at the +Z end, alternating two grooves in from the bed edge - the look of\n    // a powered (MDR) bed. They turn at the effective speed step() reports.\n    var axle = (typeof p.width === 'number' ? p.width : 1.524) - 0.004\n    var bed = rollerBed(g, layoutRollers(ctx && ctx.deltas, p), { radius: R, y: 0, link: 'roller', stub: { radius: STUB_R, length: 0.045, protrude: 0.0095 }, bands: {}, fullAxle: axle, dropSlivers: true })\n    return bed.concat(skewPlates())\n\n    function skewPlates() {\n      var skewRad = (typeof p.skew === 'number' ? p.skew : 0) * Math.PI / 180\n      if (Math.abs(skewRad) < 1e-4) return []\n      var width = typeof p.width === 'number' ? p.width : 1.524\n      var length = typeof p.length === 'number' ? p.length : 4\n      if (width <= 0 || length <= 0) return []\n      // the 'roller' link group sits R below the deck; lift the plate top to roller-top level + a hair (no z-fight),\n      // dropping a 2R skirt so it reads as a solid plate, not a paper-thin sheet.\n      var yTop = R + 0.001, yBot = yTop - 2 * R\n      var halfW = width / 2, headX = length / 2, tailX = -length / 2\n      // X-extent of the triangular gap the angled rollers leave at each end (clamped to the length)\n      var skewZone = Math.min(halfW * Math.abs(Math.tan(skewRad)), length)\n      var headInset = headX - skewZone, tailInset = tailX + skewZone\n      var zSign = skewRad > 0 ? 1 : skewRad < 0 ? -1 : 1 // which diagonal each plate leans along (the union is the same either way)\n      var s = g.surface()\n      function tri(ax, ay, az, bx, by, bz, cx, cy, cz) { s.triangle(s.vertex(ax, ay, az), s.vertex(bx, by, bz), s.vertex(cx, cy, cz)) }\n      // one triangular dead-plate: top face v1-v3-v2 + a skirt down the v1-v3 (diagonal) and v2-v3 (end) edges (the\n      // v1-v2 edge sits against the frame wall, no skirt). doubleSided, so winding is cosmetic.\n      function plate(x1, z1, x2, z2, x3, z3) {\n        tri(x1, yTop, z1, x3, yTop, z3, x2, yTop, z2)\n        tri(x1, yTop, z1, x1, yBot, z1, x3, yBot, z3); tri(x3, yBot, z3, x3, yTop, z3, x1, yTop, z1)\n        tri(x2, yTop, z2, x2, yBot, z2, x3, yBot, z3); tri(x3, yBot, z3, x3, yTop, z3, x2, yTop, z2)\n      }\n      plate(headInset, zSign * halfW, headX, zSign * halfW, headX, 0)\n      plate(headInset, -zSign * halfW, headX, -zSign * halfW, headX, 0)\n      plate(tailInset, -zSign * halfW, tailX, -zSign * halfW, tailX, 0)\n      plate(tailInset, zSign * halfW, tailX, zSign * halfW, tailX, 0)\n      // TRANSFER LIP — the full-width strip that carries the plate across a butt seam to the neighbour's first\n      // roller. Two beds butted end to end share ONE world pitch grid, so that roller sits on the next grid line\n      // past this end: lap out to its face (grid line -/+ R) and the transfer is continuous at every phase.\n      // Bounded by R, the most a roller of our own would ever poke past the frame, which is also what stops the\n      // lip from cutting THROUGH the neighbour's roller when that roller lands right at the seam. Gated on\n      // `butt`: at a free end there is nothing to meet, so the plate stays flush with the frame as before.\n      // Both fall back to 0 without a ctx (headless / parity call) — the placement-free plate.\n      var c = ctx || {}\n      var deltas = c.deltas, pitch = typeof c.pitch === 'number' ? c.pitch : 0\n      var butt = c.butt || { head: false, tail: false }\n      var gridded = !!deltas && deltas.length > 0 && pitch > 0\n      // bare deck between our end and the neighbour's first roller face, clamped to [0, R]\n      function lapTo(on, edge, line) {\n        if (!on || !gridded) return 0\n        return Math.max(0, Math.min(R, Math.abs(line - edge) - R))\n      }\n      var lapHead = lapTo(butt.head, headX, gridded ? deltas[deltas.length - 1][0] + pitch : 0)\n      var lapTail = lapTo(butt.tail, tailX, gridded ? deltas[0][0] - pitch : 0)\n      // one end lip: the top strip from the bed end out to x2, plus the same 2R skirt the plates carry on its\n      // outer edge so it still reads as steel rather than a paper sheet. doubleSided, so winding is cosmetic.\n      function lip(x1, x2) {\n        if (Math.abs(x2 - x1) < 1e-5) return\n        tri(x1, yTop, -halfW, x2, yTop, -halfW, x2, yTop, halfW)\n        tri(x1, yTop, -halfW, x2, yTop, halfW, x1, yTop, halfW)\n        tri(x2, yTop, -halfW, x2, yBot, -halfW, x2, yBot, halfW)\n        tri(x2, yBot, halfW, x2, yTop, halfW, x2, yTop, -halfW)\n      }\n      lip(headX, headX + lapHead)\n      lip(tailX, tailX - lapTail)\n      return [{ desc: s.build(), finish: 'gapfill', link: 'roller', castShadow: false, doubleSided: true }]\n    }\n  },\n  step(ctx) {\n    // Tag precedence: speedTag (REAL in) replaces the speed param as the commanded speed; runTag (BOOL)\n    // gates it to 0, but ONLY while a controller actually drives the tag (ctx.tagDriven, output ownership) —\n    // undriven, the authored speed rules; runningTag (BOOL out) = effective speed ≠ 0, written every step.\n    // the unit the conveyor is set up in: everything below this line is m/s\n    const cmd = commandedSpeed(ctx)\n    const fpm = cmd.fpm\n    const running = ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true\n    const s = rampedSpeed(ctx, drive, cmd, running ? cmd.commanded : 0)\n    // the readout the Inspector shows for 'speed' while a setpoint tag owns it: the EFFECTIVE value,\n    // gates and all, not the raw setpoint (a runTag holding this at 0 must not read as the commanded rate)\n    reportSpeed(ctx, fpm, s)\n    if (fpm) ctx.report('speed', s) // the rollers turn on 'speed' (m/s); the fpm readout above doesn't report it\n    if (ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, s !== 0)\n    // drive feedback: the velocity as a share of the speed at 30, an encoder pulse and the odometer\n    publishDrive(ctx, drive, cmd, s)\n    // skew: the rollers are angled about vertical, so drive along the roller normal — forward rotated by\n    // skew (right-handed about +Y) at magnitude s/cos(skew), so the forward throughput stays s and the\n    // lateral s·tan(skew) squares cargo against the guard.\n    const skewRad = (ctx.params.skew || 0) * Math.PI / 180\n    const c = Math.cos(skewRad), sn = Math.sin(skewRad)\n    const mag = Math.abs(c) > 1e-3 ? s / c : s\n    const fx = ctx.forward.x, fz = ctx.forward.z\n    ctx.setSurfaceVelocity({ x: (fx * c + fz * sn) * mag, y: 0, z: (-fx * sn + fz * c) * mag })\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "inclineParam": "tiltDeg",
+    "maxInclineDeg": 30,
+    "links": [
+      {
+        "name": "deck",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.04,
+            1.524
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.02,
+          0
+        ],
+        "conveys": true,
+        "hidden": true,
+        "color": [
+          0.1,
+          0.1,
+          0.11
+        ]
+      },
+      {
+        "name": "roller",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          -0.024,
+          0
+        ],
+        "array": {
+          "distribute": {
+            "axis": 0,
+            "spanParam": "length",
+            "maxSpacing": 0.075,
+            "worldPhase": true
+          }
+        }
+      },
+      {
+        "name": "wallL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.17,
+            0.01
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            },
+            {
+              "axis": 1,
+              "param": "frameHeight",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.09,
+          -0.767
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": -0.5,
+            "add": -0.005
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.005
+          }
+        ],
+        "finish": "frame",
+        "sideRail": "left",
+        "bed": true
+      },
+      {
+        "name": "wallR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.17,
+            0.01
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            },
+            {
+              "axis": 1,
+              "param": "frameHeight",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.09,
+          0.767
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "frameHeight",
+            "scale": -0.5,
+            "add": -0.005
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.005
+          }
+        ],
+        "finish": "frame",
+        "sideRail": "right",
+        "bed": true
+      },
+      {
+        "name": "flangeL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.005,
+            0.02
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.0025,
+          -0.782
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.02
+          }
+        ],
+        "finish": "frame",
+        "sideRail": "left",
+        "bed": true,
+        "collision": "none"
+      },
+      {
+        "name": "flangeR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.005,
+            0.02
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          -0.0025,
+          0.782
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.02
+          }
+        ],
+        "finish": "frame",
+        "sideRail": "right",
+        "bed": true,
+        "collision": "none"
+      },
+      {
+        "name": "guardL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.155,
+            0.005
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.0725,
+          -0.7745
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.0125
+          }
+        ],
+        "finish": "guard",
+        "sideGuard": "left",
+        "showParam": "leftGuard"
+      },
+      {
+        "name": "guardR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.155,
+            0.005
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.0725,
+          0.7745
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.0125
+          }
+        ],
+        "finish": "guard",
+        "sideGuard": "right",
+        "showParam": "rightGuard"
+      },
+      {
+        "name": "lipL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.005,
+            0.02
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.1475,
+          -0.787
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ],
+        "finish": "guard",
+        "sideGuard": "left",
+        "showParam": "leftGuard",
+        "collision": "none"
+      },
+      {
+        "name": "lipR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            4,
+            0.005,
+            0.02
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0,
+          0.1475,
+          0.787
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ],
+        "finish": "guard",
+        "sideGuard": "right",
+        "showParam": "rightGuard",
+        "collision": "none"
+      },
+      {
+        "name": "legs",
+        "shape": {
+          "kind": "leg",
+          "spanParam": "length",
+          "widthParam": "width",
+          "standParam": "standHeight",
+          "frameDepth": 0.175,
+          "frameDepthParam": {
+            "param": "frameHeight",
+            "add": 0.005
+          }
+        },
+        "offset": [
+          0,
+          -2,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "standHeight",
+            "scale": -1
+          }
+        ]
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 4,
+      "width": 1.6,
+      "top": 2.3
+    }
+  },
+  "category": "Equipment",
+  "materials": [
+    {
+      "id": "band",
+      "color": [
+        0.6939,
+        0.1844,
+        0.0242
+      ],
+      "metalness": 0,
+      "roughness": 0.55
+    }
+  ],
+  "conveyor": {
+    "bed": "straight",
+    "surface": "roller",
+    "speedParam": "speed"
+  },
+  "sdk": {
+    "level": 6,
+    "of": "v2:39917:1tw2edg1ftq"
+  }
+}

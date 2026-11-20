@@ -3,7 +3,8 @@
 // taking back the agent's own last edit, and dropping a kept test.
 
 import { cargoKindName } from '../../core/frame'
-import { duplicateParts } from '../../core/partDuplicate'
+import { cargoTiltDeg, cargoYawDeg } from '../../core/project/projectProbe'
+import { duplicateParts } from '../../core/parts/partDuplicate'
 import { assetsBusy, whenAssetsQuiet } from '../../render/gltf'
 import type { SceneJSON } from '../../core/types'
 import {
@@ -38,17 +39,28 @@ const VIEW_FROM: Record<string, [number, number, number]> = {
 
 const nextFrame = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => r()))
 
-/** Wait for the camera's eased move to finish: the pose holds still for a few frames, or 3 s pass. */
-async function cameraSettled(pose: () => { px: number; py: number; pz: number; tx: number; ty: number; tz: number }): Promise<void> {
-  let prev = JSON.stringify(pose())
-  let still = 0
-  const end = performance.now() + 3000
-  while (still < 3 && performance.now() < end) {
-    await nextFrame()
-    const now = JSON.stringify(pose())
-    still = now === prev ? still + 1 : 0
-    prev = now
-  }
+// How long capture_view waits in all (loading assets, held parts, the camera) before it shoots anyway. whenAssetsQuiet's
+// own cap is 30 s: after a project reload a cold scene loads that long, and an MCP client gave up on the call first.
+// The waits share this one deadline: run one after another (6 s, 5 s, 3 s) they outlasted a client's timeout on a
+// scene with many-link parts.
+const CAPTURE_WAIT_MS = 6000
+/** the frames that draw the framed, outline-free view get this long, even when loading used up the deadline: a
+ *  minimized window draws about one frame a second */
+const FRAMES_MIN_MS = 2500
+/** frames drawn after the camera moves and the outline goes, before the shot */
+const FRAMES_BEFORE_SHOT = 2
+
+/** Resolve true when `p` does, or false once `deadline` (a performance.now() time) passes. */
+function byDeadline(p: Promise<unknown>, deadline: number): Promise<boolean> {
+  return Promise.race([p.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), Math.max(0, deadline - performance.now())))])
+}
+
+/** Wait for `n` frames to be drawn, or `ms` to pass; true when they were. A minimized or hidden window draws few or
+ *  none, and a frame wait without a deadline hung the call. */
+async function framesDrawn(n: number, ms: number): Promise<boolean> {
+  const end = performance.now() + ms
+  for (let i = 0; i < n; i++) if (!(await byDeadline(nextFrame(), end))) return false
+  return true
 }
 
 /**
@@ -82,14 +94,18 @@ export const captureView: AgentTool = {
   description:
     'Take a picture of the 3D view, without the editor around it, the selection outline or the gizmo, to see what ' +
     'was built: whether parts meet, a sensor faces the belt, a model sits inside its footprint, boxes flow or pile ' +
-    'up (call it while running). Frames `parts` (default: the whole scene) from `from`: iso (default), top, front ' +
+    'up (call it while running). Frames `parts` (default: every part but the building) from `from`: iso (default), top, front ' +
     '(from +Z), back, left (from -X), right, or current (the camera as it is). The camera goes back to where the ' +
-    "user had it unless `keepCamera` is true. Returns an image.",
+    "user had it unless `keepCamera` is true. Returns an image within about 6 s; if the scene is still loading it " +
+    'shoots anyway and the result carries `assetsSettled: false` or `partsHeld` (parts not drawn yet), so call it ' +
+    "again in a moment for the settled view. `from: 'window'` instead takes the whole editor " +
+    'window as the user sees it (panels, banners, dialogs, the selection), without moving the camera: use it only ' +
+    'for a question about the editor itself, since the 3D view alone shows a build better.',
   inputSchema: {
     type: 'object',
     properties: {
       parts: { type: 'array', items: { type: 'string' }, description: 'part ids to frame' },
-      from: { type: 'string', enum: [...Object.keys(VIEW_FROM), 'current'] },
+      from: { type: 'string', enum: [...Object.keys(VIEW_FROM), 'current', 'window'] },
       keepCamera: { type: 'boolean' },
     },
     additionalProperties: false,
@@ -97,23 +113,33 @@ export const captureView: AgentTool = {
   run: async (ctx, args) => {
     const capture = ctx.shell?.capture
     if (!capture) throw new AgentToolError('capture_view needs the desktop app')
+    if (optStr(args, 'from') === 'window') {
+      if (args.parts !== undefined) throw new AgentToolError("'parts' frames the 3D view, so it does not go with from: 'window'")
+      const image = await capture({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight })
+      if (!image) throw new AgentToolError('the window could not be captured (is it minimized?)')
+      return new AgentImageResult({ from: 'window', running: ctx.store.getState().running }, [image])
+    }
     const view = needController(ctx).view
     if (!view) throw new AgentToolError('the viewport is still loading; try again in a moment')
     // the walking character or the headset owns the camera then, and framing would fight it
     if (view.pilotPose() !== null || view.isVRPresenting()) throw new AgentToolError('the user is walking the scene (or in VR), which owns the camera: try again once they leave walk mode')
-    const parts = args.parts === undefined ? undefined : strList(args, 'parts')
+    const asked = args.parts === undefined ? undefined : strList(args, 'parts')
     const scene = ctx.store.getState().scene
-    for (const id of parts ?? []) findPart(scene, id)
+    for (const id of asked ?? []) findPart(scene, id)
+    // the default frames what was built, not the building: every first picture of a new line was a speck in it
+    const line = scene.parts.filter((p) => p.type !== 'building').map((p) => p.id)
+    const parts = asked ?? (line.length > 0 ? line : undefined)
     const from = optStr(args, 'from') ?? 'iso'
-    if (from !== 'current' && !VIEW_FROM[from]) throw new AgentToolError(`'from' must be one of: ${[...Object.keys(VIEW_FROM), 'current'].join(', ')}`)
+    if (from !== 'current' && !VIEW_FROM[from]) throw new AgentToolError(`'from' must be one of: ${[...Object.keys(VIEW_FROM), 'current', 'window'].join(', ')}`)
     const keepCamera = optBool(args, 'keepCamera') ?? false
     const pose0 = view.cameraPose()
     const selected = ctx.store.getState().selectedIds
     let bare: ReturnType<typeof bareCanvas> = null
     // a part placed a moment ago may still be loading or held back from the draw (the canvas keeps its last
     // painted frame meanwhile), and a picture taken then shows the scene before the edit
-    if (assetsBusy()) await whenAssetsQuiet()
-    await Promise.race([view.whenPartsRevealed(), new Promise((r) => setTimeout(r, 5000))])
+    const deadline = performance.now() + CAPTURE_WAIT_MS
+    const assetsSettled = assetsBusy() ? await byDeadline(whenAssetsQuiet(), deadline) : true
+    await byDeadline(view.whenPartsRevealed(), deadline)
     try {
       if (from !== 'current') {
         // aim from the asked side at the current target, then let focusOn frame the parts along that direction
@@ -122,23 +148,29 @@ export const captureView: AgentTool = {
         const dist = Math.hypot(pose0.px - pose0.tx, pose0.py - pose0.ty, pose0.pz - pose0.tz) || 10
         view.setCameraPose({ px: pose0.tx + (dx / len) * dist, py: pose0.ty + (dy / len) * dist, pz: pose0.tz + (dz / len) * dist, tx: pose0.tx, ty: pose0.ty, tz: pose0.tz }, { instant: true })
       }
-      if (from !== 'current' || parts) {
-        view.focusOn(parts ?? [])
-        await cameraSettled(() => view.cameraPose())
-      }
+      // placed at once, not eased: an ease advances per frame, and a minimized window draws about one a second
+      if (from !== 'current' || parts) view.focusOn(parts ?? [], { instant: true })
       if (selected.length > 0) ctx.store.selectMany([])
       bare = bareCanvas()
       if (!bare) throw new AgentToolError('the 3D view is not on screen')
-      for (let i = 0; i < 3; i++) await nextFrame() // the outline-free, overlay-free frame reaches the screen
+      // the framed, outline-free, overlay-free frame reaches the screen
+      const drawn = await framesDrawn(FRAMES_BEFORE_SHOT, Math.max(FRAMES_MIN_MS, deadline - performance.now()))
       const image = await capture(bare.rect)
       if (!image) throw new AgentToolError('the window could not be captured (is it minimized?)')
       const p = view.cameraPose()
+      const held = view.heldParts()
       return new AgentImageResult(
         {
           from,
-          framed: parts ?? 'the whole scene',
+          framed: asked ?? (parts ? 'every part but the building' : 'the whole scene'),
           camera: { position: [p.px, p.py, p.pz].map(round), target: [p.tx, p.ty, p.tz].map(round) },
           running: ctx.store.getState().running,
+          // the shot may show the scene part-loaded: capture again in a moment
+          ...(assetsSettled ? {} : { assetsSettled: false }),
+          // parts placed or rebuilt a moment ago that the view had not drawn yet
+          ...(held > 0 ? { partsHeld: held } : {}),
+          // the window drew no new frame in time (minimized, or behind something): the picture is its last one
+          ...(drawn ? {} : { viewNotDrawing: 'the editor window drew no new frame (is it minimized?): this picture may show the view from before the camera moved' }),
         },
         [image],
       )
@@ -152,28 +184,39 @@ export const captureView: AgentTool = {
 
 // ── get_cargo ───────────────────────────────────────────────────────────────────────────────────────
 
-/** get_cargo lists at most this many bodies (the rest are counted) */
-const CARGO_LIST_MAX = 200
+/** get_cargo, and each of run_test's cargo snapshots, lists at most this many bodies (the rest are counted) */
+export const CARGO_LIST_MAX = 200
 
 export const getCargo: AgentTool = {
   name: 'get_cargo',
   description:
     'List the cargo of the running sim (boxes, totes, pallets) as the last frame has it: id, kind, position [x,y,z] ' +
-    'in metres, size, colour, how far it is tilted from upright in degrees (about 90 = on its side), and the scene ' +
+    'in metres, size, colour, how far it is tilted from upright in degrees (about 90 = on its side), its heading ' +
+    '`yawDeg` about +Y in degrees (as a part\'s rotationY; a box turned 90 has the same footprint), and the scene ' +
     'part it is, for authored cargo. Optional `within`: only bodies whose centre is inside a box { min:[x,y,z], ' +
-    'max:[x,y,z] }. Empty while stopped.',
+    'max:[x,y,z] }. Empty while stopped. Running, this is wherever the sim has got to. Paused (pause / step), each ' +
+    'body also has its velocity `vel` [x,y,z] in m/s and what it is `touching` (part ids, `cargo <id>`, `floor`). ' +
+    'For the cargo at a known sim time the same on every run, use run_test with `cargo`.',
   inputSchema: {
     type: 'object',
     properties: { within: { type: 'object', description: '{ min: [x,y,z], max: [x,y,z] } in metres' } },
     additionalProperties: false,
   },
-  run: (ctx, args) => {
-    const f = needController(ctx).lastFrame
-    if (!f || !ctx.store.getState().running) return { running: false, count: 0, cargo: [] }
+  run: async (ctx, args) => {
+    const c = needController(ctx)
+    if (!c.lastFrame || !ctx.store.getState().running) return { running: false, count: 0, cargo: [] }
     const within = optObj(args, 'within')
     const min = within ? optVec3(within, 'min') : undefined
     const max = within ? optVec3(within, 'max') : undefined
     if (within && (!min || !max)) throw new AgentToolError("'within' needs min and max, each [x, y, z]")
+    // paused, the world stands where the last frame shows it, so the worker's velocities and contacts match its rows
+    const paused = ctx.store.getState().paused
+    const detail = paused ? await c.sim?.inspectCargo() : null
+    const f = c.lastFrame
+    if (!f) return { running: false, count: 0, cargo: [] }
+    const vel = new Map<number, [number, number, number]>()
+    if (detail) for (let i = 0; i < detail.ids.length; i++) vel.set(detail.ids[i]!, [detail.velocities[i * 3]!, detail.velocities[i * 3 + 1]!, detail.velocities[i * 3 + 2]!])
+    const touching = new Map(detail?.touching)
     const cargo: Record<string, unknown>[] = []
     let matched = 0
     for (let i = 0; i < f.count; i++) {
@@ -181,11 +224,6 @@ export const getCargo: AgentTool = {
       if (min && max && pos.some((v, k) => v < min[k]! || v > max[k]!)) continue
       matched++
       if (cargo.length >= CARGO_LIST_MAX) continue
-      const qx = f.quats[i * 4]!
-      const qz = f.quats[i * 4 + 2]!
-      // the y component of the body's local +Y in world space; its angle to world +Y is the tilt
-      const upY = 1 - 2 * (qx * qx + qz * qz)
-      const tilt = (Math.acos(Math.max(-1, Math.min(1, upY))) * 180) / Math.PI
       const hex = (k: number): string => Math.round(Math.max(0, Math.min(1, f.colors[i * 3 + k]!)) * 255).toString(16).padStart(2, '0')
       const key = f.shapes?.[i]
       const product = key ? f.shapeRefs?.[key]?.packageId : undefined
@@ -196,11 +234,14 @@ export const getCargo: AgentTool = {
         position: pos.map(round),
         size: [f.halfExtents[i * 3]! * 2, f.halfExtents[i * 3 + 1]! * 2, f.halfExtents[i * 3 + 2]! * 2].map(round),
         color: `#${hex(0)}${hex(1)}${hex(2)}`,
-        tiltDeg: Math.round(tilt),
+        tiltDeg: Math.round(cargoTiltDeg(f, i)),
+        yawDeg: Math.round(cargoYawDeg(f, i)),
         ...(f.partIds[i] ? { part: f.partIds[i] } : {}),
+        ...(vel.has(f.ids[i]!) ? { vel: vel.get(f.ids[i]!)!.map(round) } : {}),
+        ...(touching.has(f.ids[i]!) ? { touching: touching.get(f.ids[i]!) } : {}),
       })
     }
-    return { running: true, simTime: round(f.simTime), count: matched, cargo, ...(matched > cargo.length ? { omitted: matched - cargo.length } : {}) }
+    return { running: true, ...(paused ? { paused: true } : {}), simTime: round(f.simTime), count: matched, cargo, ...(matched > cargo.length ? { omitted: matched - cargo.length } : {}) }
   },
 }
 
@@ -254,11 +295,11 @@ export const undoTool: AgentTool = {
   name: 'undo',
   description:
     "Take back the agent's own most recent edit (an \"Agent: ...\" step in the History dock), or with `redo` put it " +
-    'back. It refuses when the step on top is the user\'s, so it never takes back their work. Not in a live room.',
+    'back. It refuses when the step on top is the user\'s, so it never takes back their work. Not in a shared project.',
   inputSchema: { type: 'object', properties: { redo: { type: 'boolean' } }, additionalProperties: false },
   run: ({ store }, args) => {
     assertEditable(store)
-    if (store.getState().collab) throw new AgentToolError('undo is not offered in a live room: its history is shared')
+    if (store.getState().collab) throw new AgentToolError('undo is not offered in a shared project: its history is shared')
     const redo = optBool(args, 'redo') ?? false
     const h = store.getEditHistory()
     const entry = redo ? h.events[h.cursor] : h.events[h.cursor - 1]
@@ -278,7 +319,7 @@ export const deleteTest: AgentTool = {
     assertEditable(store)
     const name = str(args, 'name')
     if (!(store.snapshotProject().tests ?? []).some((t) => t.name === name)) throw new AgentToolError(`the project keeps no test named '${name}'`)
-    if (!store.deleteProjectTest(name)) throw new AgentToolError('this editor cannot keep tests (a live room keeps none)')
+    if (!store.deleteProjectTest(name)) throw new AgentToolError('this editor cannot keep tests (it is view-only, or in a shared project of someone else\'s, which keeps none)')
     return { tests: (store.snapshotProject().tests ?? []).map((t) => t.name ?? '(unnamed)') }
   },
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isRealRange, labelHead, numberLabelUnit, schemaToParamSpecs, switchValue, visibleWhenHolds } from './packageParams'
-import type { ParamSchema } from './partApi'
+import type { ParamSchema } from './parts/partApi'
 import type { ColorParamSpec, EnumParamSpec, NumberParamSpec } from './types'
 
 // The SDK->editor param bridge. Focus: the `'enum'` type added for shape-preset pickers (a belt's shapePreset
@@ -149,10 +149,29 @@ describe('schemaToParamSpecs - a switch between two ways of saying one thing', (
     expect(tag).toMatchObject({ kind: 'tagRef', stType: 'DINT', dir: 'in' })
   })
   it('a part whose saved params lack the key resolves to whenAbsent; one that carries it, to what it carries', async () => {
-    const { resolvePartParams } = await import('./partScript')
+    const { resolvePartParams } = await import('./parts/partScript')
     expect(resolvePartParams(schema, {}).fpmUnits).toBe(false) // written before the switch existed
     expect(resolvePartParams(schema, { fpmUnits: true }).fpmUnits).toBe(true)
     expect(resolvePartParams(schema, {}).speedFpm).toBe(394) // (an ordinary param still takes its default)
+  })
+})
+
+// A tag's unit is the unit of the value on the wire. A setpoint tag carries its param's value, so it is in that
+// param's unit unless it says otherwise (TagRefParamSpec.unit).
+describe('schemaToParamSpecs - the unit a tag carries', () => {
+  const schema: ParamSchema = {
+    speed: { type: 'number', default: 2, unit: 'm/s', label: 'Speed' },
+    speedTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', setpointFor: 'speed', label: 'Speed tag' },
+    distanceTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', unit: 'm', label: 'Distance tag' },
+    rateTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', setpointFor: 'speed', unit: 'FPM', label: 'Rate tag' },
+    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Run tag' },
+  }
+  const byKey = (key: string): Record<string, unknown> => schemaToParamSpecs(schema).find((s) => s.key === key) as unknown as Record<string, unknown>
+  it("carries a declared unit, and gives a setpoint tag that declares none its param's", () => {
+    expect(byKey('distanceTag').unit).toBe('m')
+    expect(byKey('speedTag').unit).toBe('m/s')
+    expect(byKey('rateTag').unit).toBe('FPM') // a declared unit wins over the param's
+    expect(byKey('runTag').unit).toBeUndefined()
   })
 })
 

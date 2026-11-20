@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { resolvedBoxSize } from '../../core/rigPose'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
+import { resolvedBoxSize } from '../../core/rig/rigPose'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
 import { examplePart, type RigGeo } from './examplePart'
 const { geometry: CHAIN_TRANSFER_RIG, behavior: CHAIN_TRANSFER_BEHAVIOR, head: CHAIN_TRANSFER_HEAD } = examplePart<RigGeo>('oip.chain-transfer')
 

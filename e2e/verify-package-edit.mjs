@@ -111,7 +111,7 @@ async function main() {
     const sw = await page.evaluate(() => {
       const store = window.__oip.controller.store
       // inject a second custom package via commitPackage (registers it), then switch to it via the real entry point
-      // format 6 = PACKAGE_FORMAT (src/core/partPackage.ts); commitPackage refuses any other format
+      // format 6 = PACKAGE_FORMAT (src/core/parts/partPackage.ts); commitPackage refuses any other format
       store.commitPackage('add Part B', { format: 6, id: 'e2e.partB', name: 'Part B', params: {}, behavior: 'definePart({ step() {} })', geometry: { kind: 'rig', links: [{ name: 'deck', shape: { kind: 'box', size: [1, 0.1, 1] }, offset: [0, -0.05, 0], conveys: true }], joints: [], bounds: { length: 1, width: 1, top: 0.05, bottom: -0.1 } } })
       const ok = window.__oip.controller.editPartPackage('e2e.partB')
       const s = store.getState()

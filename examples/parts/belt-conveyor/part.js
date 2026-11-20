@@ -8,7 +8,8 @@
 // This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the
 // _shared/ modules it imports joined in and `manifest` left out) and rig.json (the manifest).
 
-import { commandedSpeed, conveyorDrive, driveFeedbackParams, driveRampParams, publishDrive, rampedSpeed } from '../_shared/conveyorDrive.js'
+import { commandedSpeed, conveyorDrive, driveAgain, driveFeedbackParams, driveRampParams, publishDrive, rampedSpeed } from '../_shared/conveyorDrive.js'
+import { frictionParam } from '../_shared/conveyorFriction.js'
 import { METRIC_ONLY, reportSpeed, speedFpmTagParam, speedUnitParams } from '../_shared/conveyorUnits.js'
 import { HOLE_PANEL, holePanel } from '../_shared/guardHolePanel.js'
 import { guardMitresParam, mitreLookup, railCutLookup, railCutsParam, railEndBands } from '../_shared/guardMitre.js'
@@ -21,8 +22,7 @@ definePart({
     id: 'oip.belt-conveyor',
     name: 'Belt Conveyor',
     category: 'Equipment',
-    conveyor: { bed: 'path', surface: 'belt', speedParam: 'speed' },
-    commsParam: 'enableComms',
+    conveyor: { bed: 'path', surface: 'belt', speedParam: 'speed', frictionParam: 'friction' },
     // `bounds` = the baked footprint of the default straight belt, so Inspector/snapping work without running
     // the code; the live mesh comes from geometry(). `conveys` makes it a powered surface (the sim builds the
     // deck body).
@@ -59,6 +59,7 @@ definePart({
     ...speedUnitParams(2),
     speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 2, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'Surface speed carried along the bed. Negative runs the belt backwards, which is the ONLY way to reverse flow - rotating the part 180 degrees moves its ends instead. A program can command this through the speed tag below.' },
     ...driveRampParams(0.5, 0.5),
+    ...frictionParam(0.59),
     // fabric tint, multiplied into the belt-surface material — white leaves the weave at full brightness, a
     // dark tint multiplies it down toward black.
     beltColor: { type: 'color', default: '#ffffff', label: 'Belt color', desc: 'Tint multiplied into the belt weave. White leaves the fabric at full brightness; a dark tint multiplies it down toward black.' },
@@ -109,12 +110,11 @@ definePart({
     // skip any leg whose arc-length from the tail falls in [start, end]; start >= end disables the zone.
     exclusionStart: { type: 'number', default: 0, min: 0, max: 100, step: 0.1, label: 'Exclusion start (m)', group: 'Legs/Exclusion Zone', desc: 'Start of a stretch, measured along the belt from the tail, where no leg is drawn - room for a floor conveyor, a pit or a walkway crossing beneath. Leaving start and end equal disables the zone.' },
     exclusionEnd: { type: 'number', default: 0, min: 0, max: 100, step: 0.1, label: 'Exclusion end (m)', group: 'Legs/Exclusion Zone', desc: 'End of the no-leg stretch. It must be GREATER than the start, or the zone is ignored entirely.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this conveyor to a PLC program. Its tags appear once this is on.' },
     // Comms trio: speedTag = REAL setpoint in (replaces the speed param), runningTag = BOOL feedback out
     // (effective speed ≠ 0); runTag = BOOL run/stop gate (back-compat).
-    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands belt speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired belt sits still rather than running at its authored speed.' },
+    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag', group: 'Comms', desc: 'The program commands belt speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired belt sits still rather than running at its authored speed.' },
     ...speedFpmTagParam('Comms'),
-    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Run tag (belt runs while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the belt.' },
+    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (belt runs while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the belt.' },
     runningTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Running tag (true while moving)', group: 'Comms', desc: 'Feedback the belt publishes for the program to read: true whenever it is actually moving. This is the EFFECTIVE speed, gates included, so a run tag holding the belt at zero reads false here.' },
     ...driveFeedbackParams(2, 'Comms'),
   },
@@ -366,7 +366,7 @@ definePart({
           var bArc = bsg === -1 ? railArcL : railArcR
           var bA = Math.max(pathSplit.bends[bi2].s0, bArc[0]), bB = Math.min(pathSplit.bends[bi2].s1, bArc[1])
           if (bB - bA < 1e-4) continue
-          var bpoly = subPolyline(framePath, bA, bB)
+          var bpoly = bendPolyline(pathSplit.bends[bi2], bA, bB)
           if (bpoly.length < 2) continue
           var z0 = bsg * hw, z1 = bsg * (hw + 0.01), z2 = bsg * (hw + 0.03)
           bendRails.push(g.sweep([[FB, z0], [FB, z1], [-0.005, z1], [-0.005, z0]], bpoly, CAPS))
@@ -396,6 +396,14 @@ definePart({
       var pts = [at(a)], cum = 0
       for (var j = 1; j < poly.length; j++) { cum += Math.hypot(poly[j][0] - poly[j - 1][0], poly[j][1] - poly[j - 1][1]); if (cum > a + 1e-6 && cum < b - 1e-6) pts.push([poly[j][0], poly[j][1], 0]) }
       pts.push(at(b)); return pts
+    }
+    // the polyline a bend piece is swept along, a..b of the bend's range. A sweep squares its end to the last chord, and
+    // the fillet's end chords turn short of the run, so a bend end met by a straight piece opened a wedge gap (~6 mm at
+    // the bottom of the rail on a 15° bend). Such an end starts 1 mm back inside the straight piece, on the run.
+    function bendPolyline(bend, a, b) {
+      var pa = a === bend.s0 && a > 1e-4 ? a - 0.001 : a
+      var pb = b === bend.s1 && b < frameLen - 1e-4 ? b + 0.001 : b
+      return subPolyline(framePath, pa, pb)
     }
     // complementary KEPT spans of [0,total] after removing the opening ranges (sorted, clamped, merged).
     function keptSpans(total, ranges) {
@@ -499,7 +507,7 @@ definePart({
           var gbend = pathSplit.bends[bi3]
           var ba = Math.max(sp0, gbend.s0), bb = Math.min(sp1, gbend.s1)
           if (bb - ba < 1e-4) continue
-          var gpoly = subPolyline(framePath, ba, bb)
+          var gpoly = bendPolyline(gbend, ba, bb)
           if (gpoly.length >= 2) guardSweeps.push(g.sweep(gSection, gpoly, CAPS))
         }
       }
@@ -667,24 +675,25 @@ definePart({
     if (railFills.length) parts.push({ desc: g.merge.apply(g, railFills), finish: 'frame' })
     return parts
   },
-  step(ctx) {
-    // Comms precedence: speedTag (REAL in) replaces the speed param as the commanded speed; runTag (BOOL)
+  react(ctx) {
+    // Tag precedence: speedTag (REAL in) replaces the speed param as the commanded speed; runTag (BOOL)
     // gates it to 0, but ONLY while a controller actually drives the tag (ctx.tagDriven, output ownership) —
-    // undriven, the authored speed rules; runningTag (BOOL out) = effective speed ≠ 0, written every step.
-    const comms = ctx.params.enableComms
+    // undriven, the authored speed rules; runningTag (BOOL out) = effective speed ≠ 0, written on every call.
     // the unit the conveyor is set up in: everything below this line is m/s
-    const cmd = commandedSpeed(ctx, comms)
+    const cmd = commandedSpeed(ctx)
     const fpm = cmd.fpm, commanded = cmd.commanded
-    const running = comms && ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true
+    const running = ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true
     const s = rampedSpeed(ctx, drive, cmd, running ? commanded : 0)
     // the readout the Inspector shows for 'speed' while a setpoint tag owns it: the EFFECTIVE value,
     // gates and all, not the raw setpoint (a runTag holding this at 0 must not read as the commanded rate)
     reportSpeed(ctx, fpm, s)
-    if (comms && ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, s !== 0)
+    if (ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, s !== 0)
     // drive feedback: the velocity as a share of the speed at 30, an encoder pulse and the odometer
     publishDrive(ctx, drive, cmd, s)
     // flow axis = the part's local +X in world space; the host redistributes this speed along each segment's
     // own tangent, so cargo is carried up/over an incline too.
     ctx.setSurfaceVelocity({ x: ctx.forward.x * s, y: 0, z: ctx.forward.z * s })
+    // the next tick is needed only while the drive ramps or counts travel (conveyorDrive.js)
+    driveAgain(ctx, drive, running ? commanded : 0)
   },
 })

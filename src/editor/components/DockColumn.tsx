@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { DockSlot } from './DockSlot'
 import { ResizeGutter } from './ResizeGutter'
-import type { DockLayout, DockPanelId, DockSide, DockSlotId } from '../dockLayout'
+import { columnOf, isColumnCollapsed, type DockLayout, type DockPanelId, type DockSide, type DockSlotId } from '../dockLayout'
 
 interface DockColumnProps {
   side: DockSide
@@ -33,7 +33,8 @@ interface DockColumnProps {
 /**
  * One dock column, split horizontally into a Top and Bottom sub-slot. When both
  * hold panels they're shown stacked with a draggable divider; when only one is
- * occupied it fills the whole column. Each side has up to two of these columns.
+ * occupied it fills the whole column. Each side has up to two of these columns. Folded, it is a
+ * rail: each sub-slot's tabs turned on end, one after the other, and no split to drag.
  */
 export function DockColumn({
   side,
@@ -59,13 +60,17 @@ export function DockColumn({
   const bottom = layout[bottomId]
   const hasTop = top.length > 0
   const hasBottom = bottom.length > 0
-  const split = hasTop && hasBottom
+  // folded to a rail (see `clickSideDockTab`): both sub-slots show their tabs only, stacked
+  const column = columnOf(topId)
+  const collapsed = column !== null && isColumnCollapsed(layout, column)
+  const split = hasTop && hasBottom && !collapsed
 
   const slot = (id: DockSlotId, panels: DockPanelId[]): ReactNode => (
     <DockSlot
       slot={id}
       panels={panels}
       active={layout.active[id]}
+      collapsed={collapsed}
       onActivate={onActivate}
       onTabClick={onTabClick}
       onMaximize={onMaximize}
@@ -80,13 +85,15 @@ export function DockColumn({
   )
 
   return (
-    <div className={`dock-column dock-column-${side}`} style={{ gridArea }}>
+    <div className={`dock-column dock-column-${side}${collapsed ? ' collapsed' : ''}`} style={{ gridArea }}>
       {hasTop && (
         <div
           className="dock-column-pane"
           // the var (set on the app root) is what the gutter moves live; the committed px is
           // the fallback, so the pane is correct before any drag has happened
-          style={split ? { flex: `0 0 var(${sizeVar}, ${topSize}px)` } : { flex: '1 1 auto' }}
+          style={
+            collapsed ? { flex: '0 0 auto' } : split ? { flex: `0 0 var(${sizeVar}, ${topSize}px)` } : { flex: '1 1 auto' }
+          }
         >
           {slot(topId, top)}
         </div>
@@ -104,7 +111,7 @@ export function DockColumn({
         />
       )}
       {hasBottom && (
-        <div className="dock-column-pane" style={{ flex: '1 1 auto' }}>
+        <div className="dock-column-pane" style={{ flex: collapsed ? '0 0 auto' : '1 1 auto' }}>
           {slot(bottomId, bottom)}
         </div>
       )}

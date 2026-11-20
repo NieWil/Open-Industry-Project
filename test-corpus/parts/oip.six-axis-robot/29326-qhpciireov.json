@@ -1,0 +1,1110 @@
+{
+  "format": 6,
+  "id": "oip.six-axis-robot",
+  "name": "Six-Axis Robot",
+  "params": {
+    "speed": {
+      "type": "number",
+      "default": 120,
+      "min": 5,
+      "max": 180,
+      "step": 1,
+      "label": "Joint speed (°/s)",
+      "group": "Motion",
+      "desc": "Top speed along the joint-space path. All six joints are driven from one path parameter, so they start and arrive together instead of the fastest one finishing early."
+    },
+    "accel": {
+      "type": "number",
+      "default": 720,
+      "min": 20,
+      "max": 2000,
+      "step": 10,
+      "label": "Joint accel (°/s²)",
+      "group": "Motion",
+      "desc": "How hard the arm ramps to and from the joint speed. Lower it for a heavier or more delicate payload; a short move may never reach top speed at all."
+    },
+    "scale": {
+      "type": "number",
+      "default": 1,
+      "min": 0.1,
+      "max": 10,
+      "step": 0.1,
+      "label": "Scale",
+      "desc": "Uniform size multiplier on the whole robot, applied to its collision bodies as well as its appearance - so a scaled arm really does reach further, rather than just looking bigger."
+    },
+    "tool": {
+      "type": "enum",
+      "default": "vacuum",
+      "label": "Tool",
+      "group": "EOAT",
+      "desc": "What the robot carries on its flange: a vacuum plate that lifts what is under it, or a clamp gripper whose two paddles close on the sides of a load. Both pick a load of the tool size below, and the Vacuum steps and the vacuum tag work either one.",
+      "options": [
+        {
+          "value": "vacuum",
+          "label": "Vacuum plate"
+        },
+        {
+          "value": "gripper",
+          "label": "Clamp gripper"
+        },
+        {
+          "value": "none",
+          "label": "None"
+        }
+      ]
+    },
+    "toolSizeX": {
+      "type": "number",
+      "default": 0.5,
+      "min": 0.5,
+      "max": 3,
+      "step": 0.01,
+      "label": "Tool size X (m)",
+      "group": "EOAT",
+      "handle": {
+        "kind": "rigSize",
+        "link": "eoat",
+        "axis": "x",
+        "frameY": -0.075
+      },
+      "desc": "Length of the vacuum plate, or the width of the load the clamp closes on. The orange dots on the tool itself drag this in the viewport, and they ride the arm, so you can size the tool in whatever pose you are inspecting. Size it to the product you are picking - it is also the grab reach."
+    },
+    "toolSizeZ": {
+      "type": "number",
+      "default": 0.5,
+      "min": 0.5,
+      "max": 3,
+      "step": 0.01,
+      "label": "Tool size Z (m)",
+      "group": "EOAT",
+      "handle": {
+        "kind": "rigSize",
+        "link": "eoat",
+        "axis": "z",
+        "frameY": -0.075
+      },
+      "desc": "Width of the vacuum plate, or how deep the clamp paddles are, dragged by the same orange dots on the tool."
+    },
+    "cupPitchX": {
+      "type": "number",
+      "default": 0.1,
+      "min": 0.01,
+      "max": 0.5,
+      "step": 0.005,
+      "label": "Cup pitch X (m)",
+      "group": "EOAT",
+      "desc": "Centre-to-centre spacing of the suction cups along the plate length. The plate fits as many as the pitch allows, so tightening it adds cups rather than moving them."
+    },
+    "cupPitchZ": {
+      "type": "number",
+      "default": 0.1,
+      "min": 0.01,
+      "max": 0.5,
+      "step": 0.005,
+      "label": "Cup pitch Z (m)",
+      "group": "EOAT",
+      "desc": "Centre-to-centre spacing of the suction cups across the plate width."
+    },
+    "cupMarginX": {
+      "type": "number",
+      "default": 0.05,
+      "min": 0,
+      "max": 0.5,
+      "step": 0.005,
+      "label": "Cup margin X (m)",
+      "group": "EOAT",
+      "desc": "Inset from each end of the plate before the first cup, so the grid does not run off the edge."
+    },
+    "cupMarginZ": {
+      "type": "number",
+      "default": 0.05,
+      "min": 0,
+      "max": 0.5,
+      "step": 0.005,
+      "label": "Cup margin Z (m)",
+      "group": "EOAT",
+      "desc": "Inset from each side of the plate before the first cup."
+    },
+    "cupsEnabled": {
+      "type": "boolean",
+      "default": true,
+      "label": "Suction cups",
+      "group": "EOAT",
+      "desc": "Draw the cup grid under the plate. Appearance only - the grip itself comes from the vacuum tag, not from the cups being visible."
+    },
+    "commandTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "INT",
+      "default": "",
+      "label": "Command tag (job number)",
+      "group": "Comms",
+      "desc": "Which job to run: 1 is the first job, 2 the second and so on. Set it BEFORE pulsing execute. A robot with no jobs takes a waypoint row here instead (0 is home). A number with no job or row behind it is ignored, and the arm stays put rather than guessing."
+    },
+    "executeTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Execute tag (rising edge runs it)",
+      "group": "Comms",
+      "desc": "Pulse this false-to-true to start the job. It is edge-triggered, so holding it true does NOT repeat - drop it and raise it again for each job."
+    },
+    "doneTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Done tag (true while idle)",
+      "group": "Comms",
+      "desc": "Handshake back to the program: true whenever the robot is ready for the next command. A job that ends on a Blend move reports done as it rounds that corner, so the next job can carry straight on. Wait for it before pulsing execute again, or the edge lands mid-job and is dropped."
+    },
+    "enableTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "onlyWhenDriven": true,
+      "default": "",
+      "label": "Enable tag",
+      "group": "Comms",
+      "desc": "The robot moves only while this is true. Drop it and the arm brakes to a stop where it is and the job holds, timers and all; raise it and the job carries on. Wire it to the cell being safe to work in. Until a program drives it, or with it empty, the robot is always enabled, so a merely-typed tag does not hold it."
+    },
+    "gripperTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Vacuum tag",
+      "group": "Comms",
+      "desc": "For a robot with no jobs: grip or release the load, read continuously, so hold it true for the whole carry. A robot with jobs switches its own vacuum with Vacuum steps and ignores this."
+    },
+    "in1Tag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Input 1 tag",
+      "group": "Comms/Robot signals",
+      "desc": "A signal a job can wait on (a Wait for step). Robots have banks of these; wire the ones your jobs use."
+    },
+    "in2Tag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Input 2 tag",
+      "group": "Comms/Robot signals",
+      "desc": "A signal a job can wait on (a Wait for step)."
+    },
+    "in3Tag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Input 3 tag",
+      "group": "Comms/Robot signals",
+      "desc": "A signal a job can wait on (a Wait for step)."
+    },
+    "in4Tag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Input 4 tag",
+      "group": "Comms/Robot signals",
+      "desc": "A signal a job can wait on (a Wait for step)."
+    },
+    "out1Tag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Output 1 tag",
+      "group": "Comms/Robot signals",
+      "desc": "A signal a job switches (a Set step), to tell the program where it has got to. It holds its last value between jobs."
+    },
+    "out2Tag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Output 2 tag",
+      "group": "Comms/Robot signals",
+      "desc": "A signal a job switches (a Set step)."
+    },
+    "out3Tag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Output 3 tag",
+      "group": "Comms/Robot signals",
+      "desc": "A signal a job switches (a Set step)."
+    },
+    "out4Tag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Output 4 tag",
+      "group": "Comms/Robot signals",
+      "desc": "A signal a job switches (a Set step)."
+    },
+    "waypoints": {
+      "type": "numberList",
+      "columns": [
+        "J1 °",
+        "J2 °",
+        "J3 °",
+        "J4 °",
+        "J5 °",
+        "J6 °"
+      ],
+      "arity": 6,
+      "default": [
+        [
+          0,
+          -45,
+          90,
+          25,
+          75,
+          0
+        ],
+        [
+          0,
+          -15,
+          55,
+          0,
+          80,
+          0
+        ],
+        [
+          110,
+          -15,
+          55,
+          0,
+          80,
+          0
+        ]
+      ],
+      "rowNames": "waypointNames",
+      "label": "Waypoints",
+      "group": "Motion",
+      "desc": "The poses this robot knows, one row of six JOINT angles each - not a position in space, so the arm reaches a pose exactly as taught with no ambiguity about elbow or wrist. Name them, and jobs move to them by name. Pose the arm with the viewport gizmo and use Capture Pose to add one rather than typing angles."
+    },
+    "waypointNames": {
+      "type": "string",
+      "default": "Home\nPick\nPlace",
+      "hidden": true,
+      "label": "Waypoint names"
+    },
+    "blendWaypoints": {
+      "type": "numberList",
+      "rowsOf": "waypoints",
+      "arity": 1,
+      "default": [],
+      "label": "Pass-through waypoints (robots without jobs)",
+      "group": "Motion",
+      "desc": "For a robot with no jobs: which waypoints are VIA points. The arm reports done before it reaches one, so the next move can start while it is still running and the corner is rounded instead of braked to a stop. Jobs say this on each Move step instead."
+    },
+    "blendDeg": {
+      "type": "number",
+      "unit": "°",
+      "default": 12,
+      "min": 0,
+      "max": 60,
+      "step": 1,
+      "label": "Corner blend",
+      "group": "Motion",
+      "desc": "How many joint degrees before a via point the arm starts cutting the corner. Larger rounds the path more and strays further from the taught pose; the arm caps it at a third of the move."
+    },
+    "jobs": {
+      "type": "numberList",
+      "arity": 4,
+      "default": [],
+      "program": {
+        "names": "jobNames",
+        "ops": [
+          {
+            "code": 1,
+            "label": "Move",
+            "desc": "Move the arm to a waypoint. Stop arrives exactly and stands still; Blend rounds the corner and carries on into the next move, for poses that are only on the way somewhere.",
+            "args": [
+              {
+                "kind": "row",
+                "of": "waypoints",
+                "label": "To"
+              },
+              {
+                "kind": "choice",
+                "label": "Corner",
+                "options": [
+                  {
+                    "value": 0,
+                    "label": "Stop"
+                  },
+                  {
+                    "value": 1,
+                    "label": "Blend"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "code": 2,
+            "label": "Vacuum",
+            "desc": "Switch the tool vacuum. The load is held from the step it goes on to the step it goes off.",
+            "args": [
+              {
+                "kind": "choice",
+                "options": [
+                  {
+                    "value": 1,
+                    "label": "On"
+                  },
+                  {
+                    "value": 0,
+                    "label": "Off"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "code": 3,
+            "label": "Wait",
+            "desc": "Stand still for a time, to let a grip seal or a load settle. The clock stops while the robot is not enabled.",
+            "args": [
+              {
+                "kind": "number",
+                "unit": "s",
+                "min": 0,
+                "step": 0.1,
+                "default": 0.5
+              }
+            ]
+          },
+          {
+            "code": 4,
+            "label": "Wait for",
+            "desc": "Hold here until one of the robot inputs reads on (or off). This is how a job waits on the cell: a pallet in place, a zone clear.",
+            "args": [
+              {
+                "kind": "choice",
+                "options": [
+                  {
+                    "value": 0,
+                    "label": "Input 1",
+                    "param": "in1Tag"
+                  },
+                  {
+                    "value": 1,
+                    "label": "Input 2",
+                    "param": "in2Tag"
+                  },
+                  {
+                    "value": 2,
+                    "label": "Input 3",
+                    "param": "in3Tag"
+                  },
+                  {
+                    "value": 3,
+                    "label": "Input 4",
+                    "param": "in4Tag"
+                  }
+                ]
+              },
+              {
+                "kind": "choice",
+                "options": [
+                  {
+                    "value": 1,
+                    "label": "On"
+                  },
+                  {
+                    "value": 0,
+                    "label": "Off"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "code": 5,
+            "label": "Set",
+            "desc": "Switch one of the robot outputs, to tell the PLC something the job has reached: clear of the table, load released.",
+            "args": [
+              {
+                "kind": "choice",
+                "options": [
+                  {
+                    "value": 0,
+                    "label": "Output 1",
+                    "param": "out1Tag"
+                  },
+                  {
+                    "value": 1,
+                    "label": "Output 2",
+                    "param": "out2Tag"
+                  },
+                  {
+                    "value": 2,
+                    "label": "Output 3",
+                    "param": "out3Tag"
+                  },
+                  {
+                    "value": 3,
+                    "label": "Output 4",
+                    "param": "out4Tag"
+                  }
+                ]
+              },
+              {
+                "kind": "choice",
+                "options": [
+                  {
+                    "value": 1,
+                    "label": "On"
+                  },
+                  {
+                    "value": 0,
+                    "label": "Off"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "label": "Jobs",
+      "desc": "The robot's own programs. The PLC runs one by number (the command tag) and the robot does the whole thing: moves, vacuum, waits, and the signals it sends back. While the scene runs, the step being run is highlighted."
+    },
+    "jobNames": {
+      "type": "string",
+      "default": "",
+      "hidden": true,
+      "label": "Job names"
+    },
+    "pose": {
+      "type": "numberList",
+      "rows": 1,
+      "columns": [
+        "J1 °",
+        "J2 °",
+        "J3 °",
+        "J4 °",
+        "J5 °",
+        "J6 °"
+      ],
+      "arity": 6,
+      "default": [
+        [
+          0,
+          -45,
+          90,
+          25,
+          75,
+          0
+        ]
+      ],
+      "label": "Idle pose",
+      "group": "Start state",
+      "desc": "The pose a freshly placed robot rests in, and where one waiting for its first Execute sits. It is the arm you see in a stopped scene, so set it to something that reads as parked rather than mid-cycle."
+    }
+  },
+  "behavior": "// Six-Axis robot — a pick-and-place arm, driven the way a real robot cell's PLC drives one. The robot owns its\n// JOBS: short programs of steps (move to a waypoint, vacuum on or off, wait, wait for an input, set an output) that\n// the author teaches in the Inspector. The PLC picks a job by number on the command tag, raises Execute, and waits\n// for Done; the robot runs the whole job itself, and signals back on its outputs. Because the robot knows its next\n// point, it blends through via points with no dependence on scan timing.\n//\n// The controller is the host's (`robot` below, run by ctx.robot.step(); src/core/robot/robotController.ts), the one\n// every robot part runs. This script declares what it reads: the waypoints, jobs, motion and tag params, and the job\n// steps' labels. A robot with NO jobs falls back to single moves: the command is a waypoint row, Execute moves there,\n// the vacuum tag drives the gripper. With no tags named the arm holds its idle pose.\n//\n// The kinematics are a rig: a tree of transform-only 'frame' links (the joint pivots) carrying per-node 'mesh'\n// links (the GLB linkages, geometry-only + placed by the rig), all wearing one shared ORM material built from the\n// BaseColor + ORM textures. The tool is drawn by geometry() on the 'eoat' frame.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// The clamp gripper's paddles ride these (the app draws the tool: src/core/robot/robotTools.ts). fingerA opens along\n// +X, fingerB follows it along -X; the controller drives the joint with the grip: open while it is off, closed onto\n// the load it holds (or fully, holding nothing) while it is on. Cosmetic, so\n// the pose gizmo and the PLC panel leave it alone. FINGER_TRAVEL is the app's travel per finger.\nconst FINGER_TRAVEL = 0.05\n// Overridden from the Inspector by the 'waypoints' param (its numberList grid, or captured by the editor's rig\n// gizmo), which arrives already parsed + validated as number[][] — no JSON.parse, no try/catch, no fallback.\nconst DEFAULT_POSES = [\n  [0, -45, 90, 25, 75, 0],   // 0 home\n  [0, -15, 55, 0, 80, 0],    // 1 pick (reach down)\n  [110, -15, 55, 0, 80, 0],  // 2 place (swing over)\n]\nconst POSE_COLUMNS = ['J1 °', 'J2 °', 'J3 °', 'J4 °', 'J5 °', 'J6 °']\n\n// The job step vocabulary. A step is the row [job, op, a, b]; the Inspector writes them from this declaration.\nconst MOVE = 1\nconst VACUUM = 2\nconst WAIT = 3\nconst WAIT_FOR = 4\nconst SET_OUT = 5\nconst IO_COUNT = 4\nconst ON_OFF = [{ value: 1, label: 'On' }, { value: 0, label: 'Off' }]\nconst ioOptions = (word, prefix) => Array.from({ length: IO_COUNT }, (_, i) => ({ value: i, label: word + ' ' + (i + 1), param: prefix + (i + 1) + 'Tag' }))\nconst JOB_OPS = [\n  { code: MOVE, label: 'Move', desc: 'Move the arm to a waypoint. Stop arrives exactly and stands still; Blend rounds the corner and carries on into the next move, for poses that are only on the way somewhere.', args: [{ kind: 'row', of: 'waypoints', label: 'To' }, { kind: 'choice', label: 'Corner', options: [{ value: 0, label: 'Stop' }, { value: 1, label: 'Blend' }] }] },\n  { code: VACUUM, label: 'Vacuum', desc: 'Switch the tool vacuum. The load is held from the step it goes on to the step it goes off.', args: [{ kind: 'choice', options: ON_OFF }] },\n  { code: WAIT, label: 'Wait', desc: 'Stand still for a time, to let a grip seal or a load settle. The clock stops while the robot is not enabled.', args: [{ kind: 'number', unit: 's', min: 0, step: 0.1, default: 0.5 }] },\n  { code: WAIT_FOR, label: 'Wait for', desc: 'Hold here until one of the robot inputs reads on (or off). This is how a job waits on the cell: a pallet in place, a zone clear.', args: [{ kind: 'choice', options: ioOptions('Input', 'in') }, { kind: 'choice', options: ON_OFF }] },\n  { code: SET_OUT, label: 'Set', desc: 'Switch one of the robot outputs, to tell the PLC something the job has reached: clear of the table, load released.', args: [{ kind: 'choice', options: ioOptions('Output', 'out') }, { kind: 'choice', options: ON_OFF }] },\n]\ndefinePart({\n  joints: ['j1', 'j2', 'j3', 'j4', 'j5', 'j6', 'grip'],\n  grippers: ['gripper'],\n  lamps: ['vacuumLamp'],\n  // a robot: the host runs its controller (waypoints, jobs, the PLC handshake) over the six joints\n  robot: { gripper: 'gripper', lamp: 'vacuumLamp', tool: 'eoat', gripJoint: { name: 'grip', open: FINGER_TRAVEL, closed: -FINGER_TRAVEL } },\n  params: {\n    speed: { type: 'number', default: 120, min: 5, max: 180, step: 1, label: 'Joint speed (°/s)', group: 'Motion', desc: 'Top speed along the joint-space path. All six joints are driven from one path parameter, so they start and arrive together instead of the fastest one finishing early.' },\n    accel: { type: 'number', default: 720, min: 20, max: 2000, step: 10, label: 'Joint accel (°/s²)', group: 'Motion', desc: 'How hard the arm ramps to and from the joint speed. Lower it for a heavier or more delicate payload; a short move may never reach top speed at all.' },\n    scale: { type: 'number', default: 1, min: 0.1, max: 10, step: 0.1, label: 'Scale', desc: 'Uniform size multiplier on the whole robot, applied to its collision bodies as well as its appearance - so a scaled arm really does reach further, rather than just looking bigger.' },\n    // EOAT (end-of-arm tooling): read by geometry() and the grab zone, never by step(). The orange rigSize dots resize it.\n    tool: { type: 'enum', default: 'vacuum', label: 'Tool', group: 'EOAT', desc: 'What the robot carries on its flange: a vacuum plate that lifts what is under it, or a clamp gripper whose two paddles close on the sides of a load. Both pick a load of the tool size below, and the Vacuum steps and the vacuum tag work either one.', options: [{ value: 'vacuum', label: 'Vacuum plate' }, { value: 'gripper', label: 'Clamp gripper' }, { value: 'none', label: 'None' }] },\n    toolSizeX: { type: 'number', default: 0.5, min: 0.5, max: 3, step: 0.01, label: 'Tool size X (m)', group: 'EOAT', handle: { kind: 'rigSize', link: 'eoat', axis: 'x', frameY: -0.075 }, desc: 'Length of the vacuum plate, or the width of the load the clamp closes on. The orange dots on the tool itself drag this in the viewport, and they ride the arm, so you can size the tool in whatever pose you are inspecting. Size it to the product you are picking - it is also the grab reach.' },\n    toolSizeZ: { type: 'number', default: 0.5, min: 0.5, max: 3, step: 0.01, label: 'Tool size Z (m)', group: 'EOAT', handle: { kind: 'rigSize', link: 'eoat', axis: 'z', frameY: -0.075 }, desc: 'Width of the vacuum plate, or how deep the clamp paddles are, dragged by the same orange dots on the tool.' },\n    cupPitchX: { type: 'number', default: 0.1, min: 0.01, max: 0.5, step: 0.005, label: 'Cup pitch X (m)', group: 'EOAT', desc: 'Centre-to-centre spacing of the suction cups along the plate length. The plate fits as many as the pitch allows, so tightening it adds cups rather than moving them.' },\n    cupPitchZ: { type: 'number', default: 0.1, min: 0.01, max: 0.5, step: 0.005, label: 'Cup pitch Z (m)', group: 'EOAT', desc: 'Centre-to-centre spacing of the suction cups across the plate width.' },\n    cupMarginX: { type: 'number', default: 0.05, min: 0, max: 0.5, step: 0.005, label: 'Cup margin X (m)', group: 'EOAT', desc: 'Inset from each end of the plate before the first cup, so the grid does not run off the edge.' },\n    cupMarginZ: { type: 'number', default: 0.05, min: 0, max: 0.5, step: 0.005, label: 'Cup margin Z (m)', group: 'EOAT', desc: 'Inset from each side of the plate before the first cup.' },\n    cupsEnabled: { type: 'boolean', default: true, label: 'Suction cups', group: 'EOAT', desc: 'Draw the cup grid under the plate. Appearance only - the grip itself comes from the vacuum tag, not from the cups being visible.' },\n    commandTag: { type: 'tag', dir: 'in', stType: 'INT', default: '', label: 'Command tag (job number)', group: 'Comms', desc: 'Which job to run: 1 is the first job, 2 the second and so on. Set it BEFORE pulsing execute. A robot with no jobs takes a waypoint row here instead (0 is home). A number with no job or row behind it is ignored, and the arm stays put rather than guessing.' },\n    executeTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Execute tag (rising edge runs it)', group: 'Comms', desc: 'Pulse this false-to-true to start the job. It is edge-triggered, so holding it true does NOT repeat - drop it and raise it again for each job.' },\n    doneTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Done tag (true while idle)', group: 'Comms', desc: 'Handshake back to the program: true whenever the robot is ready for the next command. A job that ends on a Blend move reports done as it rounds that corner, so the next job can carry straight on. Wait for it before pulsing execute again, or the edge lands mid-job and is dropped.' },\n    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Enable tag', group: 'Comms', desc: 'The robot moves only while this is true. Drop it and the arm brakes to a stop where it is and the job holds, timers and all; raise it and the job carries on. Wire it to the cell being safe to work in. Until a program drives it, or with it empty, the robot is always enabled, so a merely-typed tag does not hold it.' },\n    gripperTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Vacuum tag', group: 'Comms', desc: 'For a robot with no jobs: grip or release the load, read continuously, so hold it true for the whole carry. A robot with jobs switches its own vacuum with Vacuum steps and ignores this.' },\n    in1Tag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Input 1 tag', group: 'Comms/Robot signals', desc: 'A signal a job can wait on (a Wait for step). Robots have banks of these; wire the ones your jobs use.' },\n    in2Tag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Input 2 tag', group: 'Comms/Robot signals', desc: 'A signal a job can wait on (a Wait for step).' },\n    in3Tag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Input 3 tag', group: 'Comms/Robot signals', desc: 'A signal a job can wait on (a Wait for step).' },\n    in4Tag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Input 4 tag', group: 'Comms/Robot signals', desc: 'A signal a job can wait on (a Wait for step).' },\n    out1Tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Output 1 tag', group: 'Comms/Robot signals', desc: 'A signal a job switches (a Set step), to tell the program where it has got to. It holds its last value between jobs.' },\n    out2Tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Output 2 tag', group: 'Comms/Robot signals', desc: 'A signal a job switches (a Set step).' },\n    out3Tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Output 3 tag', group: 'Comms/Robot signals', desc: 'A signal a job switches (a Set step).' },\n    out4Tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Output 4 tag', group: 'Comms/Robot signals', desc: 'A signal a job switches (a Set step).' },\n    waypoints: { type: 'numberList', columns: POSE_COLUMNS, arity: 6, default: DEFAULT_POSES, rowNames: 'waypointNames', label: 'Waypoints', group: 'Motion', desc: 'The poses this robot knows, one row of six JOINT angles each - not a position in space, so the arm reaches a pose exactly as taught with no ambiguity about elbow or wrist. Name them, and jobs move to them by name. Pose the arm with the viewport gizmo and use Capture Pose to add one rather than typing angles.' },\n    waypointNames: { type: 'string', default: 'Home\\nPick\\nPlace', hidden: true, label: 'Waypoint names' },\n    blendWaypoints: { type: 'numberList', rowsOf: 'waypoints', arity: 1, default: [], label: 'Pass-through waypoints (robots without jobs)', group: 'Motion', desc: 'For a robot with no jobs: which waypoints are VIA points. The arm reports done before it reaches one, so the next move can start while it is still running and the corner is rounded instead of braked to a stop. Jobs say this on each Move step instead.' },\n    blendDeg: { type: 'number', unit: '°', default: 12, min: 0, max: 60, step: 1, label: 'Corner blend', group: 'Motion', desc: 'How many joint degrees before a via point the arm starts cutting the corner. Larger rounds the path more and strays further from the taught pose; the arm caps it at a third of the move.' },\n    jobs: { type: 'numberList', arity: 4, default: [], program: { names: 'jobNames', ops: JOB_OPS }, label: 'Jobs', desc: 'The robot\\'s own programs. The PLC runs one by number (the command tag) and the robot does the whole thing: moves, vacuum, waits, and the signals it sends back. While the scene runs, the step being run is highlighted.' },\n    jobNames: { type: 'string', default: '', hidden: true, label: 'Job names' },\n    pose: { type: 'numberList', rows: 1, columns: POSE_COLUMNS, arity: 6, default: [DEFAULT_POSES[0]], label: 'Idle pose', group: 'Start state', desc: 'The pose a freshly placed robot rests in, and where one waiting for its first Execute sits. It is the arm you see in a stopped scene, so set it to something that reads as parked rather than mid-cycle.' },\n  },\n  // The controller is the host's (ctx.robot): it reads the params above by name, runs the jobs, moves the arm and\n  // writes the joints, the gripper, the vacuum lamp and the tags.\n  step(ctx) {\n    ctx.robot.step()\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "base",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Six-Axis_Base",
+          "material": "sixaxis"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "quat": [
+          0,
+          -0.7071068,
+          0,
+          0.70710677
+        ]
+      },
+      {
+        "name": "basePivot",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "linkage1",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Six-Axis_Linkage_01",
+          "material": "sixaxis"
+        },
+        "offset": [
+          0,
+          0.23,
+          0
+        ],
+        "parent": "basePivot",
+        "quat": [
+          0,
+          -0.7071068,
+          0,
+          0.70710677
+        ]
+      },
+      {
+        "name": "hydBaseAnchor",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.31569114,
+          0.5505995,
+          -0.22799234
+        ],
+        "parent": "basePivot",
+        "quat": [
+          0.05364445,
+          -0.70634111,
+          0.0538397,
+          0.70377966
+        ],
+        "aim": {
+          "target": "hydRodAnchor"
+        }
+      },
+      {
+        "name": "hyd1",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Six-Axis_Hydraulic_01",
+          "material": "sixaxis"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "parent": "hydBaseAnchor"
+      },
+      {
+        "name": "shoulder",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.9,
+          0
+        ],
+        "parent": "basePivot"
+      },
+      {
+        "name": "upperArm",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -0.72657037,
+          -0.34717786,
+          -0.00242546
+        ],
+        "parent": "shoulder"
+      },
+      {
+        "name": "linkage2",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Six-Axis_Linkage_02",
+          "material": "sixaxis"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "parent": "upperArm",
+        "quat": [
+          -0.50000002,
+          -0.49999996,
+          -0.49999998,
+          0.50000004
+        ]
+      },
+      {
+        "name": "hydRodAnchor",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.19884515,
+          0.00020599,
+          -0.228842
+        ],
+        "parent": "upperArm",
+        "quat": [
+          -0.32043198,
+          0.62891006,
+          0.31849341,
+          0.63273804
+        ],
+        "aim": {
+          "target": "hydBaseAnchor"
+        }
+      },
+      {
+        "name": "hyd2",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Six-Axis_Hydraulic_02",
+          "material": "sixaxis"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "parent": "hydRodAnchor"
+      },
+      {
+        "name": "elbow",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.01472515,
+          1.3262625,
+          -0.00687705
+        ],
+        "parent": "upperArm"
+      },
+      {
+        "name": "forearm",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -0.01825523,
+          0.01825523,
+          -0.09700517
+        ],
+        "parent": "elbow"
+      },
+      {
+        "name": "linkage3",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Six-Axis_Linkage_03",
+          "material": "sixaxis"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "parent": "forearm",
+        "quat": [
+          0.5,
+          0.5,
+          0.50000002,
+          -0.49999998
+        ]
+      },
+      {
+        "name": "wristRot",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.11355525,
+          0.87549424,
+          0.09818761
+        ],
+        "parent": "forearm"
+      },
+      {
+        "name": "linkage4",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Six-Axis_Linkage_04",
+          "material": "sixaxis"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "parent": "wristRot",
+        "quat": [
+          0.5,
+          0.5,
+          0.50000002,
+          -0.49999998
+        ]
+      },
+      {
+        "name": "wristPitch",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.33123374,
+          0
+        ],
+        "parent": "wristRot"
+      },
+      {
+        "name": "linkage5",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Six-Axis_Linkage_05",
+          "material": "sixaxis"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "parent": "wristPitch",
+        "quat": [
+          0.50000001,
+          -0.50000001,
+          0.50000002,
+          0.49999996
+        ]
+      },
+      {
+        "name": "tool",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.21365428,
+          0
+        ],
+        "parent": "wristPitch"
+      },
+      {
+        "name": "toolSuction",
+        "shape": {
+          "kind": "mesh",
+          "asset": "glb",
+          "node": "Six-Axis_Tool_Suction",
+          "material": "sixaxis"
+        },
+        "offset": [
+          0,
+          0.02553463,
+          0
+        ],
+        "parent": "tool",
+        "quat": [
+          0.7071068,
+          -2e-8,
+          -1e-8,
+          0.70710677
+        ]
+      },
+      {
+        "name": "gripper",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.165672,
+          0
+        ],
+        "parent": "tool",
+        "grip": {
+          "zone": {
+            "size": [
+              0.5,
+              0.7,
+              0.5
+            ],
+            "sizeParams": [
+              {
+                "axis": 0,
+                "param": "toolSizeX",
+                "scale": 1
+              },
+              {
+                "axis": 2,
+                "param": "toolSizeZ",
+                "scale": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "eoat",
+        "parent": "tool",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.009,
+          0
+        ],
+        "quat": [
+          0,
+          0,
+          1,
+          0
+        ]
+      },
+      {
+        "name": "fingerA",
+        "parent": "eoat",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "fingerB",
+        "parent": "eoat",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      }
+    ],
+    "joints": [
+      {
+        "name": "j1",
+        "link": "basePivot",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -3.14159265,
+        "max": 3.14159265
+      },
+      {
+        "name": "j2",
+        "link": "upperArm",
+        "type": "revolute",
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "min": -2.35619449,
+        "max": 2.35619449
+      },
+      {
+        "name": "j3",
+        "link": "forearm",
+        "type": "revolute",
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "min": -2.7925268,
+        "max": 2.7925268
+      },
+      {
+        "name": "j4",
+        "link": "wristRot",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -3.14159265,
+        "max": 3.14159265
+      },
+      {
+        "name": "j5",
+        "link": "wristPitch",
+        "type": "revolute",
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "min": -2.0943951,
+        "max": 2.0943951
+      },
+      {
+        "name": "j6",
+        "link": "tool",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -6.28318531,
+        "max": 6.28318531
+      },
+      {
+        "name": "grip",
+        "link": "fingerA",
+        "type": "prismatic",
+        "axis": [
+          1,
+          0,
+          0
+        ],
+        "min": -0.05,
+        "max": 0.05,
+        "cosmetic": true
+      },
+      {
+        "name": "grip2",
+        "link": "fingerB",
+        "type": "prismatic",
+        "axis": [
+          -1,
+          0,
+          0
+        ],
+        "min": -0.05,
+        "max": 0.05,
+        "mimic": {
+          "joint": "grip"
+        }
+      }
+    ],
+    "bounds": {
+      "length": 1.88,
+      "width": 0.83,
+      "top": 3.49
+    },
+    "posable": true
+  },
+  "category": "Equipment",
+  "assets": [
+    {
+      "id": "glb",
+      "mime": "model/gltf-binary",
+      "url": "/part-assets/fff423a52e7f0509025d41e5a6925392bf9c0f79e7a6f57f8b6177495eb26911.glb",
+      "sha256": "fff423a52e7f0509025d41e5a6925392bf9c0f79e7a6f57f8b6177495eb26911"
+    },
+    {
+      "id": "albedo",
+      "mime": "image/webp",
+      "url": "/part-assets/8f2a6fcd746437eb44b66b25f91075c5e16b111ebecceac9f574cf6187d466d2.webp",
+      "sha256": "8f2a6fcd746437eb44b66b25f91075c5e16b111ebecceac9f574cf6187d466d2"
+    },
+    {
+      "id": "orm",
+      "mime": "image/webp",
+      "url": "/part-assets/4ff77a29d38486a765fbbc993e8f959063db6b32d985650f5e423d68be343ab1.webp",
+      "sha256": "4ff77a29d38486a765fbbc993e8f959063db6b32d985650f5e423d68be343ab1"
+    }
+  ],
+  "materials": [
+    {
+      "id": "sixaxis",
+      "albedo": "albedo",
+      "orm": "orm"
+    },
+    {
+      "id": "eoatPaint",
+      "color": [
+        0.639,
+        0.116,
+        0.0066
+      ],
+      "metalness": 0,
+      "roughness": 0.55
+    },
+    {
+      "id": "eoatRail",
+      "color": [
+        0.04,
+        0.04,
+        0.045
+      ],
+      "metalness": 0.7,
+      "roughness": 0.35
+    },
+    {
+      "id": "eoatSteel",
+      "color": [
+        0.18,
+        0.18,
+        0.19
+      ],
+      "metalness": 0.85,
+      "roughness": 0.45
+    },
+    {
+      "id": "eoatCup",
+      "color": [
+        0.024,
+        0.104,
+        0.4
+      ],
+      "metalness": 0,
+      "roughness": 0.75
+    },
+    {
+      "id": "eoatPlastic",
+      "color": [
+        0.02,
+        0.02,
+        0.022
+      ],
+      "metalness": 0,
+      "roughness": 0.5
+    },
+    {
+      "id": "eoatLens",
+      "color": [
+        0.03,
+        0.06,
+        0.03
+      ],
+      "metalness": 0,
+      "roughness": 0.25
+    }
+  ],
+  "sdk": {
+    "level": 14,
+    "of": "v2:18905:18mpqnp9zfq"
+  }
+}

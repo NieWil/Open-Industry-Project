@@ -120,6 +120,8 @@
 .catalog-card-prefab {
   position: relative;
   padding: 0;
+  /* the corner badges place themselves by the card's width (notices.css .catalog-card-badges) */
+  container-type: inline-size;
 }
 
 .catalog-card-main {

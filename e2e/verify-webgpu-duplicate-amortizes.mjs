@@ -3,17 +3,17 @@
 // vertex-shader programs (i.e. reuse the warm pipelines). This amortises like WebGL and prevents the
 // "big frame drop when duplicating a roller conveyor".
 //
-// Background: three's WebGPU node backend names each InstancedMesh's instance-matrix buffer struct
-// `NodeBuffer_<node.id>` (unique per object), so structurally-identical banks emit different vertex WGSL →
-// distinct program → distinct pipeline → a cold compile for every fresh instanced mesh. src/render/viewport/
-// pipelineDedup.ts normalizes that per-object id in three's program cache, so identical banks share one
-// program+pipeline. With it, the 2nd duplicate of a roller conveyor compiles ~0 new vertex programs; without
-// it (?nopipelinededup), ~14. This asserts the amortisation holds end-to-end under real WebGPU.
+// Background: three 0.186 named each InstancedMesh's instance-matrix buffer struct `NodeBuffer_<node.id>`
+// (unique per object), so structurally-identical banks emitted different vertex WGSL and each fresh instanced
+// mesh cold-compiled; a patch normalised the name in three's program cache. Since 0.187 three names a uniform
+// buffer by its index within one shader build, so identical banks emit identical WGSL and share one
+// program+pipeline. The 2nd duplicate of a roller conveyor compiles ~0 new vertex programs (~14 on 0.186
+// without the patch). This asserts three still shares them, end-to-end under real WebGPU.
 // Run: node e2e/verify-webgpu-duplicate-amortizes.mjs
 import { chromium } from 'playwright'
 import { startServer } from './_server.mjs'
 
-const THRESHOLD = 4 // max new vertex programs the 2nd (fully-warm) duplicate may add; ~0-2 with dedup, ~14 without
+const THRESHOLD = 4 // max new vertex programs the 2nd (fully-warm) duplicate may add; ~0-2 when three shares them, ~14 when not
 
 async function launchWebGPU() {
   for (const opts of [

@@ -1,5 +1,5 @@
 // Verifies the PLC dock's one command, Reload, end to end in a real browser (StEditor.tsx, commands.ts
-// `sim.reloadProgram`, editor/programReload.ts):
+// `sim.reloadProgram`, editor/program/programReload.ts):
 //   - the dock has no Run and no Stop: the toolbar's transport starts and stops the sim
 //   - Ctrl/Cmd-Enter in the code starts a stopped sim (in a browser F5 is the page's, so it is the only run key)
 //   - Reload is enabled only while the text on screen differs from what runs: disabled when stopped, disabled when

@@ -32,7 +32,7 @@ function speedUnitParams(speedMs) {
 /** The param to stand right AFTER the part's own `speedTag`: the same setpoint, in FPM. */
 function speedFpmTagParam(group) {
   return {
-    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag (FPM)', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },
+    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },
   }
 }
 
@@ -61,7 +61,7 @@ function driveFeedbackParams(speedMs, group) {
     velocityTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Velocity tag (30 at the speed above)', ...g, desc: 'Drive feedback the program reads: the effective speed as a share of the speed at 30 revolutions, times 30. Stopped reads 0, and a run tag holding the conveyor still counts as stopped.' },
     inchesPerPulse: { type: 'number', default: 1, min: 0.05, max: 100, step: 0.05, label: 'Travel per pulse (in)', ...g, desc: 'How far the surface travels between pulses on the pulse tag. A pulse cannot be finer than one simulation step, so a fast conveyor at a fine pitch needs a higher project simHz.' },
     pulseTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Pulse tag (one per pitch)', ...g, desc: 'An encoder for the program to count: TRUE for one simulation step each time the surface has travelled the inches above, in either direction, and FALSE otherwise.' },
-    encoderTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Encoder tag (travel, m)', ...g, desc: 'Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station.' },
+    encoderTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Encoder tag (travel)', unit: 'm', ...g, desc: 'Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station.' },
   }
 }
 
@@ -75,14 +75,14 @@ function conveyorDrive() {
   }
 }
 
-/** In step(): the unit the conveyor is set up in and the commanded speed, `{ comms, fpm, setpointTag, commanded }`.
+/** In step(): the unit the conveyor is set up in and the commanded speed, `{ fpm, setpointTag, commanded }`.
  *  `commanded` is always m/s, so everything after this call is m/s. */
-function commandedSpeed(ctx, comms) {
+function commandedSpeed(ctx) {
   const fpm = ctx.params.fpmUnits === true
   const setpointTag = fpm ? ctx.params.speedFpmTag : ctx.params.speedTag
   const unit = fpm ? FPM_MS : 1
-  const commanded = (comms && setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * unit
-  return { comms, fpm, setpointTag, commanded }
+  const commanded = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * unit
+  return { fpm, setpointTag, commanded }
 }
 
 /** In step(), after commandedSpeed(): the speed the surface actually runs at (m/s), `target` (the command, gates
@@ -97,7 +97,7 @@ function rampedSpeed(ctx, drive, cmd, target) {
   if (!drive.rampStarted) {
     drive.rampStarted = true
     // no program commands this conveyor: its authored speed is a belt that is running, not one being started
-    if (!(cmd.comms && (cmd.setpointTag || (ctx.params.runTag && ctx.tagDriven(ctx.params.runTag))))) drive.driven = want
+    if (!(cmd.setpointTag || (ctx.params.runTag && ctx.tagDriven(ctx.params.runTag)))) drive.driven = want
   }
   if (want * drive.driven < 0) { if (ctx.params.decelTime > 0) want = 0; else drive.driven = 0 } // reversing: stop first
   const rampTime = Math.abs(want) > Math.abs(drive.driven) ? ctx.params.accelTime : ctx.params.decelTime
@@ -107,18 +107,33 @@ function rampedSpeed(ctx, drive, cmd, target) {
 
 /** In step(): the velocity feedback, the pulse and the encoder, from the effective speed `v` (m/s). */
 function publishDrive(ctx, drive, cmd, v) {
-  const comms = cmd.comms
   // the velocity as a share of the speed at 30
   const at30 = cmd.fpm ? ctx.params.speedAt30Fpm * FPM_MS : ctx.params.speedAt30
-  if (comms && ctx.params.velocityTag) ctx.writeNumber(ctx.params.velocityTag, at30 > 0 ? (v / at30) * 30 : 0)
+  if (ctx.params.velocityTag) ctx.writeNumber(ctx.params.velocityTag, at30 > 0 ? (v / at30) * 30 : 0)
   // the encoder pulse
   const pitch = ctx.params.inchesPerPulse > 0 ? ctx.params.inchesPerPulse : 1
   drive.pulseTravel += (Math.abs(v) * ctx.dt) / 0.0254
   const pulse = drive.pulseTravel >= pitch - 1e-9 // (a hair of tolerance: twelve twelfths of an inch do not sum to exactly one)
   if (pulse) drive.pulseTravel = Math.max(0, drive.pulseTravel - pitch * Math.max(1, Math.floor(drive.pulseTravel / pitch + 1e-9)))
-  if (comms && ctx.params.pulseTag) ctx.writeTag(ctx.params.pulseTag, pulse)
+  if (ctx.params.pulseTag) ctx.writeTag(ctx.params.pulseTag, pulse)
   drive.odo += v * ctx.dt
-  if (comms && ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)
+  if (ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)
+}
+
+/** In react(), last: ask for the next tick while the drive has work of its own. It has while it ramps toward
+ *  `target` (the command, gates applied, as handed to rampedSpeed), and while it runs with a pulse or an encoder tag
+ *  to count travel on. A conveyor at its commanded speed with neither waits for a tag to change, and its surface
+ *  keeps the speed it was last given. */
+function driveAgain(ctx, drive, target) {
+  if (drive.driven !== target || (drive.driven !== 0 && (ctx.params.pulseTag || ctx.params.encoderTag))) ctx.again()
+}
+
+// ---- from examples/parts/_shared/conveyorFriction.js ----
+/** The `friction` param, with the surface's default grip against a carton. */
+function frictionParam(carton) {
+  return {
+    friction: { type: 'number', default: carton, min: 0, step: 0.01, label: 'Friction', desc: 'Grip between the running surface and a standard carton, the figure a belt datasheet quotes. A smooth PVC belt is about 0.4, a rough-top incline belt about 0.9 and a low-friction plastic modular belt about 0.2, made for product to slide while it accumulates. Bare steel rollers are about 0.4. Other cargo grips by its own friction against the same surface.' },
+  }
 }
 
 // ---- from examples/parts/_shared/guardHolePanel.js ----
@@ -432,6 +447,7 @@ definePart({
     ...speedUnitParams(1),
     speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 1, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'Surface speed at the centreline of the curve; the outer edge moves faster, which carries a box round square. Negative reverses flow, the ONLY way to turn a curve around (spinning it would swap its inner and outer radius).' },
     ...driveRampParams(0.2, 0.2),
+    ...frictionParam(0.42),
     // Engine storage, never an Inspector field (hidden): the SNAP flips this
     // when it mates two ends that both discharge into the junction — a curve can't just be spun 180°, that
     // would swap inner/outer radius. Reversing by hand stays a negative speed; step() folds the two below.
@@ -443,12 +459,11 @@ definePart({
     guardHoles: { type: 'numberList', arity: 3, default: [], hidden: true, label: 'Guard holes [θ rad, y m, side ±1]', group: 'Guards', desc: 'Where sensor beams cross the side guards. Worked out by the host from the scene; not for editing.' },
     // deck height above the floor — drives the LEG length; host auto-fills it from the surface beneath at drop/snap.
     standHeight: { type: 'number', default: 2.0, min: 0.1, max: 3, step: 0.01, rest: 'surfaceBelow', label: 'Stand height (m)', desc: 'Height of the deck above whatever is beneath it, which sets the leg length. The host fills this in when you drop or snap the conveyor, so the legs reach the floor - or a platform crossing underneath - without you measuring. Pin it by hand when you want a deliberate height.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this conveyor to a PLC program. Its tags appear once this is on.' },
     // Comms trio: speedTag = REAL setpoint in (replaces the speed param), runningTag = BOOL feedback out
     // (effective speed ≠ 0); runTag = BOOL run/stop gate (back-compat).
-    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed.' },
+    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag', group: 'Comms', desc: 'The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed.' },
     ...speedFpmTagParam('Comms'),
-    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Run tag (rollers run while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the bed.' },
+    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (rollers run while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the bed.' },
     runningTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Running tag (true while moving)', group: 'Comms', desc: 'Feedback the conveyor publishes for the program to read: true whenever it is actually moving. This is the EFFECTIVE speed, gates included, so a run tag holding it at zero reads false here.' },
     ...driveFeedbackParams(1, 'Comms'),
   },
@@ -597,15 +612,14 @@ definePart({
     parts.push.apply(parts, arcHolePanels(g, holePanels))
     return parts
   },
-  step(ctx) {
-    // Comms precedence: speedTag (REAL in) replaces the speed param as the commanded speed; runTag (BOOL)
+  react(ctx) {
+    // Tag precedence: speedTag (REAL in) replaces the speed param as the commanded speed; runTag (BOOL)
     // gates it to 0, but ONLY while a controller actually drives the tag (ctx.tagDriven, output ownership) —
-    // undriven, the authored speed rules; runningTag (BOOL out) = effective speed ≠ 0, written every step.
-    const comms = ctx.params.enableComms
+    // undriven, the authored speed rules; runningTag (BOOL out) = effective speed ≠ 0, written on every call.
     // the unit the conveyor is set up in: everything below this line is m/s
-    const cmd = commandedSpeed(ctx, comms)
+    const cmd = commandedSpeed(ctx)
     const fpm = cmd.fpm, commanded = cmd.commanded
-    const running = comms && ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true
+    const running = ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true
     // 'reverse' is a MOUNTING fact the snap owns, not a value the program owns, so it flips whichever speed is
     // in force — authored or tag-commanded.
     const ramped = rampedSpeed(ctx, drive, cmd, running ? commanded : 0)
@@ -613,12 +627,14 @@ definePart({
     // Inspector readout for speed: the effective m/s INCLUDING the reverse flip - the arc omega below is
     // derived from it, so a curve reports the linear rate its speed param is authored in, not rad/s.
     reportSpeed(ctx, fpm, speed)
-    if (comms && ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, speed !== 0)
+    if (ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, speed !== 0)
     // drive feedback: the velocity as a share of the speed at 30, an encoder pulse and the odometer
     publishDrive(ctx, drive, cmd, speed)
     // the arc centre is the part origin (the bed is authored around it); omega = speed / centreline-radius.
     const rc = (ctx.params.innerRadius > 0 ? ctx.params.innerRadius : 0.825) + (ctx.params.width > 0 ? ctx.params.width : 1.524) / 2
     const omega = speed / Math.max(rc, 1e-3)
     ctx.setArcSurfaceVelocity({ center: { x: ctx.position.x, z: ctx.position.z }, omega })
+    // the next tick is needed only while the drive ramps or counts travel (conveyorDrive.js)
+    driveAgain(ctx, drive, running ? commanded : 0)
   },
 })

@@ -8,7 +8,7 @@
 // node). The public keys are part of the build (librarySigningKeys.ts); the private key exists only in CI secrets.
 
 import { LIBRARY_SIGNING_KEYS } from './librarySigningKeys'
-import { base64ToBytes } from './partAssets'
+import { base64ToBytes } from './parts/partAssets'
 
 /** An index's signature: which key signed it, and the signature over its canonical JSON. */
 export interface LibrarySignature {

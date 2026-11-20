@@ -1,5 +1,5 @@
 // Gate for the ST editor's inline live-value overlay (live values drawn beside the code while it runs),
-// and specifically for the `valueRefs` memo in `src/editor/stLang.ts`.
+// and specifically for the `valueRefs` memo in `src/editor/program/stLang.ts`.
 //
 // The overlay's decorations recompute on every value push (StEditor polls the live variable
 // image every 120 ms while a program runs), not just on edits. Rebuilding the document string and
@@ -130,6 +130,92 @@ async function main() {
       livePostEdit = t1.filter((w, j) => t0[j] && w.text !== t0[j].text).length
     }
     check('values still update after an edit', livePostEdit > 0, `${livePostEdit} boxes changed`)
+
+    // 5. names are read in the POU they are written in (plc/watchScope.ts). The program runs as one instance and
+    //    publishes `Main.n` for the `n` its body spells, so that line shows live values. The block's own `n` is not
+    //    published, so its line shows none, never the program's `n`.
+    await page.evaluate(() => window.__oip.controller.stop())
+    const SCOPED = 'FUNCTION_BLOCK Blk\nVAR\n  n : INT;\nEND_VAR\nn := n + 100;\nEND_FUNCTION_BLOCK\n' +
+      'PROGRAM Main\nVAR\n  n : INT;\n  b : Blk;\nEND_VAR\nn := n + 1;\nb();\nEND_PROGRAM\n'
+    await page.evaluate((program) => window.__oip.store.loadStProgram(program), SCOPED)
+    await page.waitForTimeout(600)
+    await page.evaluate(() => window.__oip.controller.run())
+    await page.locator('.cm-content').first().focus()
+    await page.keyboard.press('Control+Home')
+    const lineBoxes = (text) =>
+      page.evaluate((text) => {
+        // the line's own text, without the value boxes drawn into it
+        const codeOf = (l) => {
+          const c = l.cloneNode(true)
+          c.querySelectorAll('.cm-st-value, .cm-st-monitor').forEach((el) => el.remove())
+          return c.textContent.replace(/\s+/g, ' ').trim()
+        }
+        const line = [...document.querySelectorAll('.cm-content .cm-line')].find((l) => codeOf(l) === text)
+        return line ? [...line.querySelectorAll('.cm-st-value')].map((el) => el.textContent) : null
+      }, text)
+    await page.locator('.cm-st-value').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {})
+    const p0 = await lineBoxes('n := n + 1;')
+    await page.waitForTimeout(800)
+    const p1 = await lineBoxes('n := n + 1;')
+    check('a PROGRAM body shows its instance\'s live values', !!p0 && !!p1 && p1.length === 2 && p1.some((v, j) => v !== p0[j]),
+      `${(p0 ?? []).join(',')} -> ${(p1 ?? []).join(',')}`)
+    const inBlock = await lineBoxes('n := n + 100;')
+    check('a function block\'s own variable shows no value, not the program\'s of the same name', inBlock !== null && inBlock.length === 0,
+      `boxes=${JSON.stringify(inBlock)}`)
+
+    // 6. a PROGRAM that runs as two instances shows one of them, says which on its header, and switches on a click of
+    //    that chip or of an instance row in the organizer. Line1 scans ten times as often as Line2, so their counts
+    //    tell the two apart.
+    await page.evaluate(() => window.__oip.controller.stop())
+    // an empty scene: the demo's parts name tags this program lacks, and their wiring warnings would fill the docked
+    // panel and leave the code no height to click in
+    await page.evaluate(() => window.__oip.store.loadScene({ version: window.__oip.store.getState().scene.version, parts: [] }))
+    await page.evaluate(() =>
+      window.__oip.store.commitProgram('two instances', {
+        source: 'PROGRAM Merge\nVAR\n  n : INT;\nEND_VAR\nn := n + 1;\nEND_PROGRAM\n',
+        controller: {
+          tasks: [{ name: 'Fast', intervalMs: 10, priority: 1 }, { name: 'Slow', intervalMs: 100, priority: 2 }],
+          programs: [{ name: 'Line1', type: 'Merge', task: 'Fast' }, { name: 'Line2', type: 'Merge', task: 'Slow' }],
+        },
+      }),
+    )
+    await page.waitForTimeout(600)
+    await page.evaluate(() => window.__oip.controller.run())
+    // the chip sits on the PROGRAM's header, the first line: bring it into the editor's view (case 5 left it at the end)
+    await page.locator('.cm-content').first().focus()
+    await page.keyboard.press('Control+Home')
+    const chip = page.locator('[data-testid="st-monitor"]')
+    const chipShown = await chip.waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false)
+    // whose count the line shows: the instance whose live count it is nearer to, read in the same step
+    const whose = () =>
+      page.evaluate(() => {
+        const line = [...document.querySelectorAll('.cm-content .cm-line')].find((l) => {
+          const c = l.cloneNode(true)
+          c.querySelectorAll('.cm-st-value, .cm-st-monitor').forEach((el) => el.remove())
+          return c.textContent.replace(/\s+/g, ' ').trim() === 'n := n + 1;'
+        })
+        const shown = Number(line?.querySelector('.cm-st-value')?.textContent)
+        const w = window.__oip.controller.plcWatch ?? {}
+        const a = Number(w['Line1.n']), b = Number(w['Line2.n'])
+        return { shown, a, b, who: !Number.isFinite(shown) ? null : Math.abs(shown - a) < Math.abs(shown - b) ? 'Line1' : 'Line2' }
+      })
+    await page.waitForTimeout(1500)
+    const atFirst = await whose()
+    check('two instances: the code shows the first, and its header says so', chipShown && atFirst.who === 'Line1' && /Line1 \(1 of 2\)/.test((await chip.textContent()) ?? ''),
+      `chip="${chipShown ? await chip.textContent() : ''}" ${JSON.stringify(atFirst)}`)
+    await chip.click()
+    await page.waitForTimeout(600)
+    const second = await whose()
+    check('two instances: the header chip switches the code to the next instance', second.who === 'Line2' && /Line2 \(2 of 2\)/.test((await chip.textContent()) ?? ''),
+      `chip="${await chip.textContent()}" ${JSON.stringify(second)}`)
+    const row = page.locator('[data-testid="org-program"][data-program="Line1"]')
+    const rowShown = await row.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)
+    if (rowShown) await row.click()
+    await page.waitForTimeout(600)
+    const third = await whose()
+    const badge = await page.locator('[data-testid="org-program"][data-program="Line1"] [data-testid="org-monitored"]').count()
+    check('two instances: an instance row in the organizer picks it, and wears the badge', rowShown && third.who === 'Line1' && badge === 1,
+      `row=${rowShown} badge=${badge} ${JSON.stringify(third)}`)
 
     check('no page errors', errors.length === 0, errors.slice(0, 2).join(' | '))
   } finally {

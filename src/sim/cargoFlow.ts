@@ -2,14 +2,14 @@
 // completions measurements() counts), the product state behaviors put on it (ctx.mark / dress / join), and authored
 // unit loads seeded at the first step. It works on the cargo through the registry and finds each part's zones in the
 // sensor registry. SimWorld owns one; tickBehaviors hands it each behavior's requests in call order.
-import { CARGO_CAP_LOAD_BASE, CARGO_KIND_BOX, CARGO_KIND_PALLET, CARGO_KIND_TOTE, DEFAULT_DRESS_OPACITY, cargoRefKey, kindSpawnRef, cargoFriction, cargoView, unitMembers, unitStart } from '../core/frame'
+import { CARGO_CAP_LOAD_BASE, CARGO_KIND_BOX, CARGO_KIND_PALLET, CARGO_KIND_TOTE, DEFAULT_DRESS_OPACITY, cargoRefKey, kindSpawnRef, cargoFriction, cargoView, partChildren, unitMembers, unitStart } from '../core/frame'
 import type { FrameDressing } from '../core/frame'
 import { fitLoad, wrapAnchor } from '../core/cargoWrap'
 import type { WrapBody } from '../core/cargoWrap'
-import type { CargoMarkValue } from '../core/partPackage'
-import { isCargoPackage } from '../core/partPackage'
-import { reportPartDiagnostic } from '../core/partDiagnostics'
-import { getPackage } from '../core/partRegistry'
+import type { CargoMarkValue } from '../core/parts/partPackage'
+import { isCargoPackage } from '../core/parts/partPackage'
+import { reportPartDiagnostic } from '../core/parts/partDiagnostics'
+import { getPackage } from '../core/parts/partRegistry'
 import { hexToRgb } from '../core/math'
 import type { PartInstance } from '../core/types'
 import { BOX_FRICTION, BOX_MASS, PALLET_FRICTION, TOTE_FRICTION, TOTE_MASS } from '../core/types'
@@ -33,6 +33,8 @@ export interface SpawnRequest {
   color?: [number, number, number]
   mass?: number
   offset?: [number, number, number]
+  /** facts the item starts with (ctx.spawn `marks`) */
+  marks?: Record<string, CargoMarkValue>
 }
 
 export class CargoFlow {
@@ -40,8 +42,9 @@ export class CargoFlow {
   private unitsPending = true
   /** unit loads rebuilt mid-run (an edit while running), to be seeded again at the next step */
   private readonly unitsRebuilt = new Set<string>()
-  /** where each wrapping behavior's film roll stood last tick (world x/z), which says which way it is travelling */
-  private readonly webRollPrev = new Map<BehaviorRecord, [number, number]>()
+  /** where each wrapping behavior's film roll stood last tick (world x/z), which says which way it is travelling.
+   *  Weak, so a record a rebuild replaced is not kept for the rest of the run. */
+  private readonly webRollPrev = new WeakMap<BehaviorRecord, [number, number]>()
   /** line completions (items removed by a despawner) and their summed cycle time, for measurements() */
   private completedCount = 0
   private totalCycleSeconds = 0
@@ -93,7 +96,7 @@ export class CargoFlow {
       // fetch per zone pass: a removal below bumps boxesRev, so the next zone re-snapshots rather than
       // reading shifted rows. Within one pass the downward iteration keeps row i aligned with boxes[i]
       // across removals (splice leaves lower indices untouched - same pattern as the cull loop).
-      const snap = this.cargo.beamSnapshot()
+      const snap = this.cargo.stepSnapshot()
       for (let i = this.boxes.length - 1; i >= 0; i--) {
         const box = this.boxes[i]
         if (!box || this.holds.personHeld(box)) continue
@@ -144,13 +147,14 @@ export class CargoFlow {
       }
     })
     const bodies = this.cargo.wrapBodies()
+    const kids = partChildren(parts)
     const joins: { rows: number[]; start: NonNullable<ReturnType<typeof unitStart>>; partId: string }[] = []
     for (const part of parts) {
       if (only && !only.has(part.id)) continue
       const start = unitStart(part)
       if (!start) continue
       // its filed cargo, else the pieces it stacked itself (unitPieces)
-      let member = unitMembers(parts, part.id).map((m) => rowOf.get(m.id)).filter((i): i is number => i !== undefined)
+      let member = unitMembers(parts, part.id, kids).map((m) => rowOf.get(m.id)).filter((i): i is number => i !== undefined)
       if (member.length === 0) member = ownRows.get(part.id) ?? []
       // a load already joined (a mid-run rebuild of something else) is left as it is
       if (member.length === 0 || member.some((i) => this.boxes[i]!.unit)) continue
@@ -173,12 +177,17 @@ export class CargoFlow {
     }
   }
 
-  // ctx.mark / dress / join: each on the cargo in a named zone of the calling part, in call order.
+  // ctx.mark / dress / join: each on the cargo in a named zone of the calling part, in call order. ctx.markHit: on the
+  // body a beam of the part hit this step.
   fulfillCargoOps(b: BehaviorRecord, ops: CargoOp[]): void {
     const zones = b.partId ? this.sensors.zonesOf(b.partId) : undefined
-    if (!zones) return
     for (const op of ops) {
-      const z = zones.find((zz) => zz.name === op.zone)
+      if (op.op === 'markHit') {
+        const box = b.beamBoxes?.[op.beam]
+        if (box) this.markPiece(box, { [op.key]: op.value }, b)
+        continue
+      }
+      const z = zones?.find((zz) => zz.name === op.zone)
       if (!z) continue
       const bodies = this.cargo.wrapBodies() // fresh per op: a join or split re-bodies the pieces
       if (op.op === 'mark') {
@@ -243,6 +252,7 @@ export class CargoFlow {
       const wx = b.pos[0] + off[0] * fx - off[2] * fz
       const wy = b.pos[1] + off[1]
       const wz = b.pos[2] + off[0] * fz + off[2] * fx
+      const before = this.boxes.length
       if (s.part !== undefined) {
         this.spawnProduct(b, s, wx, wy, wz, yaw)
       } else if (s.kind === 'pallet') {
@@ -258,6 +268,9 @@ export class CargoFlow {
         const size = s.size ?? [0.6, 0.4, 0.4]
         this.cargo.createDynamicBox(wx, wy, wz, size[0] / 2, size[1] / 2, size[2] / 2, yaw, s.mass ?? BOX_MASS, BOX_FRICTION, CARGO_KIND_BOX, null, s.color ?? [1, 1, 1], kindOwn(CARGO_KIND_BOX, size)) // (SimWorld.spawnBoxAt's defaults)
       }
+      // the facts it starts with, over the attributes a product starts with (and checked against their types)
+      const born = this.boxes.length > before ? this.boxes[this.boxes.length - 1] : undefined
+      if (born && s.marks) this.markPiece(born, s.marks, b)
     }
   }
 

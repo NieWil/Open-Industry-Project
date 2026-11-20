@@ -1,0 +1,108 @@
+{
+  "format": 6,
+  "id": "oip.shape",
+  "name": "Shape",
+  "params": {
+    "shape": {
+      "type": "enum",
+      "default": "box",
+      "label": "Shape",
+      "desc": "Which primitive is built. All four are sized by the same three dimensions below, so switching kind keeps the footprint you already set.",
+      "options": [
+        {
+          "value": "box",
+          "label": "Box"
+        },
+        {
+          "value": "cylinder",
+          "label": "Cylinder"
+        },
+        {
+          "value": "cone",
+          "label": "Cone"
+        },
+        {
+          "value": "ramp",
+          "label": "Ramp"
+        }
+      ]
+    },
+    "length": {
+      "type": "number",
+      "default": 1,
+      "min": 0.02,
+      "max": 40,
+      "step": 0.05,
+      "label": "Length X (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "x"
+      },
+      "desc": "Extent along local X, with a viewport dot on each end face. A round shape takes its X radius from half of this, so a cylinder whose length and width differ is an elliptical one."
+    },
+    "width": {
+      "type": "number",
+      "default": 1,
+      "min": 0.02,
+      "max": 40,
+      "step": 0.05,
+      "label": "Width Z (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "z"
+      },
+      "desc": "Extent along local Z, with a viewport dot on each side face. A round shape takes its Z radius from half of this."
+    },
+    "height": {
+      "type": "number",
+      "default": 1,
+      "min": 0.02,
+      "max": 20,
+      "step": 0.05,
+      "label": "Height Y (m)",
+      "handle": {
+        "kind": "face",
+        "axis": "y"
+      },
+      "desc": "Extent along local Y. The shape is BASE-ORIGIN, sitting on local y=0, so it seats flat on the floor or a deck and grows upward."
+    },
+    "sides": {
+      "type": "number",
+      "default": 20,
+      "min": 3,
+      "max": 48,
+      "step": 1,
+      "label": "Sides",
+      "group": "Shape",
+      "desc": "How many facets go around a cylinder or cone. No effect on a box or a ramp."
+    },
+    "color": {
+      "type": "color",
+      "default": "#9aa3ad",
+      "label": "Color",
+      "desc": "Surface tint."
+    },
+    "solid": {
+      "type": "boolean",
+      "default": true,
+      "label": "Solid (blocks cargo)",
+      "group": "Physics",
+      "desc": "Give the shape a collision hull, so cargo and a walking pilot are stopped by it. The hull is exact for all four shapes, which is what lets a ramp actually be walked up rather than colliding as a full block. Clear it for pure massing or decoration."
+    }
+  },
+  "behavior": "// Shape — a parametric primitive: box, cylinder, cone or ramp (geometry-function tier). Sized by length (X),\n// width (Z) and height (Y), all three of which carry viewport resize dots; the round shapes take their two\n// radii from length/2 and width/2, so a squashed cylinder is an elliptical one and the footprint stays exact.\n// Base-origin (the shape sits ON local y=0) so it seats on the floor, a platform deck, or another shape.\n//\n// Solid by default via collision: 'hull' — a convex hull of the emitted vertices, which is EXACT for the\n// box and honest for the round/wedge shapes (the 'box' channel would collide a cylinder as its bounding\n// square and a ramp as a full block, so nothing could roll up it). Clear 'Solid' for pure massing/decoration.\n// No behavior: inert scenery, never a conveying surface — cargo motion belongs to a real conveyor part.\n\ndefinePart({\n  // No snap declaration on purpose. Ambient face-flush (snap: { flush: true }) is the flag for parts that get\n  // tiled, and a wall built from blocks looks like the case for it — but box/pallet/rack each carried it\n  // briefly and were REVERTED: snapping to every neighbour on every drop reads as over-eager. The explicit\n  // alternatives already cover a block: hold-B Face mode, vertex snap, floor rest. A shape also advertises the\n  // four vertical faces of its footprint for 'face' MOUNTS implicitly, so a push button or HMI panel lands on\n  // one used as a cabinet/column with nothing declared here.\n  params: {\n    shape: {\n      type: 'enum',\n      default: 'box',\n      label: 'Shape',\n      desc: 'Which primitive is built. All four are sized by the same three dimensions below, so switching kind keeps the footprint you already set.',\n      options: [\n        { value: 'box', label: 'Box' },\n        { value: 'cylinder', label: 'Cylinder' },\n        { value: 'cone', label: 'Cone' },\n        { value: 'ramp', label: 'Ramp' },\n      ],\n    },\n    // the three face handles = the viewport resize dots (±X length, ±Z width, ±Y height). 'height' is the\n    // canonical vertical key the resize write path uses.\n    length: { type: 'number', default: 1, min: 0.02, max: 40, step: 0.05, label: 'Length X (m)', handle: { kind: 'face', axis: 'x' }, desc: 'Extent along local X, with a viewport dot on each end face. A round shape takes its X radius from half of this, so a cylinder whose length and width differ is an elliptical one.' },\n    width: { type: 'number', default: 1, min: 0.02, max: 40, step: 0.05, label: 'Width Z (m)', handle: { kind: 'face', axis: 'z' }, desc: 'Extent along local Z, with a viewport dot on each side face. A round shape takes its Z radius from half of this.' },\n    height: { type: 'number', default: 1, min: 0.02, max: 20, step: 0.05, label: 'Height Y (m)', handle: { kind: 'face', axis: 'y' }, desc: 'Extent along local Y. The shape is BASE-ORIGIN, sitting on local y=0, so it seats flat on the floor or a deck and grows upward.' },\n    sides: { type: 'number', default: 20, min: 3, max: 48, step: 1, label: 'Sides', group: 'Shape', desc: 'How many facets go around a cylinder or cone. No effect on a box or a ramp.' },\n    color: { type: 'color', default: '#9aa3ad', label: 'Color', desc: 'Surface tint.' },\n    solid: { type: 'boolean', default: true, label: 'Solid (blocks cargo)', group: 'Physics', desc: 'Give the shape a collision hull, so cargo and a walking pilot are stopped by it. The hull is exact for all four shapes, which is what lets a ramp actually be walked up rather than colliding as a full block. Clear it for pure massing or decoration.' },\n  },\n  geometry(g, p) {\n    var L = typeof p.length === 'number' && p.length > 0 ? p.length : 1\n    var W = typeof p.width === 'number' && p.width > 0 ? p.width : 1\n    var H = typeof p.height === 'number' && p.height > 0 ? p.height : 1\n    var shape = typeof p.shape === 'string' ? p.shape : 'box'\n    var N = Math.max(3, Math.min(48, Math.round(typeof p.sides === 'number' ? p.sides : 20)))\n\n    // WINDING: three derives normals from the faces, so every face below is ordered CCW seen from OUTSIDE\n    // (normal = (C-B) x (A-B) for a triangle A,B,C). g.box() already does this; the surface()-built shapes\n    // follow the same rule face by face.\n    var desc\n    if (shape === 'box') {\n      desc = g.box([L, H, W], [0, H / 2, 0])\n    } else if (shape === 'ramp') {\n      // a right triangular prism: the deck rises along +X, from the floor at x=-L/2 to full height at x=+L/2,\n      // where a vertical back face closes it. Cargo slides DOWN toward -X.\n      var s = g.surface()\n      var x0 = -L / 2, x1 = L / 2, z0 = -W / 2, z1 = W / 2\n      // low edge (y=0) and high edge (y=H), each with its own verts per face so the edges stay crisp\n      var slope = [s.vertex(x0, 0, z0, 0, 0), s.vertex(x0, 0, z1, 1, 0), s.vertex(x1, H, z1, 1, 1), s.vertex(x1, H, z0, 0, 1)]\n      s.quad(slope[0], slope[1], slope[2], slope[3]) // sloped deck (up + toward -X)\n      var bot = [s.vertex(x0, 0, z0, 0, 0), s.vertex(x1, 0, z0, 1, 0), s.vertex(x1, 0, z1, 1, 1), s.vertex(x0, 0, z1, 0, 1)]\n      s.quad(bot[0], bot[1], bot[2], bot[3]) // underside (-Y)\n      var back = [s.vertex(x1, 0, z1, 0, 0), s.vertex(x1, 0, z0, 1, 0), s.vertex(x1, H, z0, 1, 1), s.vertex(x1, H, z1, 0, 1)]\n      s.quad(back[0], back[1], back[2], back[3]) // vertical back face (+X)\n      var sideA = [s.vertex(x0, 0, z0, 0, 0), s.vertex(x1, H, z0, 1, 1), s.vertex(x1, 0, z0, 1, 0)]\n      s.triangle(sideA[0], sideA[1], sideA[2]) // -Z flank\n      var sideB = [s.vertex(x0, 0, z1, 0, 0), s.vertex(x1, 0, z1, 1, 0), s.vertex(x1, H, z1, 1, 1)]\n      s.triangle(sideB[0], sideB[1], sideB[2]) // +Z flank\n      desc = s.build()\n    } else {\n      // cylinder / cone: an N-gon ring of radii (L/2, W/2) about the origin, base on y=0. The barrel shares\n      // verts around the ring (so it shades ROUND, not faceted) with a duplicated seam column for the u wrap;\n      // the caps get their own verts so the rim stays a hard edge.\n      var cone = shape === 'cone'\n      var rx = L / 2, rz = W / 2\n      var sf = g.surface()\n      var ax = function (k) { return ((k % N) / N) * Math.PI * 2 }\n      var bx = function (k) { return Math.cos(ax(k)) * rx }\n      var bz = function (k) { return Math.sin(ax(k)) * rz }\n      if (cone) {\n        // flanks: one triangle per segment up to the apex. (A=ring k+1, B=ring k, C=apex) faces outward.\n        for (var k = 0; k < N; k++) {\n          var a1 = sf.vertex(bx(k + 1), 0, bz(k + 1), (k + 1) / N, 0)\n          var a0 = sf.vertex(bx(k), 0, bz(k), k / N, 0)\n          var ap = sf.vertex(0, H, 0, (k + 0.5) / N, 1)\n          sf.triangle(a1, a0, ap)\n        }\n      } else {\n        // barrel: (A=bottom k+1, B=bottom k, C=top k, D=top k+1) faces outward\n        var bot0 = [], top0 = []\n        for (var c = 0; c <= N; c++) {\n          bot0.push(sf.vertex(bx(c), 0, bz(c), c / N, 0))\n          top0.push(sf.vertex(bx(c), H, bz(c), c / N, 1))\n        }\n        for (var w = 0; w < N; w++) sf.quad(bot0[w + 1], bot0[w], top0[w], top0[w + 1])\n        // top cap (+Y): the fan runs BACKWARDS around the ring (a forward fan faces -Y)\n        var capT = []\n        for (var t = 0; t < N; t++) capT.push(sf.vertex(bx(t), H, bz(t), 0.5 + 0.5 * Math.cos(ax(t)), 0.5 + 0.5 * Math.sin(ax(t))))\n        for (var ti = 1; ti < N - 1; ti++) sf.triangle(capT[0], capT[ti + 1], capT[ti])\n      }\n      // base cap (-Y), shared by both: the forward fan, which faces down (hidden against whatever it rests on)\n      var capB = []\n      for (var b = 0; b < N; b++) capB.push(sf.vertex(bx(b), 0, bz(b), 0.5 + 0.5 * Math.cos(ax(b)), 0.5 + 0.5 * Math.sin(ax(b))))\n      for (var bi = 1; bi < N - 1; bi++) sf.triangle(capB[0], capB[bi], capB[bi + 1])\n      desc = sf.build()\n    }\n\n    var mp = { desc: desc, finish: 'mesh', colorParam: 'color' }\n    // Every shape here is convex, so ONE hull is the exact solid (the box's hull is its 8 corners). Solid is\n    // opt-out: a massing block someone only wants to LOOK at shouldn't stop the line.\n    if (p.solid !== false) mp.collision = 'hull'\n    return [mp]\n  },\n  react() {\n    // inert scenery — no tags, no motion\n  },\n})\n",
+  "geometry": {
+    "kind": "drawn",
+    "bounds": {
+      "length": 1,
+      "width": 1,
+      "top": 1
+    }
+  },
+  "category": "Structure",
+  "materials": [],
+  "sdk": {
+    "level": 16,
+    "of": "v2:8403:1rijhb08nqu"
+  }
+}

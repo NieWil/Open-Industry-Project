@@ -14,6 +14,7 @@ import type {
 } from 'three'
 import type { WebGPURenderer } from 'three/webgpu'
 import type { PartInstance } from '../../core/types'
+import type { SubPose } from '../../core/rig/rigPose'
 import type { IRenderView } from '../api'
 import type { EditorCamera } from './editorCamera'
 import type { PartVisual } from '../parts/registry'
@@ -101,7 +102,7 @@ export type PartTick = (dt: number, running: boolean) => boolean | void
 export type PartViewTick = (camera: PerspectiveCamera, firstPerson: boolean) => boolean | void
 export type PartProbeTick = (probe: (origin: Vector3, dir: Vector3, maxDist: number, linkName: string) => { distance: number; color: Color } | null) => boolean | void
 
-export type SubPoseMap = Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>
+export type SubPoseMap = Record<string, SubPose>
 
 export interface Flash {
   mesh: Mesh

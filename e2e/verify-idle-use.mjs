@@ -104,7 +104,7 @@ async function main() {
     return frames
   }, [id, axis, ms, settleMs])
 
-  const edits = () => page.evaluate(() => ({ canUndo: window.__oip.store.canUndo, doc: localStorage.getItem('oip-web/project') }))
+  const edits = () => page.evaluate(async () => ({ canUndo: window.__oip.store.canUndo, doc: (await window.__oip.savedProject()) }))
   const param = (id, key) => page.evaluate(([id, key]) => window.__oip.store.getState().scene.parts.find((p) => p.id === id)?.params[key], [id, key])
   const operated = (id) => page.evaluate((id) => window.__oip.store.getState().usedIds.includes(id), id)
   const notice = () => page.evaluate(() => !!document.querySelector('[data-testid="inspector-used"]'))
@@ -120,8 +120,8 @@ async function main() {
     await waitForApp()
     await page.waitForTimeout(800)
 
-    // ── 1. diverter: comms off, a slow 1.5 s stroke so mid-sweep frames are unambiguous ──
-    const divOk = await loadOne({ id: 'div_shot', type: 'part', packageId: 'oip.diverter', position: [0, 0.9, 0], rotationY: 0, params: { diverted: false, divertTime: 1.5, divertDistance: 0.75, enableComms: false, tag: '' } })
+    // ── 1. diverter: no tag, a slow 1.5 s stroke so mid-sweep frames are unambiguous ──
+    const divOk = await loadOne({ id: 'div_shot', type: 'part', packageId: 'oip.diverter', position: [0, 0.9, 0], rotationY: 0, params: { diverted: false, divertTime: 1.5, divertDistance: 0.75, tag: '' } })
     const divRest = await coords('div_shot', 2)
     check('diverter rig rendered at rest', divOk && divRest.length > 2, `meshes=${divRest.length}`)
     const e0 = await edits()
@@ -150,7 +150,7 @@ async function main() {
     check('sim never started', (await running()) === false)
 
     // ── 2. maintained push button: no joints - the cap is a subPose, the light a lamp ──
-    const btnOk = await loadOne({ id: 'btn_shot', type: 'part', packageId: 'oip.push-button', position: [0, 1.0, 0], rotationY: 0, params: { text: 'GO', momentary: false, normallyClosed: false, enableComms: false, tag: '', lampTag: '' } }, 2)
+    const btnOk = await loadOne({ id: 'btn_shot', type: 'part', packageId: 'oip.push-button', position: [0, 1.0, 0], rotationY: 0, params: { text: 'GO', momentary: false, normallyClosed: false, tag: '', lampTag: '' } }, 2)
     const btnRest = await coords('btn_shot', 2)
     const dropOf = (zs) => (zs.length === btnRest.length ? Math.max(...btnRest.map((z, i) => z - zs[i])) : NaN)
     await pressAndTrack('btn_shot', 2, 1500)
@@ -162,7 +162,7 @@ async function main() {
     check('...and a second C releases it', Math.abs(released) < 0.003, `drop=${released.toFixed(4)}m`)
 
     // ── 3. chain transfer (useParam: raised): up, stays up, and the Inspector's Reset drops it ──
-    const chainOk = await loadOne({ id: 'chain_shot', type: 'part', packageId: 'oip.chain-transfer', position: [0, 0.9, 0], rotationY: 0, params: { chains: 5, distance: 0.33, laneLength: 2, speed: 2, raised: false, enableComms: false, speedTag: '', popupTag: '' } })
+    const chainOk = await loadOne({ id: 'chain_shot', type: 'part', packageId: 'oip.chain-transfer', position: [0, 0.9, 0], rotationY: 0, params: { chains: 5, distance: 0.33, laneLength: 2, speed: 2, raised: false, speedTag: '', popupTag: '' } })
     const chainRest = Math.max(...(await coords('chain_shot', 1)))
     await pressAndTrack('chain_shot', 1, 1500)
     const lift = Math.max(...(await coords('chain_shot', 1))) - chainRest

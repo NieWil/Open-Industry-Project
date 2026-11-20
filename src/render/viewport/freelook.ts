@@ -1,6 +1,6 @@
 import { Vector3 } from 'three'
 import type { PerspectiveCamera } from 'three'
-import { resolveKeyAction } from '../../core/keymap'
+import { keyBelongsToControl, resolveKeyAction } from '../../core/keymap'
 import type { KeyActionId } from '../../core/keymap'
 
 const SENSITIVITY = (0.25 * Math.PI) / 180
@@ -27,14 +27,6 @@ export interface FreelookCallbacks {
   onPanStart?: () => void
   /** the wheel changed the fly speed (m/s, before any boost), so the view can show it */
   onSpeedChange?: (speed: number) => void
-}
-
-/** a focused text field that should keep its own Shift+F (don't intercept it for fly) */
-function isEditableTarget(t: EventTarget | null): boolean {
-  return (
-    t instanceof HTMLElement &&
-    (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
-  )
 }
 
 /**
@@ -298,11 +290,13 @@ export class Freelook {
     // Shift+F freelook toggle. Handled before the active guard so it can also
     // start a flight, and in the capture phase with stopPropagation so the editor's
     // plain-F "focus selection" shortcut never fires for the same press. e.repeat
-    // guards against an auto-repeat flicker; a focused text field keeps its Shift+F.
+    // guards against an auto-repeat flicker; a focused text field keeps its Shift+F, by the
+    // rule every editor shortcut asks (keyBelongsToControl), so a checkbox a click left
+    // focused does not swallow it.
     // The toggle is in the editor keymap (it's pressed from the editor); only the
     // movement below is 'fly' mode.
     if (!e.repeat && resolveKeyAction(e, 'editor') === 'camera.freelook') {
-      if (!this.isActive && isEditableTarget(e.target)) return
+      if (!this.isActive && e.target instanceof HTMLElement && keyBelongsToControl(e, e.target)) return
       this.toggle()
       e.preventDefault()
       e.stopPropagation()

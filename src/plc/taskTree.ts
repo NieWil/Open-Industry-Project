@@ -12,6 +12,7 @@
 
 import type { Controller } from '../core/controller'
 import { identKey } from './program'
+import { plcOfTask } from './controller'
 
 export interface TaskTreeProgram {
   /** its row in `controller.programs`, which is what every edit takes */
@@ -33,8 +34,21 @@ export interface TaskTreeTask {
   programs: TaskTreeProgram[]
 }
 
+/** One controller's share of the tree: the tasks it owns, and the instances on no task it runs. */
+export interface TaskTreeGroup {
+  /** the controller's name; null for the default one */
+  plc: string | null
+  tasks: TaskTreeTask[]
+  continuous: TaskTreeProgram[]
+}
+
 export interface TaskTree {
   tasks: TaskTreeTask[]
+  /**
+   * The tasks and the instances on no task by controller (ControllerTask.plc), the default one first, then each
+   * controller in `plcs` order and any other a task names. One group when every task is the default controller's.
+   */
+  groups: TaskTreeGroup[]
   /** instances bound to no task: they run once every physics step, after the periodic tasks */
   continuous: TaskTreeProgram[]
   /** instances bound to a task the table does not have. The compile refuses that (it is in Problems), so they are
@@ -51,7 +65,7 @@ export interface TaskTree {
  * panel's own block split), and `topLevelStatements` whether the code outside every PROGRAM has statements
  * (`topLevelStatements`): without any, that code is only the controller's tags, which nothing needs to run.
  */
-export function taskTree(types: readonly string[], controller: Controller, topLevelStatements: boolean): TaskTree {
+export function taskTree(types: readonly string[], controller: Controller, topLevelStatements: boolean, plcs?: { defaultName: string; named: readonly string[] }): TaskTree {
   const has = new Set(types.map(identKey))
   const rows: TaskTreeProgram[] = controller.programs.map((p, index) => ({
     index,
@@ -62,15 +76,34 @@ export function taskTree(types: readonly string[], controller: Controller, topLe
   const taskOf = (r: TaskTreeProgram): string | undefined => controller.programs[r.index]!.task
   const known = new Set(controller.tasks.map((t) => identKey(t.name)))
   const running = new Set(controller.programs.flatMap((p) => (p.type === undefined ? [] : [identKey(p.type)])))
+  const tasks = controller.tasks.map((t, index) => ({
+    index,
+    name: t.name,
+    intervalMs: t.intervalMs,
+    priority: t.priority,
+    programs: rows.filter((r) => identKey(taskOf(r) ?? '') === identKey(t.name)),
+  }))
+  const continuous = rows.filter((r) => taskOf(r) === undefined)
+  // a controller named the default one's is the default one
+  const keyOf = (plc: string | undefined): string | null => (plc === undefined || (plcs && identKey(plc) === identKey(plcs.defaultName)) ? null : plc)
+  const names: string[] = []
+  for (const n of [...(plcs?.named ?? []), ...controller.tasks.map((t) => plcOfTask(controller, t)), ...controller.programs.map((p) => p.plc)]) {
+    const k = keyOf(n)
+    if (k !== null && !names.some((m) => identKey(m) === identKey(k))) names.push(k)
+  }
+  const inGroup = (plc: string | null) => (n: string | undefined): boolean => {
+    const k = keyOf(n)
+    return plc === null ? k === null : k !== null && identKey(k) === identKey(plc)
+  }
+  const groups: TaskTreeGroup[] = [null, ...names].map((plc) => ({
+    plc,
+    tasks: tasks.filter((t) => inGroup(plc)(plcOfTask(controller, controller.tasks[t.index]!))),
+    continuous: continuous.filter((r) => inGroup(plc)(controller.programs[r.index]!.plc)),
+  }))
   return {
-    tasks: controller.tasks.map((t, index) => ({
-      index,
-      name: t.name,
-      intervalMs: t.intervalMs,
-      priority: t.priority,
-      programs: rows.filter((r) => identKey(taskOf(r) ?? '') === identKey(t.name)),
-    })),
-    continuous: rows.filter((r) => taskOf(r) === undefined),
+    tasks,
+    groups,
+    continuous,
     lost: rows.filter((r) => {
       const task = taskOf(r)
       return task !== undefined && !known.has(identKey(task))

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
-import type { Notice } from '../store'
+import type { Notice } from '../store/store'
 import { CloseIcon } from './toolbarIcons'
+import { ToastCopyButton } from './ToastCopy'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('notice', {
@@ -62,6 +63,7 @@ export function NoticeToast({
             </button>
           )}
         </div>
+        <ToastCopyButton text={`${notice.title}\n${notice.message}`} />
         <button className="part-build-toast-close" title={t(M.dismiss)} onClick={onDismiss}>
           <CloseIcon />
         </button>

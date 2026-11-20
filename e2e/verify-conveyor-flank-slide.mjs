@@ -1,4 +1,4 @@
-// Verify the live conveyor snap while a spur is dragged along a roller's flank (src/core/snapFeatures.ts
+// Verify the live conveyor snap while a spur is dragged along a roller's flank (src/core/snap/snapConveyor.ts
 // snapConveyor, src/editor/controller/liveSnap.ts): real pointer drags on the move gizmo, the controller's held
 // candidate sampled at every step.
 //

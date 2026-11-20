@@ -1,17 +1,18 @@
-// Help > Agent Connections... opens and shuts the agent door, and the choice is remembered - in the real
-// desktop shell (apps/desktop/main.cjs manageAgentDoor, agentDoorSetting.cjs).
+// Settings > Agent connections opens and shuts the agent door, and the choice is remembered - in the real desktop
+// shell (apps/desktop/main.cjs setAgentDoor, agentDoorSetting.cjs).
 //
 // The door lets any program on this machine drive the editor, so an installed app starts with it shut and the
 // user opens it on purpose. The launch rule is pinned by `node apps/desktop/agentDoorSetting.test.cjs`; this
 // drives the flow a person uses, end to end:
 //   1. launched with OIP_MCP_PORT, the door is open (how every gate that needs it gets it);
-//   2. the dialog's Turn Off really shuts the port, and remembers "off";
-//   3. the menu item, clicked as Electron does, asks first (and Cancel opens nothing), then Allow opens the port
-//      again, Copy URL puts the URL on the clipboard, and "on" is remembered.
+//   2. turning it off really shuts the port without a question, and remembers "off";
+//   3. Help > Agent Connections..., clicked as Electron does, opens Settings at the Agent connections section; its
+//      switch asks first (and Cancel opens nothing), then Allow opens the port again, the section shows the URL,
+//      Copy puts it on the clipboard, and "on" is remembered.
 // The native dialogs are stubbed in main with scripted answers; the questions asked are recorded and checked.
 //
 //   node e2e/verify-agent-door-electron.mjs
-/* global process, console, window */
+/* global process, console, window, document */
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -103,16 +104,15 @@ try {
   }
   expect(up, `the door answers on :${port}`)
 
-  console.log('--- 2. Turn Off shuts it, and remembers ---')
-  await script([1]) // the open-door dialog: Copy URL | Turn Off | Close
-  const off = await page.evaluate(() => window.oipAgent.manageDoor())
-  const q2 = await asked()
-  expect(q2.length === 1 && /can connect to this app/.test(q2[0].message), `one dialog, the open-door one ("${q2[0]?.message}")`)
+  console.log('--- 2. turning it off shuts it without asking, and remembers ---')
+  await script([])
+  const off = await page.evaluate(() => window.oipAgent.setDoor(false))
+  expect((await asked()).length === 0, 'turning it off asks nothing')
   expect(off.enabled === false, 'it reports the door shut')
   expect(!(await doorAnswers(port)), 'nothing answers on the port any more')
   expect(remembered() === false, 'and "off" is remembered')
 
-  console.log('--- 3. the menu item asks first; Cancel opens nothing ---')
+  console.log('--- 3. the menu item opens Settings at Agent connections ---')
   const clickMenu = () =>
     app.evaluate(({ Menu, BrowserWindow }) => {
       const item = Menu.getApplicationMenu()?.getMenuItemById('help.agentConnections')
@@ -121,27 +121,49 @@ try {
       item.click({}, w, w.webContents)
       return true
     })
-  await script([1]) // the question: Allow | Cancel
   expect(await clickMenu(), 'Help > Agent Connections... is in the menu')
-  await page.waitForTimeout(1000)
+  const section = page.locator('[data-testid="settings-agent-connections"]')
+  await section.waitFor({ timeout: 10000 })
+  const view = await section.evaluate((el) => {
+    const r = el.getBoundingClientRect()
+    let scrolled = 0
+    for (let p = el.parentElement; p; p = p.parentElement) scrolled += p.scrollTop
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), viewport: window.innerHeight, scrolled }
+  })
+  expect(view.top >= 0 && view.top < view.viewport, `the section is in view (${JSON.stringify(view)})`)
+  const toggle = page.locator('[data-testid="setting-agent-door"]')
+  expect(!(await toggle.isChecked()), 'the switch shows the door shut')
+
+  console.log('--- ...its switch asks first; Cancel opens nothing ---')
+  await script([1]) // the question: Allow | Cancel
+  await toggle.click()
+  await page.waitForFunction(() => !document.querySelector('[data-testid="setting-agent-door"]')?.disabled)
   const q3 = await asked()
   expect(q3.length === 1 && /Allow AI agents to connect/.test(q3[0].message), `it asks before opening ("${q3[0]?.message}")`)
+  expect(!(await toggle.isChecked()), 'Cancel leaves the switch off')
   expect(!(await doorAnswers(port)), 'Cancel leaves the door shut')
 
-  console.log('--- ...and Allow opens it, Copy URL copies it, "on" is remembered ---')
-  await app.evaluate(({ clipboard }) => clipboard.writeText(''))
-  await script([0, 0]) // Allow, then Copy URL
-  await clickMenu()
+  console.log('--- ...Allow opens it, the URL shows, Copy copies it, "on" is remembered ---')
+  await script([0]) // Allow
+  await toggle.click()
+  await page.locator('[data-testid="setting-agent-url"]').waitFor({ timeout: 10000 })
   let open = false
   for (let i = 0; i < 20 && !open; i++) {
-    await page.waitForTimeout(250)
     open = await doorAnswers(port)
+    if (!open) await page.waitForTimeout(250)
   }
-  const q4 = await asked()
-  expect(q4.map((q) => q.message).join(' | ').includes('can connect to this app'), 'after Allow it shows the URL dialog')
   expect(open, 'the door answers again')
-  const copied = await app.evaluate(({ clipboard }) => clipboard.readText())
-  expect(copied === `http://127.0.0.1:${port}/mcp`, `Copy URL put the door's URL on the clipboard (${copied})`)
+  expect(await toggle.isChecked(), 'the switch shows the door open')
+  const shown = await page.locator('[data-testid="setting-agent-url"]').textContent()
+  expect(shown === `http://127.0.0.1:${port}/mcp`, `the section shows the door's URL (${shown})`)
+  await app.evaluate(({ clipboard }) => clipboard.writeText(''))
+  await page.locator('[data-testid="setting-agent-copy-url"]').click()
+  let copied = ''
+  for (let i = 0; i < 20 && !copied; i++) {
+    copied = await app.evaluate(({ clipboard }) => clipboard.readText())
+    if (!copied) await page.waitForTimeout(100)
+  }
+  expect(copied === `http://127.0.0.1:${port}/mcp`, `Copy put the door's URL on the clipboard (${copied})`)
   expect(remembered() === true, 'and "on" is remembered')
 } catch (e) {
   failures++

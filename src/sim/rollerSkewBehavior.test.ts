@@ -61,8 +61,8 @@ describe('Roller Conveyor behavior - skew angles the surface velocity', () => {
   })
 
   it('a run-gate of 0 (skew present) still stops the bed - skew never leaks a residual velocity', () => {
-    // comms on + a driven false runTag ⇒ commanded gated to 0; with skew set, s/cos of 0 is still 0
-    const h = create(BEHAVIOR, JSON.stringify({ ...INSTANT, speed: 2, skew: 30, enableComms: true, runTag: 'run' }))
+    // a driven false runTag ⇒ commanded gated to 0; with skew set, s/cos of 0 is still 0
+    const h = create(BEHAVIOR, JSON.stringify({ ...INSTANT, speed: 2, skew: 30, runTag: 'run' }))
     const withRunFalse = JSON.stringify({ simTime: 0, position: [0, 0, 0], forward: [1, 0, 0], tags: { run: false }, driven: { run: true } })
     expect(svOf(step(h, withRunFalse, dt))).toEqual([0, 0, 0])
     destroy(h)
@@ -71,7 +71,7 @@ describe('Roller Conveyor behavior - skew angles the surface velocity', () => {
   it('an undriven runTag does not gate - the authored speed still drives the skewed bed', () => {
     // output ownership: with no controller driving 'run', typing the tag name must not dead-stop the bed
     // (a gate keyed off the tag name would make the Inspector speed silently do nothing)
-    const h = create(BEHAVIOR, JSON.stringify({ ...INSTANT, speed: 2, skew: 30, enableComms: true, runTag: 'run' }))
+    const h = create(BEHAVIOR, JSON.stringify({ ...INSTANT, speed: 2, skew: 30, runTag: 'run' }))
     const undriven = JSON.stringify({ simTime: 0, position: [0, 0, 0], forward: [1, 0, 0], tags: { run: false } })
     const sv = svOf(step(h, undriven, dt))
     expect(Math.hypot(sv[0], sv[2])).toBeCloseTo(2 / Math.cos((30 * Math.PI) / 180), 6)

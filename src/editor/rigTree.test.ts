@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AUTHORABLE_SHAPE_KINDS, canDeleteRigNode, convertShape, defaultShape, isAuthorableShapeKind, flattenRigForest, rigSubtree } from './rigTree'
 import type { RigGeometry } from './rigTree'
-import type { RigLink, RigShape } from '../core/partPackage'
+import type { RigLink, RigShape } from '../core/parts/partPackage'
 
 // flattenRigForest pre-orders a rig's link/joint forest into the flat row list the
 // scene tree renders through the unified TreeRow. Pre-order + correct per-row depth is what makes the flat

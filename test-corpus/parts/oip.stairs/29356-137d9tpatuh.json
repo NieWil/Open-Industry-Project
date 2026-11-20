@@ -1,0 +1,1432 @@
+{
+  "format": 6,
+  "id": "oip.stairs",
+  "name": "Stairs",
+  "params": {
+    "numSteps": {
+      "type": "number",
+      "default": 11,
+      "min": 2,
+      "max": 40,
+      "step": 1,
+      "label": "Steps",
+      "desc": "Number of steps in the flight, which is what sets both its rise and its run: the slope is fixed at the standard 0.178 m rise over a 0.28 m tread, so a flight grows along the diagonal rather than getting steeper. Count the steps you need to reach the deck."
+    },
+    "width": {
+      "type": "number",
+      "default": 1.2,
+      "min": 0.4,
+      "max": 4,
+      "step": 0.05,
+      "label": "Width (m)",
+      "desc": "Tread width across local Z."
+    },
+    "showHandrails": {
+      "type": "boolean",
+      "default": true,
+      "label": "Handrails",
+      "desc": "Handrails up both sides of the flight."
+    },
+    "color": {
+      "type": "color",
+      "default": "#f2bd0f",
+      "label": "Steel color",
+      "desc": "Steel tint of the stringers and rails."
+    }
+  },
+  "behavior": "// Stairs — an industrial access flight. Demonstrates array links + parametric geometry + a\n// constant-slope rotation: 'numSteps' closed-riser steps rise up-and-forward by a constant rise/run (a\n// diagonal array `step`), carried by two sloped side stringers, with a full stair rail — sloped top, hand & mid rails,\n// a bottom newel and posts about every metre and a half — that showHandrails toggles off. Invisible guard colliders line\n// both open sides (slope + landing) so a walker can't step off. Two-tone: tread-plate treads/risers you\n// walk on (the treads collide), steel structure tinted by `color`. Purely structural — the params reshape the\n// rig, the step does nothing.\n//\n// geometry() details it as the steel stair it is (tread-plate treads, closed risers): a steel nosing angle\n// along every tread's front edge, whatever the handrail setting; and, with the handrails, the intermediate posts\n// (below), two bolt heads on each stringer where every tread is clipped to it, and each post bolted through\n// the stringer. Nothing on the top landing: a deck connection drops the landing (dropWhenMounted), which geometry()\n// can't see, so hardware there would float. Everything rides the 'railFrame' link, so a snapped stair's\n// lift carries it with the flight. No floor anchors: the foot links stretch down to the floor under that lift\n// (anchor: 'floor'), which geometry() can't see, so a plate at the foot would float. Render-only.\n//\n// The flight, as the rig lays it out:\n//   - standard 0.178 rise / 0.28 tread → the run/rise follow a `numSteps` count (array `step` is a constant\n//     diagonal) rather than independent length/height params. The slope is therefore a fixed angle\n//     atan2(rise, run), so the stringers + rails are a static-quat rotation whose length (and centre) track\n//     numSteps linearly - the one shape a param-driven angle couldn't express.\n//   - two-tone: treads/risers/landing are steel tread plate (finish:'tread' → the rig DeckSurface),\n//     the steel structure (stringers/posts/rails/newel) tints with `color`.\n//   - top landing: a fixed-depth flat plate + its flat handrail continuation, for a freestanding flight. Snapped\n//     to a platform, the flight's TOP meets the deck edge and the deck is the landing: every landing link is\n//     `dropWhenMounted`, the deck connection lifts the flight flush, and the sloped rails end on the posts the\n//     platform frames its railing gap with.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// derived constants at 8 decimals (near-zero to 0), so the manifest's numbers and refs stay exact\n\n// ---- from examples/parts/_shared/hardware.js ----\n// SEAT: how far a piece sinks into the face it stands on. VERT_CAP: stop adding to one submesh well short of\n// the host's per-mesh vertex budget.\nvar SEAT = 0.0005, VERT_CAP = 150000\n// one submesh under construction, counting its vertices against VERT_CAP\nfunction mesh(g) { return { sb: g.surface(), n: 0, full: false } }\nfunction room(m, k) {\n  if (m.full || m.n + k > VERT_CAP) { m.full = true; return false }\n  m.n += k\n  return true\n}\n// an oriented box: centre c, half-extent axes e[0..2] (right-handed: e0 x e1 = e2), each face its own four\n// vertices wound CCW from outside\nfunction obox(m, c, e) {\n  if (!room(m, 24)) return\n  var sb = m.sb\n  var pt = function (s0, s1, s2) {\n    return sb.vertex(c[0] + s0 * e[0][0] + s1 * e[1][0] + s2 * e[2][0], c[1] + s0 * e[0][1] + s1 * e[1][1] + s2 * e[2][1], c[2] + s0 * e[0][2] + s1 * e[1][2] + s2 * e[2][2])\n  }\n  // the face normal to axis n (sign sg): its other two axes a, b with a x b = +n, walked CCW seen from outside\n  var face = function (n, sg) {\n    var a = (n + 1) % 3, b = (n + 2) % 3\n    var q = [[-1, -1], [1, -1], [1, 1], [-1, 1]]\n    var idx = []\n    for (var k = 0; k < 4; k++) {\n      var sv = [0, 0, 0]\n      sv[n] = sg\n      sv[a] = q[k][0] * sg // flipping one in-plane axis reverses the winding for the negative face\n      sv[b] = q[k][1]\n      idx.push(pt(sv[0], sv[1], sv[2]))\n    }\n    sb.quad(idx[0], idx[1], idx[2], idx[3])\n  }\n  for (var n = 0; n < 3; n++) { face(n, 1); face(n, -1) }\n}\n// an axis-aligned box from its min and max corners\nfunction abox(m, x0, y0, z0, x1, y1, z1) {\n  obox(m, [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2], [[(x1 - x0) / 2, 0, 0], [0, (y1 - y0) / 2, 0], [0, 0, (z1 - z0) / 2]])\n}\n// the in-plane axes (u, v) of a face normal to axis ax, with u x v = +ax\nvar PLANE = [[1, 2], [2, 0], [0, 1]]\n// a hex prism (bolt head, nut, thread end) standing on a face: base centre p, rising h along axis ax in\n// direction s (+1/-1), af across flats. The base sits on the face and is never seen, so it isn't emitted.\nfunction hex(m, p, ax, s, af, h) {\n  if (!room(m, 31)) return\n  var sb = m.sb, u = PLANE[ax][0], v = PLANE[ax][1], r = af / Math.sqrt(3)\n  var ring = function (t) {\n    var out = []\n    for (var k = 0; k < 6; k++) {\n      var a = (k * Math.PI) / 3, q = [p[0], p[1], p[2]]\n      q[u] += r * Math.cos(a)\n      q[v] += r * Math.sin(a)\n      q[ax] += s * t\n      out.push(q)\n    }\n    return out\n  }\n  var lo = ring(-SEAT), hi = ring(h)\n  var V = function (q) { return sb.vertex(q[0], q[1], q[2]) }\n  for (var k = 0; k < 6; k++) {\n    var k1 = (k + 1) % 6\n    var b0 = V(lo[k]), b1 = V(lo[k1]), f1 = V(hi[k1]), f0 = V(hi[k])\n    // CCW about +ax, so tangent x (+ax) points outward; a prism rising along -ax walks the other way\n    if (s > 0) sb.quad(b0, b1, f1, f0)\n    else sb.quad(b1, b0, f0, f1)\n  }\n  var cc = [p[0], p[1], p[2]]\n  cc[ax] += s * h\n  var c = V(cc), cap = []\n  for (var k2 = 0; k2 < 6; k2++) cap.push(V(hi[k2]))\n  for (var k3 = 0; k3 < 6; k3++) {\n    if (s > 0) sb.triangle(c, cap[k3], cap[(k3 + 1) % 6])\n    else sb.triangle(c, cap[(k3 + 1) % 6], cap[k3])\n  }\n}\n// the realized submeshes: push each non-empty accumulator as a MeshPart\nfunction emitMeshes(list) {\n  var out = []\n  for (var i = 0; i < list.length; i++) {\n    var e = list[i]\n    if (!e.mesh) continue\n    var desc = e.mesh.sb.build()\n    if (!desc.positions.length) continue\n    var part = { desc: desc, material: e.material }\n    if (e.colorParam) part.colorParam = e.colorParam\n    if (e.link) part.link = e.link\n    out.push(part)\n  }\n  return out\n}\n\nfunction r8(n) { return Math.abs(n) < 1e-9 ? 0 : +n.toFixed(8) }\n\nvar RISE = 0.178 // standard rise (m) - 7 in, the building-code maximum (STAIRS_STANDARD_RISE)\nvar TREAD = 0.28 // standard tread run (m) - 11 in, the building-code minimum (STAIRS_STANDARD_TREAD)\nvar NOSING = 0.025 // tread nose overhang DOWN-flight past the riser below\nvar WIDTH0 = 1.2 // default width (static fallback for a sparse instance)\nvar DEFAULT_STEPS = 11\n\nvar ANG = Math.atan2(RISE, TREAD) // slope angle above horizontal\nvar COS = Math.cos(ANG)\n\nvar STRINGER_W = 0.012 // side skirt beam thickness (local Z)\nvar POST = 0.04 // handrail post cross-section\nvar NEWEL = r8(POST * 1.2) // thicker bottom newel post; the handrail's bottom bend ends on its inner face\n// the handrail you grip: round tube (1-1/2 in, 38 mm outside: inside the 1.25-2 in a graspable round rail runs, and\n// narrower than the 40 mm post its ends weld to), on brackets INSIDE the post line so a sliding hand clears every\n// post by OSHA 1910.29(f)'s 2.25 in. Square bar on the post line (as the other rails are) is neither graspable nor\n// clear: a hand running up it met each post.\nvar HR_R = 0.019 // handrail tube radius\nvar HR_CLEAR = 0.06 // clear gap, post inner face -> handrail surface\nvar BEND_R = 0.05 // centreline radius of the handrail's two bends (newel end, top end)\nvar HRAIL_H = 1.07 // top rail height above the tread nosing line: 42 in, OSHA 1910.29(f)'s stair rail minimum\nvar HAND_H = 0.91 // handrail TOP above the nosing line: 36 in, inside OSHA 1910.29(f)'s 30-38 in band\n// the POST LINE: posts, newels and the top and mid rails stand ON the tread edge. A platform frames the railing gap it\n// opens for a flight at the flight's width, so its gap posts stand there too, and the flight's rails run square into\n// them; on the stringer line, 6 mm out, each top rail sat off-centre on its gap post, proud of the post's outer face.\nvar POST_Z = 0\n// the handrail centre's offset from the tread edge (±width/2 + this; negative = inward): a post half-width, the\n// clearance and the pipe radius inside the post line\nvar HR_Z = r8(POST_Z - POST / 2 - HR_CLEAR - HR_R)\n\n// ---- handrail posts (steel) - intermediate posts between the newel and the landing post, both sides --------\n// Industrial stair rail carries a post every metre or so, not one per tread (a post per step read as a baby\n// gate). The spacing isn't a linear function of numSteps, so no array link can place them: geometry() does, on\n// the tread nearest each even division of the run. Standing on the tread's surface at\n// mid-tread, topping out on the sloped rail line. The RAIL LINE runs through the tread NOSING corners + HRAIL_H\n// - the line through ((i+1)·TREAD, (i+1)·RISE + h), which passes through the landing start (numSteps·TREAD,\n// numSteps·RISE + h) EXACTLY, so the sloped rail SHARES its top endpoint with the flat landing rail. A post at\n// mid-tread meets that line at (i+1)·RISE + h − RISE/2, so the posts are HRAIL_H − RISE/2 tall.\nvar POST_H = r8(HRAIL_H - RISE / 2) // post height: tread top → the nosing-line rail\nvar POST_MAX_RUN = 1.4 // max horizontal run between posts (newel → posts → landing post)\n\n// ---- handrail (steel tube) - drawn by geometry(), with the posts and brackets it hangs from --------------------\n// ONE swept tube per side: out of the newel's inner face, bent up the flight, along the nosing line + HAND_H (its\n// TOP at 36 in), bent again and back into the top post's inner face. Bends, not two straight pieces meeting: the\n// sloped run's end face stood proud of a separate return. The top post is the platform's gap post when the flight\n// is mounted and the landing's own first post when it is not; both stand just down-flight of the flight top\n// (their deck-side face on it), so one top bend fits both.\n// tube centre above the nosing line: a round tube on a slope stands HR_R / cos(slope) above its centreline\n// (measured plumb, as a handrail's height is), so its top lands on HAND_H exactly. The tube's centre is HR_Y above\n// the nosing line and HR_Z off the tread edge (inside the posts).\nvar HR_Y = r8(HAND_H - HR_R / COS)\n\n// NOSE_*: the nosing angle's top leg (run back over the tread), front leg (down the tread's front edge),\n// thickness, and how far it stands proud of the tread. BOLT_AF: a hex's across-flats.\nvar NOSE_TOP = 0.045, NOSE_FRONT = 0.035, NOSE_T = 0.003, NOSE_PROUD = 0.0015, BOLT_AF = 0.016\n\n// a quarter bend of radius r at corner C, arriving along unit a and leaving along unit b (a perpendicular to b):\n// the points from C - r·a round to C + r·b, appended to pts\nfunction bend(pts, C, a, b, r, segs) {\n  var O = [C[0] - r * a[0] + r * b[0], C[1] - r * a[1] + r * b[1], C[2] - r * a[2] + r * b[2]]\n  for (var k = 0; k <= segs; k++) {\n    var t = (k / segs) * Math.PI / 2, co = Math.cos(t), si = Math.sin(t)\n    pts.push([O[0] - r * co * b[0] + r * si * a[0], O[1] - r * co * b[1] + r * si * a[1], O[2] - r * co * b[2] + r * si * a[2]])\n  }\n}\n// both handrails, one swept tube each: newel inner face -> bend -> up the nosing line -> bend -> top post inner face\nfunction handrails(g, n, width) {\n  var L = Math.sqrt(TREAD * TREAD + RISE * RISE), d = [TREAD / L, RISE / L, 0]\n  var ring = []\n  // counter-clockwise in g.sweep's [up, width] section coordinates, so the faces point OUT (clockwise turned the\n  // tube inside out: its far wall's inside passed for a tube until the angle showed the open shell)\n  for (var k = 0; k < 16; k++) { var t = (k / 16) * Math.PI * 2; ring.push([HR_R * Math.cos(t), HR_R * Math.sin(t)]) }\n  var tubes = []\n  for (var s = -1; s <= 1; s += 2) {\n    var zh = s * (width / 2 + HR_Z)\n    var xTop = n * TREAD - POST / 2 // the top post's centre: its deck-side face is the flight top\n    var pts = [[0, HR_Y, s * (width / 2 + POST_Z - NEWEL / 2)]]\n    bend(pts, [0, HR_Y, zh], [0, 0, -s], d, BEND_R, 6)\n    bend(pts, [xTop, (xTop * RISE) / TREAD + HR_Y, zh], d, [0, 0, s], BEND_R, 6)\n    pts.push([xTop, (xTop * RISE) / TREAD + HR_Y, s * (width / 2 + POST_Z - POST / 2)])\n    tubes.push(g.sweep(ring, pts, { caps: true }))\n  }\n  return g.merge(tubes[0], tubes[1])\n}\ndefinePart({\n  params: {\n    numSteps: { type: 'number', default: DEFAULT_STEPS, min: 2, max: 40, step: 1, label: 'Steps', desc: 'Number of steps in the flight, which is what sets both its rise and its run: the slope is fixed at the standard 0.178 m rise over a 0.28 m tread, so a flight grows along the diagonal rather than getting steeper. Count the steps you need to reach the deck.' },\n    width: { type: 'number', default: WIDTH0, min: 0.4, max: 4, step: 0.05, label: 'Width (m)', desc: 'Tread width across local Z.' },\n    showHandrails: { type: 'boolean', default: true, label: 'Handrails', desc: 'Handrails up both sides of the flight.' },\n    color: { type: 'color', default: '#f2bd0f', label: 'Steel color', desc: 'Steel tint of the stringers and rails.' },\n  },\n  geometry(g, p) {\n    var n = typeof p.numSteps === 'number' && p.numSteps >= 2 ? Math.round(p.numSteps) : DEFAULT_STEPS\n    var width = typeof p.width === 'number' && p.width > 0 ? p.width : WIDTH0\n    var rails = p.showHandrails !== false\n    var steel = mesh(g), hw = mesh(g)\n    var i, s\n\n    // nosing: an angle over each tread's front edge, its ends run a hair into the stringers\n    var zw = width / 2 + 0.001\n    for (i = 0; i < n; i++) {\n      var front = i * TREAD - NOSING, top = (i + 1) * RISE\n      abox(steel, front - NOSE_T, top - NOSE_T, -zw, front + NOSE_TOP, top + NOSE_PROUD, zw)\n      abox(steel, front - NOSE_T, top - NOSE_FRONT, -zw, front + SEAT, top - NOSE_T + SEAT, zw)\n    }\n    if (rails) {\n      // stringer bolts: two heads on each stringer's outer face per tread, just under the tread's level\n      var zOut = width / 2 + STRINGER_W\n      for (i = 0; i < n; i++) {\n        for (s = -1; s <= 1; s += 2) {\n          hex(hw, [i * TREAD + TREAD * 0.3, (i + 1) * RISE - 0.03, s * zOut], 2, s, BOLT_AF, BOLT_AF * 0.35)\n          hex(hw, [i * TREAD + TREAD * 0.7, (i + 1) * RISE - 0.03, s * zOut], 2, s, BOLT_AF, BOLT_AF * 0.35)\n        }\n      }\n      // The intermediate handrail posts: a rig array can only place one per tread, and industrial stair rail has\n      // one every metre or so. Evenly divide the run from the newel (x = 0) to the landing post (x = numSteps x\n      // tread) into spans no longer than POST_MAX_RUN and stand a post on the tread nearest each division, bolted\n      // through the stringer twice.\n      var spans = Math.max(1, Math.ceil((n * TREAD) / POST_MAX_RUN))\n      var last = -1\n      for (var j = 1; j < spans; j++) {\n        i = Math.min(n - 2, Math.max(1, Math.round((j * n) / spans - 0.5))) // tread index, never beside an end post\n        if (i === last) continue\n        last = i\n        var px = (i + 0.5) * TREAD, py = (i + 1) * RISE\n        for (s = -1; s <= 1; s += 2) {\n          var pz = s * (width / 2 + POST_Z)\n          abox(steel, px - POST / 2, py, pz - POST / 2, px + POST / 2, py + POST_H, pz + POST / 2)\n          // handrail bracket: an arm from the post's inner face under the pipe, its top just into the pipe\n          var hy = (px * RISE) / TREAD + HR_Y, hz = s * (width / 2 + HR_Z), fz = s * (width / 2 + POST_Z - POST / 2)\n          abox(steel, px - 0.012, hy - HR_R - 0.025, Math.min(hz, fz), px + 0.012, hy - HR_R + 0.006, Math.max(hz, fz))\n          hex(hw, [px, py + 0.05, s * zOut], 2, s, BOLT_AF, BOLT_AF * 0.35)\n          hex(hw, [px, py + 0.12, s * zOut], 2, s, BOLT_AF, BOLT_AF * 0.35)\n        }\n      }\n    }\n    var out = emitMeshes([\n      { mesh: steel, material: 'stairSteel', colorParam: 'color', link: 'railFrame' },\n      { mesh: hw, material: 'stairHardware', link: 'railFrame' },\n    ])\n    if (rails) out.splice(1, 0, { desc: handrails(g, n, width), material: 'stairSteel', colorParam: 'color', link: 'railFrame' })\n    return out\n  },\n  react() {},\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "tread",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.305,
+            0.005,
+            1.2
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.1275,
+          0.1755,
+          0
+        ],
+        "array": {
+          "count": "numSteps",
+          "step": [
+            0.28,
+            0.178,
+            0
+          ]
+        },
+        "finish": "tread",
+        "notchable": true
+      },
+      {
+        "name": "riser",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.03,
+            0.178,
+            1.2
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.015,
+          0.089,
+          0
+        ],
+        "array": {
+          "count": "numSteps",
+          "step": [
+            0.28,
+            0.178,
+            0
+          ]
+        },
+        "finish": "tread",
+        "notchable": true,
+        "anchor": "floor",
+        "collision": "none"
+      },
+      {
+        "name": "stringerL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            3.49075142,
+            0.25,
+            0.012
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "numSteps",
+              "scale": 0.33178909,
+              "add": -0.15892857
+            }
+          ]
+        },
+        "offset": [
+          1.54,
+          1.07712013,
+          -0.606
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.14
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.089,
+            "add": 0.09812013
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.006
+          }
+        ],
+        "quat": [
+          0,
+          0,
+          0.2793657,
+          0.96018478
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "stringerR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            3.49075142,
+            0.25,
+            0.012
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "numSteps",
+              "scale": 0.33178909,
+              "add": -0.15892857
+            }
+          ]
+        },
+        "offset": [
+          1.54,
+          1.07712013,
+          0.606
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.14
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.089,
+            "add": 0.09812013
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.006
+          }
+        ],
+        "quat": [
+          0,
+          0,
+          0.2793657,
+          0.96018478
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "stringerFootL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.13412135,
+            0.24624026,
+            0.01
+          ]
+        },
+        "offset": [
+          0.06706068,
+          0.12312013,
+          -0.606
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.006
+          }
+        ],
+        "anchor": "floor",
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "stringerFootR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.13412135,
+            0.24624026,
+            0.01
+          ]
+        },
+        "offset": [
+          0.06706068,
+          0.12312013,
+          0.606
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.006
+          }
+        ],
+        "anchor": "floor",
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "stringerHeadL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.13412135,
+            0.2109774,
+            0.01
+          ]
+        },
+        "offset": [
+          3.01293932,
+          2.0134887,
+          -0.606
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": -0.06706068
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.0554887
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.006
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "stringerHeadR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.13412135,
+            0.2109774,
+            0.01
+          ]
+        },
+        "offset": [
+          3.01293932,
+          2.0134887,
+          0.606
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": -0.06706068
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.0554887
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.006
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "railFrame",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "railTopL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            3.6383236,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "numSteps",
+              "scale": 0.33178909,
+              "add": -0.01135639
+            }
+          ]
+        },
+        "offset": [
+          1.53520812,
+          2.04595373,
+          -0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.14,
+            "add": -0.00479188
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.089,
+            "add": 1.06695373
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "quat": [
+          0,
+          0,
+          0.2793657,
+          0.96018478
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "railTopR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            3.6383236,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "numSteps",
+              "scale": 0.33178909,
+              "add": -0.01135639
+            }
+          ]
+        },
+        "offset": [
+          1.53520812,
+          2.04595373,
+          0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.14,
+            "add": -0.00479188
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.089,
+            "add": 1.06695373
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "quat": [
+          0,
+          0,
+          0.2793657,
+          0.96018478
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "railMidL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            3.6383236,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "numSteps",
+              "scale": 0.33178909,
+              "add": -0.01135639
+            }
+          ]
+        },
+        "offset": [
+          1.53520812,
+          1.51595373,
+          -0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.14,
+            "add": -0.00479188
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.089,
+            "add": 0.53695373
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "quat": [
+          0,
+          0,
+          0.2793657,
+          0.96018478
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "railMidR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            3.6383236,
+            0.032,
+            0.032
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "numSteps",
+              "scale": 0.33178909,
+              "add": -0.01135639
+            }
+          ]
+        },
+        "offset": [
+          1.53520812,
+          1.51595373,
+          0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.14,
+            "add": -0.00479188
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.089,
+            "add": 0.53695373
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "quat": [
+          0,
+          0,
+          0.2793657,
+          0.96018478
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "newelL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.048,
+            1.12,
+            0.048
+          ]
+        },
+        "offset": [
+          0,
+          0.56,
+          -0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "anchor": "floor",
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "newelR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.048,
+            1.12,
+            0.048
+          ]
+        },
+        "offset": [
+          0,
+          0.56,
+          0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "anchor": "floor",
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none"
+      },
+      {
+        "name": "landing",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.76,
+            0.005,
+            1.2
+          ],
+          "sizeParams": [
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          3.46,
+          1.9555,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.38
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": -0.0025
+          }
+        ],
+        "finish": "tread",
+        "notchable": true,
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landRailTopL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.76,
+            0.032,
+            0.032
+          ]
+        },
+        "offset": [
+          3.46,
+          3.028,
+          -0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.38
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 1.07
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landRailTopR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.76,
+            0.032,
+            0.032
+          ]
+        },
+        "offset": [
+          3.46,
+          3.028,
+          0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.38
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 1.07
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landRailMidL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.76,
+            0.032,
+            0.032
+          ]
+        },
+        "offset": [
+          3.46,
+          2.498,
+          -0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.38
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.54
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landRailMidR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.76,
+            0.032,
+            0.032
+          ]
+        },
+        "offset": [
+          3.46,
+          2.498,
+          0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.38
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.54
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landPost0L",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.04,
+            1.091,
+            0.04
+          ]
+        },
+        "offset": [
+          3.06,
+          2.5035,
+          -0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": -0.02
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.5455
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landPost0R",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.04,
+            1.091,
+            0.04
+          ]
+        },
+        "offset": [
+          3.06,
+          2.5035,
+          0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": -0.02
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.5455
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landPost1L",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.04,
+            1.091,
+            0.04
+          ]
+        },
+        "offset": [
+          3.84,
+          2.5035,
+          -0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.76
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.5455
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landPost1R",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.04,
+            1.091,
+            0.04
+          ]
+        },
+        "offset": [
+          3.84,
+          2.5035,
+          0.6
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.76
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.5455
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landSkirtL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.76,
+            0.1609774,
+            0.01
+          ]
+        },
+        "offset": [
+          3.46,
+          2.0384887,
+          -0.606
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.38
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.0804887
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.006
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "landSkirtR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.76,
+            0.1609774,
+            0.01
+          ]
+        },
+        "offset": [
+          3.46,
+          2.0384887,
+          0.606
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.38
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.0804887
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.006
+          }
+        ],
+        "color": [
+          0.949,
+          0.741,
+          0.059
+        ],
+        "colorParam": "color",
+        "showParam": "showHandrails",
+        "collision": "none",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "guardSlopeL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            3.64967999,
+            1.07,
+            0.06
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "numSteps",
+              "scale": 0.33178909
+            }
+          ]
+        },
+        "offset": [
+          1.54,
+          1.514,
+          -0.612
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.14
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.089,
+            "add": 0.535
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.012
+          }
+        ],
+        "quat": [
+          0,
+          0,
+          0.2793657,
+          0.96018478
+        ],
+        "hidden": true,
+        "showParam": "showHandrails"
+      },
+      {
+        "name": "guardSlopeR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            3.64967999,
+            1.07,
+            0.06
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "numSteps",
+              "scale": 0.33178909
+            }
+          ]
+        },
+        "offset": [
+          1.54,
+          1.514,
+          0.612
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.14
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.089,
+            "add": 0.535
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.012
+          }
+        ],
+        "quat": [
+          0,
+          0,
+          0.2793657,
+          0.96018478
+        ],
+        "hidden": true,
+        "showParam": "showHandrails"
+      },
+      {
+        "name": "guardLandL",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.76,
+            1.07,
+            0.06
+          ]
+        },
+        "offset": [
+          3.46,
+          2.493,
+          -0.612
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.38
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.535
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.012
+          }
+        ],
+        "hidden": true,
+        "showParam": "showHandrails",
+        "dropWhenMounted": true
+      },
+      {
+        "name": "guardLandR",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.76,
+            1.07,
+            0.06
+          ]
+        },
+        "offset": [
+          3.46,
+          2.493,
+          0.612
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "numSteps",
+            "scale": 0.28,
+            "add": 0.38
+          },
+          {
+            "axis": 1,
+            "param": "numSteps",
+            "scale": 0.178,
+            "add": 0.535
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.012
+          }
+        ],
+        "hidden": true,
+        "showParam": "showHandrails",
+        "dropWhenMounted": true
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 3.888,
+      "width": 1.24,
+      "top": 3.049,
+      "centerX": 1.916,
+      "params": [
+        {
+          "field": "length",
+          "param": "numSteps",
+          "scale": 0.28,
+          "add": 0.808
+        },
+        {
+          "field": "centerX",
+          "param": "numSteps",
+          "scale": 0.14,
+          "add": 0.376
+        },
+        {
+          "field": "width",
+          "param": "width",
+          "add": 0.04
+        },
+        {
+          "field": "top",
+          "param": "numSteps",
+          "scale": 0.178,
+          "add": 1.091
+        }
+      ]
+    }
+  },
+  "category": "Structure",
+  "snap": {
+    "edgeMount": {
+      "accepts": "deck",
+      "alongParam": "width",
+      "reach": 3,
+      "facing": "into",
+      "at": [
+        0,
+        0,
+        0
+      ],
+      "atParams": [
+        {
+          "axis": 0,
+          "param": "numSteps",
+          "scale": 0.28
+        },
+        {
+          "axis": 1,
+          "param": "numSteps",
+          "scale": 0.178
+        }
+      ],
+      "fromFloor": {
+        "param": "numSteps"
+      },
+      "opens": true,
+      "notch": true,
+      "lift": true
+    }
+  },
+  "materials": [
+    {
+      "id": "stairSteel",
+      "color": [
+        0.949,
+        0.741,
+        0.059
+      ],
+      "metalness": 0.3,
+      "roughness": 0.6
+    },
+    {
+      "id": "stairHardware",
+      "color": [
+        0.05,
+        0.052,
+        0.058
+      ],
+      "metalness": 0.15,
+      "roughness": 0.5
+    }
+  ],
+  "sdk": {
+    "level": 16,
+    "of": "v2:28636:9bopii61zz"
+  }
+}

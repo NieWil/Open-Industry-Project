@@ -6,10 +6,10 @@
 // Unlike a machine's rig, where a cylinder link collides as its bounding box (rigPose.ts shapeHalfExtents), cargo
 // keeps the cylinder round: whether a drum rolls is the point of declaring it.
 
-import { linkHalfExtents, qApply, resolvedCylinder, rigWorldPoses } from './rigPose'
-import type { Quat, RigParams, Vec3 } from './rigPose'
-import { rigLinkEmitsBody } from './rigLinkBody'
-import type { RigGeometry } from './partPackage'
+import { linkHalfExtents, qApply, resolvedCylinder, rigWorldPoses } from './rig/rigPose'
+import type { Quat, RigParams, Vec3 } from './rig/rigPose'
+import { rigLinkEmitsBody } from './rig/rigLinkBody'
+import type { RigGeometry } from './parts/partPackage'
 
 /** One sub-shape of a cargo body, part-local at rest pose. */
 export type CargoPiece =

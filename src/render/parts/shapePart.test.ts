@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
 import { examplePart, type FuncGeo } from './examplePart'
 const { behavior: SHAPE_BEHAVIOR, geometry: SHAPE_GEO, head: SHAPE_HEAD } = examplePart<FuncGeo>('oip.shape')
 

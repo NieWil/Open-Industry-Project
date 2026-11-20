@@ -1,5 +1,5 @@
 import type { PartInstance } from './types'
-import { registryRevision } from './partRegistry'
+import { registryRevision } from './parts/partRegistry'
 import { createFootprintIndex } from './footprintGrid'
 
 /**
@@ -93,7 +93,7 @@ export function memoizeLocalized<T>(spec: LocalizedSpec<T>): (parts: readonly Pa
     result: T | undefined
   }
   const index = createFootprintIndex()
-  // `isTarget`/`isInfluencer` are not cheap: they build geometry views (beltLikeView, moverShapeOf,
+  // `isTarget`/`isInfluencer` are not cheap: they build geometry views (bedOf, moverShapeOf,
   // hostGeom) to decide what a part is. Asking every part every call would be an O(scene) term with
   // a real constant. They are pure in (part, package registry), and parts are immutable snapshots, so
   // the answer is cached on identity and dropped wholesale when the registry revision changes.
@@ -134,8 +134,9 @@ export function memoizeLocalized<T>(spec: LocalizedSpec<T>): (parts: readonly Pa
     }
     index.sync(influencers) // reconcile the persistent buckets; only changed refs are re-bucketed
     if (influencers.length === 0 || targets.length === 0) {
-      // nothing can be derived; don't strand entries that would never be revisited
-      if (cache.size > 0) {
+      // nothing can be derived; don't strand entries that would never be revisited. A registry change above has
+      // already emptied `cache`, so `lastOut` is checked too, or the previous scene's map would come back.
+      if (cache.size > 0 || lastOut.size > 0) {
         cache = new Map()
         lastOut = new Map()
       }

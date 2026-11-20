@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { inspectGlb } from './glbInspect'
+import { inspectGlb } from './parts/glbInspect'
 import { convertStep, type OcctKernel } from './stepConvert'
 import { bytesToBase64 } from './stepImport'
 

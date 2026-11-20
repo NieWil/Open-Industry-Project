@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
-import type { PartBuildNotice } from '../store'
+import { useEffect, useRef } from 'react'
+import type { PartBuildNotice } from '../store/store'
 import { CloseIcon } from './toolbarIcons'
+import { ToastCopyButton } from './ToastCopy'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('partBuild', {
@@ -19,11 +20,37 @@ const DISMISS_MS = 9000
  * card keeps a ⚠ badge until the next good rebuild. Renders nothing (and runs no timers) when clean.
  */
 export function PartBuildToast({ notices, onDismiss }: { notices: PartBuildNotice[]; onDismiss: (key: number) => void }) {
-  // one self-cancelling timer per visible notice; re-armed only when the notice set changes
+  // one timer per notice, armed when its key first shows. The caller passes a fresh onDismiss each render, so
+  // keying the timers on it (or re-arming them on every notices change) would push a dismissal back on every edit.
+  const dismissRef = useRef(onDismiss)
+  dismissRef.current = onDismiss
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>())
   useEffect(() => {
-    const timers = notices.map((n) => setTimeout(() => onDismiss(n.key), DISMISS_MS))
-    return () => timers.forEach(clearTimeout)
-  }, [notices, onDismiss])
+    const armed = timers.current
+    const shown = new Set(notices.map((n) => n.key))
+    for (const [key, timer] of armed) {
+      if (shown.has(key)) continue
+      clearTimeout(timer)
+      armed.delete(key)
+    }
+    for (const key of shown) {
+      if (armed.has(key)) continue
+      armed.set(
+        key,
+        setTimeout(() => {
+          armed.delete(key)
+          dismissRef.current(key)
+        }, DISMISS_MS),
+      )
+    }
+  }, [notices])
+  useEffect(() => {
+    const armed = timers.current
+    return () => {
+      armed.forEach(clearTimeout)
+      armed.clear()
+    }
+  }, [])
 
   if (notices.length === 0) return null
   return (
@@ -34,6 +61,7 @@ export function PartBuildToast({ notices, onDismiss }: { notices: PartBuildNotic
             <span className="part-build-toast-title">{t(M.failed, { name: n.name })}</span>
             <span className="part-build-toast-error">{n.error}</span>
           </div>
+          <ToastCopyButton text={`${t(M.failed, { name: n.name })}\n${n.error}`} />
           <button className="part-build-toast-close" title={t(M.dismiss)} onClick={() => onDismiss(n.key)}>
             <CloseIcon />
           </button>

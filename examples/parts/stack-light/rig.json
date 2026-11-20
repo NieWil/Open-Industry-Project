@@ -2,7 +2,6 @@
   "id": "oip.stack-light",
   "name": "Stack Light",
   "category": "Devices",
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "links": [

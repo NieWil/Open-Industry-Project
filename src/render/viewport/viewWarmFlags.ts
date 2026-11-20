@@ -70,44 +70,6 @@ export function wantsDeferredWarm(): boolean {
   return renderQuality.tier !== 'mobile'
 }
 
-/**
- * `?serialphase1` - feed phase 1 of the staged compile (the building shell + env) to Dawn one
- * pipeline at a time, three's stock `compileAsync` loop. Kill-switch for the concurrent phase-1
- * feed, which shortens the cold cover at identical pipeline counts, and the A/B lever for
- * `e2e/probes/compile-phases.mjs` (method in compileStaged's doc).
- */
-export function wantsSerialPhase1(): boolean {
-  return typeof location !== 'undefined' && new URLSearchParams(location.search).has('serialphase1')
-}
-
-/**
- * `?phase1overlap` - submit phase 1's pipelines and go straight into phase 2's codegen loop, awaiting
- * phase 1's Dawn promises at the end of phase 2 instead of before it starts. Submission order is
- * unchanged, so Dawn still serves the building's shaders first and the heavy-shared-first
- * prioritisation the staging exists for is kept; only the main-thread block moves.
- *
- * Off by default. Measured (n=3, tight spreads): cover 3613 → 3067 ms, −546 ms. But the arms did
- * not compile the same amount of work:
- *
- *   | | cover | ph2 items | pipelines warm at reveal | ph1 ticks |
- *   | shipped | 3613 ms | 485 | 80 | 16 |
- *   | overlap | 3067 ms | 101 | 45 |  1 |
- *
- * Phase 1's 1.3 s await is also the window in which the parts' async GLB attachments arrive. Without
- * the wait, phase 2 walks a half-built scene (101 items instead of 485), so 35 pipelines are never
- * pre-warmed and compile on-draw after the cover lifts (visible in the ledger as extras2 jumping
- * 19 → 612 ms). The cover is faster only because work moved past it. That is the same class of
- * regression as lifting the cover after phase 1.
- *
- * For this to help, phase 2 must start on a completeness signal (parts' visuals attached / structure
- * settled) rather than relying on phase 1's compile as an accidental barrier. Then the overlap removes
- * only the wait, not the work. `verify-webgpu-cover-holds` does not catch this: it asserts the cover
- * outlasts the warm signal, and the warm signal moves too.
- */
-export function wantsPhase1Overlap(): boolean {
-  return typeof location !== 'undefined' && new URLSearchParams(location.search).has('phase1overlap')
-}
-
 /** first-draw cost proxy for the reveal budget (see REVEAL_BUDGET_POINTS) */
 export function revealCostOf(object: Object3D): number {
   let n = 0

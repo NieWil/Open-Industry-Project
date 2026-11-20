@@ -3,11 +3,12 @@
 // what a run starts with and the behavior grips what it finds there. This module is where those positions are, which
 // of them are filled, and the Fill / Empty edits the Inspector offers. Pure: scene in, scene out.
 
-import type { HoldsDecl, PartPackage } from './partPackage'
-import { getPackage } from './partRegistry'
-import { qApply, resolvedGrabZone, rigWorldPoses } from './rigPose'
-import type { Quat, Vec3 } from './rigPose'
-import { createSdkPart, nextId } from './scene'
+import type { HoldsDecl, PartPackage } from './parts/partPackage'
+import { getPackage } from './parts/partRegistry'
+import { arrayInstanceDeltas, parseCopyGripName, qApply, resolvedGrabZone, rigWorldPoses } from './rig/rigPose'
+import type { Quat, RigParams, Vec3 } from './rig/rigPose'
+import { resolvePartParams } from './parts/partScript'
+import { createSdkPart, nextId } from './scene/scene'
 import type { PartInstance, SceneJSON, SdkPart, SdkPartParams } from './types'
 
 /** One position a part holds an item at: its gripper link, the item's centre in the world, and the zone it grips in. */
@@ -37,12 +38,22 @@ export function holdPositions(part: SdkPart, pkg: PartPackage, holds: HoldsDecl)
   const q = yawQuat(part.rotationY)
   const out: HoldPosition[] = []
   for (const gripper of holds.positions.slice(0, limit)) {
-    const link = pkg.geometry.links.find((l) => l.name === gripper)
-    const pose = poses.get(gripper)
+    // a plain gripper link, or copy i of a posable gripper array (`link#i`), standing at its rest place in the row
+    const copy = pkg.geometry.links.some((l) => l.name === gripper) ? null : parseCopyGripName(gripper)
+    const name = copy ? copy.link : gripper
+    const link = pkg.geometry.links.find((l) => l.name === name)
+    const pose = poses.get(name)
     const zone = link ? resolvedGrabZone(link, params) : null
     if (!pose || !zone) continue
+    let rest: Vec3 = [0, 0, 0]
+    if (copy) {
+      // counted with the defaults filled in, as the sim builds the row: a capacity left at its default is still 10
+      const delta = link?.array?.posable ? arrayInstanceDeltas(link.array, resolvePartParams(pkg.params, params) as RigParams, undefined, link.showParam)[copy.index] : undefined
+      if (!delta) continue
+      rest = [delta[0] * scale, delta[1] * scale, delta[2] * scale]
+    }
     // the zone centre in the part's frame (the link's pose carrying its zone offset), then into the world
-    const off = qApply(pose.quat, [zone.offset[0] * scale, zone.offset[1] * scale, zone.offset[2] * scale])
+    const off = qApply(pose.quat, [rest[0] + zone.offset[0] * scale, rest[1] + zone.offset[1] * scale, rest[2] + zone.offset[2] * scale])
     const local: Vec3 = [pose.pos[0] + off[0], pose.pos[1] + off[1], pose.pos[2] + off[2]]
     const w = qApply(q, local)
     out.push({ gripper, centre: [part.position[0] + w[0], part.position[1] + w[1], part.position[2] + w[2]], half: [zone.half[0] * scale, zone.half[1] * scale, zone.half[2] * scale] })

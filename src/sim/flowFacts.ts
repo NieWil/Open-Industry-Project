@@ -1,10 +1,10 @@
-// The running world's flow facts (core/flowFacts.ts): what physically happened to the cargo, collected after every
+// The running world's flow facts (core/flow/flowFacts.ts): what physically happened to the cargo, collected after every
 // step from what the step already computed. It reads, never writes: the cargo rows come from the registry's per-step
 // pose snapshot (the one the cull and the beam casts share), the beams from the hits tickBehaviors cast for the
 // behaviors, the speeds from the bus. So it cannot move a body, and a run's fingerprint is the same with it or
 // without it (bench-sim). SimWorld owns one; the worker ships what it collects on each posted frame (protocol.ts).
-import { FlowFactTracker } from '../core/flowFacts'
-import type { FlowBeamReading, FlowBeamTarget, FlowFact } from '../core/flowFacts'
+import { FlowFactTracker } from '../core/flow/flowFacts'
+import type { FlowBeamReading, FlowBeamTarget, FlowFact } from '../core/flow/flowFacts'
 import type { PartInstance } from '../core/types'
 import type { BehaviorBus } from './behaviorBus'
 import type { BodyHolds } from './bodyHolds'
@@ -47,7 +47,7 @@ export class SimFlowFacts {
   step(): void {
     const boxes = this.boxes
     const n = boxes.length
-    let rows: ArrayLike<number> | null = this.cargo.beamSnapshot()
+    let rows: ArrayLike<number> | null = this.cargo.stepSnapshot()
     if (!rows) {
       if (this.poses.length < n * 7) this.poses = new Float32Array(Math.max(64, n * 2) * 7)
       const out = this.poses

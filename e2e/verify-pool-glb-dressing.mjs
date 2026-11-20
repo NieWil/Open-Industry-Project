@@ -52,7 +52,7 @@ const DRESSING_ID = 'e2e.pool-dressing'
 const MOVER_ID = 'e2e.pool-mover'
 const MOVER_LINK = 'cap'
 const PART_IDS = [...Array.from({ length: COPIES }, (_, i) => `dress_${i}`), 'mover_0']
-// format 6 = PACKAGE_FORMAT (src/core/partPackage.ts). commitPackage refuses any other, and the gate
+// format 6 = PACKAGE_FORMAT (src/core/parts/partPackage.ts). commitPackage refuses any other, and the gate
 // then fails at setup with the refusal.
 const DRESSING = {
   format: 6,

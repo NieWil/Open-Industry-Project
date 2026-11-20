@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
 import { GUARD_HOLE_RADIUS } from '../../core/types'
 import { examplePart } from './examplePart'
 
 // Every function conveyor whose guard is a formed sheet draws a sensor-beam hole where the host hands it one (a
-// `guardHoles` row [x, y, side], core/guardHoles.ts): its guard sheet splits around the gap and a panel with a round
+// `guardHoles` row [x, y, side], core/guards/guardHoles.ts): its guard sheet splits around the gap and a panel with a round
 // hole through it fills it. This holds each family to that, through its real generated geometry(): somewhere in the
 // drawn steel there is the hole's 20 mm circle, at the row's position, in the plane of that guard's sheet. And a
 // conveyor with no holes draws exactly the parts it always did, so a scene without sensors is untouched.

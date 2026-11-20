@@ -113,10 +113,25 @@ async function toolShortcuts(page) {
   await page.keyboard.press('g')
   await page.waitForTimeout(150)
   expect((await page.evaluate(() => window.__oip.store.getState().sideGuardMode)) === false, 'G again leaves it')
-  await page.evaluate(() => {
-    window.__oip.store.clearSelection()
-    window.__oip.store.undo() // the roller added above
+
+  // H hides the selection, and H again shows it: the scene-tree menu's Hide / Show from the keyboard
+  const visible = () => page.evaluate(() => window.__oip.store.getState().scene.parts.find((p) => p.id === 'keymap-roller')?.visible !== false)
+  await page.keyboard.press('h')
+  await page.waitForTimeout(150)
+  expect((await visible()) === false, 'H hides the selected part')
+  await page.keyboard.press('h')
+  await page.waitForTimeout(150)
+  expect((await visible()) === true, 'H again shows it')
+
+  const gone = await page.evaluate(() => {
+    const st = window.__oip.store
+    st.clearSelection()
+    st.undo() // show
+    st.undo() // hide
+    st.undo() // the roller added above
+    return !st.getState().scene.parts.some((p) => p.id === 'keymap-roller')
   })
+  expect(gone, 'cleanup: three undos remove the roller (show, hide, add)')
 }
 
 async function physicalResolution(page, client) {
@@ -197,6 +212,30 @@ async function shortcutsPanel(page) {
   const kbds = await page.locator('[data-shortcuts-overlay] kbd').allInnerTexts()
   expect(kbds.includes('W') && kbds.includes('Ctrl+Z'), 'chords render readably (W, Ctrl+Z)')
   expect(!kbds.some((k) => k.includes('Key')), 'no raw code names leak into the UI')
+
+  // the search box narrows the rows, finds a chord as printed, and says so when nothing matches.
+  // Typing into it must not reach the editor: 'w' would otherwise switch the tool.
+  const search = page.locator('[data-testid="shortcuts-search"]')
+  const toolBefore = await tool(page)
+  await search.fill('undo')
+  await page.waitForTimeout(150)
+  const undoRows = await page.locator('[data-shortcuts-overlay] .shortcut-label').allInnerTexts()
+  expect(undoRows.length > 0 && undoRows.length < rows && undoRows.includes('Undo'), `"undo" narrows the list (${undoRows.join(', ')})`)
+  await search.fill('ctrl+shift+z')
+  await page.waitForTimeout(150)
+  const chordRows = await page.locator('[data-shortcuts-overlay] .shortcut-label').allInnerTexts()
+  expect(chordRows.includes('Redo'), `a printed chord finds its row (${chordRows.join(', ')})`)
+  await search.fill('')
+  await search.pressSequentially('w')
+  await page.waitForTimeout(150)
+  expect((await tool(page)) === toolBefore, 'typing in the search box does not drive editor shortcuts')
+  await search.fill('zzqq')
+  await page.waitForTimeout(150)
+  expect((await page.locator('[data-shortcuts-overlay] .shortcut-row').count()) === 0, 'a query that matches nothing shows no rows')
+  expect((await page.locator('[data-shortcuts-overlay] .shortcuts-empty').count()) === 1, 'and says nothing matches')
+  await search.fill('')
+  await page.waitForTimeout(150)
+  expect((await page.locator('[data-shortcuts-overlay] .shortcut-row').count()) === rows, 'clearing the search brings every row back')
 
   await page.keyboard.press('Escape')
   await page.waitForTimeout(250)

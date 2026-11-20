@@ -213,7 +213,7 @@
   color: var(--text-dim);
 }
 
-/* what an update changes (core/partChanges.ts), most severe first */
+/* what an update changes (core/parts/partChanges.ts), most severe first */
 .part-updates-changes {
   list-style: none;
   margin: 2px 0 0;
@@ -237,6 +237,25 @@
 /* what a breaking change breaks in this project (plc/updateImpact.ts): the project's facts, not the part's */
 .part-updates-impact {
   color: var(--text-dim);
+}
+
+/* a xacro robot's on/off arguments, asked before it imports (components/RobotOptionsDialog.tsx) */
+.robot-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.robot-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.robot-options-foot {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* the one-field naming dialog (components/NameDialog.tsx): window.prompt throws in the Electron shell */

@@ -286,7 +286,8 @@
         <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
         <nav class="nav-links" aria-label="Site">
           <a href="/plc/">PLC reference</a>
-          <a href="/guides/">Connection guides</a>
+          <a href="/guides/">Guides</a>
+          <a href="https://discord.gg/ACRPr6sBpH" target="_blank" rel="noopener noreferrer">Discord</a>
           <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
         <a class="btn btn-sm" href="/app/">Open the editor</a>
@@ -514,15 +515,15 @@ Clear := Ossd <span class="kw">OR</span> Muted;</pre>
           </p>
 
           <div class="wiring">
-            <svg viewBox="0 0 1000 200" role="img" aria-label="Wiring: your PLC connects to the simulated line over Modbus TCP, OPC UA, EtherNet/IP, S7 or ADS; the simulator serves tags over OPC UA to a SCADA or HMI.">
+            <svg viewBox="0 0 1000 200" role="img" aria-label="Wiring: your PLC connects to the simulated line over Modbus TCP, OPC UA, EtherNet/IP, S7, SLMP or ADS; the simulator serves tags over OPC UA to a SCADA or HMI.">
               <rect class="box" x="1" y="50" width="190" height="100" />
               <text class="title" x="20" y="92">Your PLC</text>
               <text x="20" y="118">hardware or soft PLC</text>
 
               <path class="wire live" d="M191 92 H400" />
               <path class="wire live" d="M400 108 H191" />
-              <text class="proto" x="206" y="80">Modbus TCP &middot; OPC UA</text>
-              <text class="proto" x="206" y="132">EtherNet/IP &middot; S7 &middot; ADS</text>
+              <text class="proto" x="206" y="80">Modbus TCP &middot; OPC UA &middot; S7</text>
+              <text class="proto" x="206" y="132">EtherNet/IP &middot; SLMP &middot; ADS</text>
 
               <rect class="box us" x="400" y="20" width="270" height="160" />
               <text class="title" x="420" y="58">Open Industry Project</text>
@@ -568,11 +569,12 @@ Clear := Ossd <span class="kw">OR</span> Muted;</pre>
           <table class="datasheet">
             <tr><th>PLC languages</th><td>IEC 61131-3 Structured Text and Ladder Diagram, a working subset; not certified. <a href="/plc/">Full list</a></td></tr>
             <tr><th>Exchange</th><td><code>.st</code> files, PLCopen XML 2.01</td></tr>
-            <tr><th>Connections</th><td>External PLCs over Modbus TCP, OPC UA, EtherNet/IP, S7 PUT/GET or ADS; an OPC UA server for a SCADA or HMI (desktop app)</td></tr>
+            <tr><th>Connections</th><td>External PLCs over Modbus TCP, OPC UA, EtherNet/IP, S7 PUT/GET, SLMP or ADS; an OPC UA server for a SCADA or HMI (desktop app)</td></tr>
             <tr><th>Physics</th><td>Jolt, compiled to WebAssembly, multi-threaded</td></tr>
             <tr><th>Runs on</th><td>Any modern browser; Windows (signed installer); Linux (.deb, AppImage)</td></tr>
             <tr><th>Price</th><td>Free. No account, no licence key.</td></tr>
             <tr><th>Source</th><td>Open source under the MIT License, <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">on GitHub</a></td></tr>
+            <tr><th>Community</th><td>Questions and ideas <a href="https://discord.gg/ACRPr6sBpH" target="_blank" rel="noopener noreferrer">on Discord</a></td></tr>
             <tr><th>Built by</th><td><a href="https://autstand.com" target="_blank" rel="noopener noreferrer">autStand</a>, who build lines like these for plants and warehouses</td></tr>
           </table>
         </div>
@@ -587,7 +589,7 @@ Clear := Ossd <span class="kw">OR</span> Muted;</pre>
             <a href="/app/">Editor</a>
             <a class="tour-link" href="/app/?tour=1">Tutorial</a>
             <a href="/plc/">PLC reference</a>
-            <a href="/guides/">Connection guides</a>
+            <a href="/guides/">Guides</a>
             <a href="https://discord.gg/ACRPr6sBpH" target="_blank" rel="noopener noreferrer">Discord</a>
             <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
             <a href="/THIRD_PARTY_NOTICES.md">Licenses &amp; credits</a>
@@ -611,6 +613,7 @@ Clear := Ossd <span class="kw">OR</span> Muted;</pre>
           '/models/building/Wall_C.glb',
           '/models/building/Wall_D.glb',
           '/models/building/textures/BuildingPart_Floor_A_BaseColor.webp',
+          '/models/building/textures/BuildingPart_FloorMacro_BaseColor.webp',
           '/models/building/textures/BuildingPart_Fan_A_BaseColor.webp',
           '/models/building/textures/BuildingPart_Framing_01_BaseColor.webp',
           '/models/building/textures/BuildingPart_Framing_02_BaseColor.webp',

@@ -5,7 +5,7 @@
 // airPressureHeight + HOUSING_TOP (−0.05 at the 0.07 default). 'raiseHeight' is an absolute top height, so
 // the joint commands raiseHeight − restTop; its 0.04 default is a real stop's rise. The guide rods are authored
 // for a 0.06 raise (0.108 m of travel), and a longer stroke lengthens the rods and cylinders to match (geometry()).
-// Driven by an authored 'active' toggle, or — with comms on — a PLC bool tag.
+// Driven by an authored 'active' toggle, or by a PLC bool tag while a program drives it.
 //
 // This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, without
 // `manifest` and `rig()`) and rig.json (the manifest, with the rig compiled from rig()).
@@ -51,7 +51,6 @@ definePart({
     id: 'oip.blade-stop',
     name: 'Blade Stop',
     category: 'Equipment',
-    commsParam: 'enableComms',
     // The host aligns the blade stop with a conveyor's track, seats it at the bed surface anchored to the
     // rendered roller grid (so the blade rises in a gap between two rollers), and fits 'width' to the usable
     // bed width.
@@ -73,7 +72,6 @@ definePart({
     active: { type: 'boolean', default: false, label: 'Active', group: 'Start state', desc: 'Raise the blade to stop cargo. This is the state it starts in; Use cycles it by hand. While a program drives the tag below, that program owns it instead.' },
     raiseHeight: { type: 'number', default: RAISE_DEFAULT, min: 0.02, max: RAISE_MAX, step: 0.01, label: 'Raise height (m)', desc: 'How far the blade top stands above the conveying surface once raised - the height of the stop cargo meets. At rest the top parks just below the surface, so raising this lengthens the stroke.' },
     airPressureHeight: { type: 'number', default: AIR_DEFAULT, min: 0, max: 0.12, step: 0.005, label: 'Air pressure height (m)', desc: 'Mount height of the whole moving assembly - pistons, blade and rods together - above the housing. Trim it to sit the mechanism correctly against a particular deck; it shifts the REST position, not the stroke.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
     // autoWhenDriven: this tag COMMANDS the blade (the step's auto gate reads it), so a program driving it
     // owns the device — the pilot prompt shows "In auto - PLC controlled" instead of a dead "Use".
     tag: { type: 'tag', dir: 'in', stType: 'BOOL', autoWhenDriven: true, default: '', label: 'Raise tag (true raises the blade)', group: 'Comms', desc: 'Raise the blade from the program. While a program drives this tag it OWNS the blade stop, so a hand Use in pilot mode is refused with "In auto - PLC controlled".' },
@@ -203,14 +201,14 @@ definePart({
     ]
   },
   step(ctx) {
-    // Signal handoff: the tag commands the blade only while a controller actually drives it (comms on + the
-    // tag is an attached program's output — ctx.tagDriven). Any other time the manual signal rules: the
+    // Signal handoff: the tag commands the blade only while a controller actually drives it (the tag is an
+    // attached program's output, ctx.tagDriven). Any other time the manual signal rules: the
     // 'active' param (adopted when toggled in the Inspector) or a pilot Use/click.
     if (ctx.params.active !== lastActive) { active = ctx.params.active; lastActive = ctx.params.active }
     if (ctx.used()) active = !active
     // auto wins by overwriting the hand latch (bumpless transfer): a press while owned is undone the same
     // tick, and when ownership releases the blade holds its last commanded state.
-    if (ctx.params.enableComms && ctx.tagDriven(ctx.params.tag)) active = ctx.readTag(ctx.params.tag)
+    if (ctx.tagDriven(ctx.params.tag)) active = ctx.readTag(ctx.params.tag)
     // the hand latch AFTER the auto gate — what the device is really doing, for the Inspector readout
     ctx.report('active', active)
     const want = active ? 1 : 0

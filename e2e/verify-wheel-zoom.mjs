@@ -118,7 +118,7 @@ async function main() {
     // all the way out: capped at the orbit max distance
     await wheel(page, 300, 30)
     const e = await probe(page, id)
-    expect(Math.abs(e.camToTarget - 80) < 0.5, `zooming out stops at the max distance (${e.camToTarget.toFixed(2)} m)`)
+    expect(Math.abs(e.camToTarget - 500) < 0.5, `zooming out stops at the max distance (${e.camToTarget.toFixed(2)} m)`)
 
     expect(warnings.length === 0, `OrbitControls' wheel dolly detached (${warnings.length} warning(s))`)
     await page.close()

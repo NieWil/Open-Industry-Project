@@ -5,6 +5,10 @@ import type { SceneJSON, SimRate } from '../core/types'
 import type { Controller } from '../core/controller'
 import type { ResolvedRoom } from './rooms'
 import { LOCAL_ORIGIN, partsMap, sceneToDoc, writeSimHz, writeStDoc } from './schema'
+import { collabUrl, defaultCollabUrl } from './collabServer'
+
+// re-exported: main.tsx and the room code read it from here
+export { collabUrl } from './collabServer'
 
 export interface RoomConnection {
   ydoc: Y.Doc
@@ -14,20 +18,6 @@ export interface RoomConnection {
   whenSynced: Promise<void>
   /** true once the SERVER has synced, so the doc is the room as it is now rather than this browser's cached copy */
   serverSynced(): boolean
-}
-
-/** the production collab server, which every production build talks to unless VITE_COLLAB_URL says otherwise */
-const PRODUCTION_COLLAB_URL = 'wss://collab.openindustryproject.org'
-
-/**
- * wss URL of the self-hosted Hocuspocus server; dev falls back to a local server. A production build defaults to the
- * real one rather than to localhost. Only deploy-pages.yml sets VITE_COLLAB_URL, so a desktop installer would
- * otherwise point at ws://localhost:1234, where a browser's Open in Desktop App hand-over (handoff.ts) never arrives.
- */
-export function collabUrl(): string {
-  const url = import.meta.env.VITE_COLLAB_URL as string | undefined
-  if (url && url !== '') return url
-  return import.meta.env.PROD ? PRODUCTION_COLLAB_URL : 'ws://localhost:1234'
 }
 
 /** how long to wait on the server before booting offline from the IndexedDB cache */
@@ -43,9 +33,11 @@ const SERVER_SYNC_TIMEOUT_MS = 4000
  */
 export function connectRoom(resolved: ResolvedRoom): RoomConnection {
   const ydoc = new Y.Doc()
-  const idb = new IndexeddbPersistence(`oip-room-${resolved.docName}`, ydoc)
+  // a room's offline copy is kept per server: the same room name on two servers is two rooms
+  const server = collabUrl()
+  const idb = new IndexeddbPersistence(server === defaultCollabUrl() ? `oip-room-${resolved.docName}` : `oip-room-${new URL(server).host}-${resolved.docName}`, ydoc)
   const provider = new HocuspocusProvider({
-    url: collabUrl(),
+    url: server,
     name: resolved.docName,
     document: ydoc,
     token: resolved.token,

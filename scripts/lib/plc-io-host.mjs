@@ -1,5 +1,5 @@
 // The desktop shell's socket (apps/desktop/plcIo.cjs) as the editor sees it, the `PlcIoHost` of
-// src/editor/externalPlc.ts, over node:net and in-process: the connecting half only. A loop script hands it to the
+// src/editor/links/externalPlc.ts, over node:net and in-process: the connecting half only. A loop script hands it to the
 // app's own session classes (ExternalPlcS7Session), so what it drives is the code the dock runs, minus the IPC.
 
 import { Socket } from 'node:net'

@@ -1,14 +1,14 @@
 // What a part's submission to the listed library is made of (docs/part-libraries.md, "Publishing"): the folder the
 // pull request adds to the parts repository, the pull request's text, and this browser's record of what was sent.
 //
-//   parts/<id>/manifest.json, behavior.js, assets/...   the part, as a .oippart holds it (core/partArchive.ts)
+//   parts/<id>/manifest.json, behavior.js, assets/...   the part, as a .oippart holds it (core/parts/partArchive.ts)
 //   parts/<id>/description.txt                          what Get parts shows
 //   parts/<id>/thumbnail.webp                           the card picture, as the app rendered it
 
-import { partFolderFiles } from '../../core/partArchive'
-import type { PartPackage } from '../../core/partPackage'
-import { partFingerprint } from '../../core/partOrigin'
-import { RIGHTS_LINE, SUBMISSION_DIR } from '../../core/partSubmission'
+import { partFolderFiles } from '../../core/parts/partArchive'
+import type { PartPackage } from '../../core/parts/partPackage'
+import { partFingerprint } from '../../core/parts/partOrigin'
+import { RIGHTS_LINE, SUBMISSION_DIR } from '../../core/parts/partSubmission'
 
 /** The files a submission adds, at their paths in the parts repository. */
 export function submissionFiles(pkg: PartPackage, opts: { description: string; thumbnailDataUrl?: string }): { path: string; bytes: Uint8Array }[] {

@@ -14,7 +14,7 @@
 //   - the largest: resolveScene running the sim-only resolvers on the render thread. With all-or-nothing
 //     memos, one moved part re-ran them over the whole scene every frame: 20 of the 29 ms per frame at
 //     240 parts, computing deck clusters + guard runs render never reads. Pinned as a contract by
-//     src/core/sceneResolve.test.ts; this gate measures the consequence.
+//     src/core/scene/sceneResolve.test.ts; this gate measures the consequence.
 //   - resolvers memoized all-or-nothing, so one moved part re-derives every part's seams every frame.
 //     They are memoized per target on their actual inputs (memoizeLocalized), which makes the cost
 //     move-sized rather than scene-sized.

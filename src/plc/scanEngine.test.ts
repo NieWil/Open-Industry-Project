@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LocalPlcLink } from './plcLink'
+import { LocalPlcLink } from './link/plcLink'
 import {
   DEFAULT_MAX_CATCHUP_SCANS,
   DEFAULT_SCAN_PERIOD_SEC,

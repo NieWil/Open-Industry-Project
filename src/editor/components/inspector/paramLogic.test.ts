@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { createPart } from '../../../core/scene'
+import { createPart } from '../../../core/scene/scene'
 import { num, tagRef, text } from '../../../core/types'
 import type { ColorParamSpec, EnumParamSpec, NumberListParamSpec, ParamSpec, PartInstance, PartRefParamSpec } from '../../../core/types'
 import {
   buildGroupTree,
+  buildParamTooltip,
   buildSceneTagIndex,
   coercePaste,
   coerceVec3,
@@ -23,6 +24,15 @@ const note = (id: string, params: Record<string, unknown>): PartInstance => {
   const p = createPart('annotation', id, [0, 0, 0])
   return { ...p, params: { ...p.params, ...params } } as PartInstance
 }
+
+describe('buildParamTooltip - a tag says what it carries', () => {
+  it('names the type and unit after the label, as the row badge does', () => {
+    const speedTag: ParamSpec = { kind: 'tagRef', key: 'speedTag', label: 'Speed tag', default: '', dir: 'in', stType: 'REAL', unit: 'm/s' }
+    expect(buildParamTooltip(speedTag, 'Speed Tag', 'The program commands belt speed here.').split('\n')[0]).toBe('Speed Tag · REAL, m/s')
+    const runTag: ParamSpec = { kind: 'tagRef', key: 'runTag', label: 'Run tag', default: '', dir: 'in', stType: 'BOOL' }
+    expect(buildParamTooltip(runTag, 'Run Tag', undefined).split('\n')[0]).toBe('Run Tag · BOOL')
+  })
+})
 
 describe('pasteCompatible', () => {
   it('allows the same kind, and string-like kinds into each other', () => {

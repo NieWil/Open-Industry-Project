@@ -3,11 +3,11 @@
 [![Bundle Size](https://img.shields.io/bundlephobia/min/jolt-physics?label=bundle%20size)](https://bundlephobia.com/result?p=jolt-physics)
 [![Build Status](https://github.com/jrouwe/JoltPhysics.js/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/jrouwe/JoltPhysics.js/actions/)
 
-> **Open Industry Project fork, not the npm package.** This is `jolt-physics` **1.1.0-oip.8**, built from
-> <https://github.com/ryevdokimov/JoltPhysics.js> (branch `oip/1.1.0`: upstream's `1.1.0` tag plus three commits).
+> **Open Industry Project fork, not the npm package.** This is `jolt-physics` **1.1.1-oip.10**, built from
+> upstream commit `c43eabb` (Jolt 5.7.0, three commits after the `1.1.1` tag) plus the four patches in the Open Industry Project repository's `vendor/jolt-physics-src/`.
 > It adds a native `ConveyorContactListener` and a `BodySnapshot` batched body reader, both exposed to JavaScript,
 > SIMD in the single-threaded (ST) builds, and one patch to Jolt itself (coupled planar friction).
-> Open Industry Project installs it from `vendor/jolt-physics-1.1.0-oip.8.tgz`, a `file:` dependency in the root
+> Open Industry Project installs it from `vendor/jolt-physics-1.1.1-oip.10.tgz`, a `file:` dependency in the root
 > `package.json`. `npm install jolt-physics` gives upstream's build, which has none of these additions. To rebuild,
 > follow `vendor/README.md` in this repository. Everything below is upstream's README. The badges, links and
 > `repository` field point at upstream. See also `THIRD_PARTY_NOTICES.md` at the repository root.
@@ -24,7 +24,7 @@ Go to the [demos page](https://jrouwe.github.io/JoltPhysics.js/) to see the proj
 
 > **Open Industry Project vendored build:** the two `debug-*` flavours below are not included in this
 > package (it ships 5 flavours, and `package.json` exports no `debug-*` entry point); rebuild them from
-> the fork if you need Jolt's assertions.
+> the patched source (`vendor/README.md`) if you need Jolt's assertions.
 
 Upstream's library comes in 7 flavours (5 in this build):
 - `wasm-compat` - A WASM version with the WASM file (encoded in base64) embedded in the bundle

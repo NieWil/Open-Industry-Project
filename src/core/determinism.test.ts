@@ -45,6 +45,18 @@ describe('checkDeterminism', () => {
     expect(checkDeterminism(`definePart({ step(ctx){ ctx.fetch; obj.window; foo.setTimeout() } })`)).toEqual([])
   })
 
+  it("does not flag a window, document or process the script declares for itself", () => {
+    expect(checkDeterminism(`let window = 0\ndefinePart({ step(ctx){ window += ctx.dt } })`)).toEqual([])
+    expect(checkDeterminism(`function document(a) { return a }\ndefinePart({ step(){ document(1) } })`)).toEqual([])
+    expect(checkDeterminism(`for (const process of [1]) {}`)).toEqual([])
+    // a declared clock, random source, timer or IO name is still refused: declaring one in one place would hide a
+    // real use of the global elsewhere in the script
+    expect(checkDeterminism(`function f() { let Date = 1 }\ndefinePart({ step(){ return Date.now() } })`).map((v) => v.name)).toEqual(['Date', 'Date'])
+    expect(checkDeterminism(`function fetch(a) { return a }`).map((v) => v.name)).toEqual(['fetch'])
+    // a declaration has to be one: a longer word ending in `let` declares nothing
+    expect(checkDeterminism(`const doublet = 1; doublet\nwindow.x = 1`).map((v) => v.name)).toEqual(['window'])
+  })
+
   it('ignores banned words inside strings and comments', () => {
     expect(checkDeterminism(`definePart({ step(){ const s = 'Date.now() and fetch()' } })`)).toEqual([])
     expect(checkDeterminism(`definePart({ /* uses Date and Math.random historically */ step(){} })`)).toEqual([])

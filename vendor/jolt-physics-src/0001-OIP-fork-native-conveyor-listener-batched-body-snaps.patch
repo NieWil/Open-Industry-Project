@@ -1,0 +1,523 @@
+From cc94a993fcce1778971bc3e3859c1113daa40d05 Mon Sep 17 00:00:00 2001
+From: ryevdokimov <105675984+ryevdokimov@users.noreply.github.com>
+Date: Sun, 16 Aug 2026 23:19:15 -0400
+Subject: [PATCH 1/4] OIP fork: native conveyor listener, batched body
+ snapshot, coupled planar friction
+
+Three additions carried on top of upstream JoltPhysics.js (Jolt C++ 5.7.0), used by
+oip-web's sim worker and vendored into that repo as a prebuilt tarball.
+
+- ConveyorContactListener (JoltJS.h/.idl): fully-native contact listener that
+  reads per-facet surface velocities from a fixed-capacity table and applies the
+  two ghost gates, replacing a per-contact JS listener whose WASM->JS crossings
+  dominated step cost (and which the multithreaded build cannot run at all,
+  since contact callbacks fire on pthread job threads with isolated JS realms).
+- BodySnapshot (JoltJS.h/.idl): one call fills a flat float buffer with
+  pos+quat per requested body, replacing ~9 getter crossings per body per frame.
+- patches/0001-coupled-planar-friction.patch: adds ContactSettings::
+  mFrictionCoupling to Jolt itself, shrinking the torsional friction limit by
+  the fraction of the tangential limit consumed. Without it, conveyed cargo that
+  catches a corner dead-stops instead of pivoting off it. Defaults to 0, which
+  is bit-identical to upstream. Applied via PATCH_COMMAND in CMakeLists.txt.
+- CMakeLists.txt: applies the patch set and sizes the pthread pool at runtime.
+
+Rationale, measurements and known limitations for the Jolt-core patch are in
+patches/README.md; read it before bumping GIT_TAG, since a version bump needs
+the patch re-checked against the new solver rather than merely re-applied.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ CMakeLists.txt                             |  11 +-
+ JoltJS.h                                   | 214 +++++++++++++++++++++
+ JoltJS.idl                                 |  18 ++
+ patches/0001-coupled-planar-friction.patch |  82 ++++++++
+ patches/README.md                          |  66 +++++++
+ patches/apply.cmake                        |  25 +++
+ 6 files changed, 415 insertions(+), 1 deletion(-)
+ create mode 100644 patches/0001-coupled-planar-friction.patch
+ create mode 100644 patches/README.md
+ create mode 100644 patches/apply.cmake
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a0d001b..58f022e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -71,9 +71,13 @@ if (ENABLE_MULTI_THREADING)
+ 		-pthread
+ 		--post-js ${CMAKE_CURRENT_SOURCE_DIR}/multi-threaded.js
+ 		-s SHARED_MEMORY)
++	# OIP fork: size the preallocated pthread pool to the machine instead of a flat 16 —
++	# the app caps Jolt's job system at min(cores-2, 8) (SimWorld ctor), so a fixed 16 pool
++	# wastes idle workers on small machines. +1 spare over the cap; expression has no spaces
++	# so it survives argv splitting, and emscripten evaluates it at runtime.
+ 	set(ENVIRONMENT_FLAG
+ 		-s ENVIRONMENT=web,node,worker
+-		-s PTHREAD_POOL_SIZE=16)
++		-s "PTHREAD_POOL_SIZE=Math.max(2,Math.min(((navigator&&navigator.hardwareConcurrency)||4)-1,9))")
+ 	set(CMAKE_CXX_FLAGS "-pthread -s SHARED_MEMORY")
+ 	set(OUTPUT_BASE_NAME "${OUTPUT_FOLDER}jolt-physics.multithread")
+ 	set(REMOVE_THREAD_LOCAL "")
+@@ -107,6 +111,11 @@ FetchContent_Declare(
+         GIT_REPOSITORY "https://github.com/jrouwe/JoltPhysics"
+         GIT_TAG "v5.7.0"
+ 		SOURCE_SUBDIR "Build"
++        # OIP fork patches against upstream Jolt -- see patches/README.md. Applied via a helper
++        # script so re-configuring an already-patched tree is a no-op instead of a hard error.
++        PATCH_COMMAND ${CMAKE_COMMAND}
++                "-DPATCHES=${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-coupled-planar-friction.patch"
++                -P "${CMAKE_CURRENT_SOURCE_DIR}/patches/apply.cmake"
+ )
+ FetchContent_MakeAvailable(JoltPhysics)
+ 
+diff --git a/JoltJS.h b/JoltJS.h
+index dcee23e..267200c 100644
+--- a/JoltJS.h
++++ b/JoltJS.h
+@@ -877,3 +877,217 @@ public:
+ 	/// Value used to create gaps in the height field
+ 	static constexpr float	cNoCollisionValue = HeightFieldShapeConstants::cNoCollisionValue;
+ };
++
++/// A fully-native ContactListener for conveyor simulation (github.com/<oip> fork addition).
++///
++/// Replaces a per-contact JS listener whose WASM->JS crossings dominate step cost at industrial
++/// contact counts (and which the multithreaded build cannot run at all: contact callbacks fire on
++/// pthread job threads, whose isolated JS realms don't hold the listener object).
++///
++/// Contract with JS:
++/// - The listener owns a fixed-capacity facet table (8 doubles per slot:
++///   [kind (0 unused / 1 linear / 2 arc), vx, vy, vz, omega, cx, cz, reserved]).
++///   JS allocates slots itself and writes velocities through a Float64Array view over
++///   GetFacetTablePtr(); writes must happen outside PhysicsSystem::Update (the app writes
++///   between steps on its physics thread). The listener only reads.
++/// - A conveyor body advertises its facets in its (32-bit) user data:
++///   bit 31 = conveyor tag, bits 12..30 = base slot, bits 0..11 = entry count.
++///   count == 0 participates in ghost filtering only (e.g. conveying rigs' frame rails).
++///   count == 1 uses the base slot directly; count > 1 resolves the contacted facet via the
++///   leaf shape's 1-based user data (Shape::GetSubShapeUserData), mirroring the JS layout.
++/// - Ghost gates: a contact that is a speculative ghost (separation beyond inGhostMinSeparation
++///   with normal lift below inGhostSpecUpDot) or a shallow sideways ram (depth <= inGhostRamDepth
++///   with lift <= inGhostRamUpDot) has its mass/inertia zeroed instead of resolving.
++/// - Otherwise the facet surface velocities are summed (body1 negative, body2 positive; arc
++///   entries re-based about body 1's COM) into the contact's relative surface velocities.
++class ConveyorContactListener : public ContactListener
++{
++public:
++							ConveyorContactListener(unsigned int inCapacity, float inGhostMinSeparation, float inGhostSpecUpDot, float inGhostRamDepth, float inGhostRamUpDot) :
++		mGhostMinSeparation(inGhostMinSeparation),
++		mGhostSpecUpDot(inGhostSpecUpDot),
++		mGhostRamDepth(inGhostRamDepth),
++		mGhostRamUpDot(inGhostRamUpDot)
++	{
++		mFacets.resize((size_t)inCapacity * cStride, 0.0);
++	}
++
++	unsigned int			GetFacetCapacity() const
++	{
++		return (unsigned int)(mFacets.size() / cStride);
++	}
++
++	/// WASM address of the facet table, for JS to overlay a Float64Array view
++	unsigned int			GetFacetTablePtr() const
++	{
++		return (unsigned int)(uintptr_t)mFacets.data();
++	}
++
++	/// Couple torsional friction to tangential friction on DRIVEN deck contacts only (see
++	/// ContactSettings::mFrictionCoupling). 0 = off (stock Jolt behavior), 1 = fully coupled.
++	/// Cargo stalled against an obstruction has spent its traction dragging forward, so without
++	/// this it still resists yaw at full strength and cannot pivot off the thing it caught on.
++	void					SetFrictionCoupling(float inCoupling)
++	{
++		mFrictionCoupling = inCoupling;
++	}
++
++	virtual void			OnContactAdded(const Body &inBody1, const Body &inBody2, const ContactManifold &inManifold, ContactSettings &ioSettings) override
++	{
++		HandleContact(inBody1, inBody2, inManifold, ioSettings);
++	}
++
++	virtual void			OnContactPersisted(const Body &inBody1, const Body &inBody2, const ContactManifold &inManifold, ContactSettings &ioSettings) override
++	{
++		HandleContact(inBody1, inBody2, inManifold, ioSettings);
++	}
++
++private:
++	static constexpr size_t	cStride = 8;
++	static constexpr uint64	cConveyorTag = 0x80000000ull;
++
++	inline const double *	ResolveFacet(const Body &inBody, uint64 inUserData, const SubShapeID &inSubShapeID) const
++	{
++		uint32 count = (uint32)(inUserData & 0xfffull);
++		if (count == 0)
++			return nullptr;
++		uint32 base = (uint32)((inUserData >> 12) & 0x7ffffull);
++		if (count == 1)
++			return &mFacets[(size_t)base * cStride];
++		uint64 u = inBody.GetShape()->GetSubShapeUserData(inSubShapeID);
++		if (u < 1 || u > count)
++			return nullptr;
++		return &mFacets[((size_t)base + (size_t)u - 1) * cStride];
++	}
++
++	void					HandleContact(const Body &inBody1, const Body &inBody2, const ContactManifold &inManifold, ContactSettings &ioSettings)
++	{
++		uint64 u1 = inBody1.GetUserData();
++		uint64 u2 = inBody2.GetUserData();
++		bool conveyor1 = (u1 & cConveyorTag) != 0;
++		bool conveyor2 = (u2 & cConveyorTag) != 0;
++		if (!conveyor1 && !conveyor2)
++			return;
++
++		// mWorldSpaceNormal points from body 1 to body 2; flip it when the dynamic cargo is
++		// body 1 (i.e. the conveyor is body 2) so upDot measures the normal's lift on the box
++		float ny = inManifold.mWorldSpaceNormal.GetY();
++		float up_dot = conveyor1 ? ny : -ny;
++		float depth = inManifold.mPenetrationDepth;
++		bool speculative_ghost = depth < -mGhostMinSeparation && up_dot < mGhostSpecUpDot;
++		bool shallow_ram_ghost = depth <= mGhostRamDepth && up_dot <= mGhostRamUpDot;
++		if (speculative_ghost || shallow_ram_ghost)
++		{
++			ioSettings.mInvMassScale1 = 0.0f;
++			ioSettings.mInvMassScale2 = 0.0f;
++			ioSettings.mInvInertiaScale1 = 0.0f;
++			ioSettings.mInvInertiaScale2 = 0.0f;
++			return;
++		}
++
++		const double *e1 = conveyor1 ? ResolveFacet(inBody1, u1, inManifold.mSubShapeID1) : nullptr;
++		const double *e2 = conveyor2 ? ResolveFacet(inBody2, u2, inManifold.mSubShapeID2) : nullptr;
++		if (e1 == nullptr && e2 == nullptr)
++			return;
++
++		double vx = 0.0, vy = 0.0, vz = 0.0, wy = 0.0, c1x = 0.0, c1z = 0.0;
++		if ((e1 != nullptr && e1[0] == 2.0) || (e2 != nullptr && e2[0] == 2.0))
++		{
++			// Jolt applies the angular surface velocity about body 1's COM; the linear term
++			// re-bases the rotation onto the arc center so the surface velocity at every
++			// contact point is omega x (p - center)
++			RVec3 com1 = inBody1.GetCenterOfMassPosition();
++			c1x = (double)com1.GetX();
++			c1z = (double)com1.GetZ();
++		}
++		auto add = [&](const double *e, double s)
++		{
++			if (e == nullptr || e[0] == 0.0)
++				return;
++			if (e[0] == 1.0)
++			{
++				vx += s * e[1];
++				vy += s * e[2];
++				vz += s * e[3];
++			}
++			else
++			{
++				wy += s * e[4];
++				vx += s * e[4] * (c1z - e[6]);
++				vz -= s * e[4] * (c1x - e[5]);
++			}
++		};
++		add(e1, -1.0);
++		add(e2, 1.0);
++		ioSettings.mRelativeLinearSurfaceVelocity = Vec3((float)vx, (float)vy, (float)vz);
++		ioSettings.mRelativeAngularSurfaceVelocity = Vec3(0.0f, (float)wy, 0.0f);
++		// Only DRIVEN facets get here: the ghost gates returned above, and a registered-but-undriven
++		// body (a conveying rig's frame rail, count 0) resolves to no facet and returns as well.
++		ioSettings.mFrictionCoupling = mFrictionCoupling;
++	}
++
++	Array<double>			mFacets;
++	float					mGhostMinSeparation;
++	float					mGhostSpecUpDot;
++	float					mGhostRamDepth;
++	float					mGhostRamUpDot;
++	float					mFrictionCoupling = 0.0f;
++};
++
++/// Batched body-state snapshot (OIP fork addition): one WASM call fills a flat float buffer with
++/// [pos.x, pos.y, pos.z, quat.x, quat.y, quat.z, quat.w] per requested body, replacing the ~9
++/// WASM->JS getter crossings per body per frame that the frame walk (and per-beam sensor queries)
++/// otherwise pay. JS writes BodyID raw values (GetIndexAndSequenceNumber) into the ids buffer,
++/// calls Fill(system, count), and reads the output buffer via a Float32Array view. Read-only and
++/// called outside PhysicsSystem::Update from the physics thread — same access pattern as the
++/// getter walk it replaces (GetBodyInterfaceNoLock).
++class BodySnapshot
++{
++public:
++							BodySnapshot(unsigned int inCapacity)
++	{
++		mIds.resize(inCapacity);
++		mOut.resize((size_t)inCapacity * 7);
++	}
++
++	unsigned int			GetCapacity() const
++	{
++		return (unsigned int)mIds.size();
++	}
++
++	/// WASM address of the BodyID input buffer (uint32 per body), for a Uint32Array view
++	unsigned int			GetIdsPtr() const
++	{
++		return (unsigned int)(uintptr_t)mIds.data();
++	}
++
++	/// WASM address of the output buffer (7 floats per body), for a Float32Array view
++	unsigned int			GetOutPtr() const
++	{
++		return (unsigned int)(uintptr_t)mOut.data();
++	}
++
++	void					Fill(PhysicsSystem *inSystem, unsigned int inCount)
++	{
++		BodyInterface &bi = inSystem->GetBodyInterfaceNoLock();
++		unsigned int n = inCount < (unsigned int)mIds.size() ? inCount : (unsigned int)mIds.size();
++		for (unsigned int i = 0; i < n; i++)
++		{
++			RVec3 p;
++			Quat q;
++			bi.GetPositionAndRotation(BodyID(mIds[i]), p, q);
++			float *o = &mOut[(size_t)i * 7];
++			o[0] = (float)p.GetX();
++			o[1] = (float)p.GetY();
++			o[2] = (float)p.GetZ();
++			o[3] = q.GetX();
++			o[4] = q.GetY();
++			o[5] = q.GetZ();
++			o[6] = q.GetW();
++		}
++	}
++
++private:
++	Array<uint32>			mIds;
++	Array<float>			mOut;
++};
+diff --git a/JoltJS.idl b/JoltJS.idl
+index 449268b..72b1a2a 100644
+--- a/JoltJS.idl
++++ b/JoltJS.idl
+@@ -2164,6 +2164,7 @@ interface ContactSettings {
+ 	attribute float mInvMassScale2;
+ 	attribute float mInvInertiaScale2;
+ 	attribute boolean mIsSensor;
++	attribute float mFrictionCoupling;
+ 	[Value] attribute Vec3 mRelativeLinearSurfaceVelocity;
+ 	[Value] attribute Vec3 mRelativeAngularSurfaceVelocity;
+ };
+@@ -2212,6 +2213,23 @@ interface ContactListenerJS {
+ 	void OnContactRemoved([Const, Ref] SubShapeIDPair inSubShapePair);
+ };
+ 
++interface ConveyorContactListener {
++	void ConveyorContactListener(unsigned long inCapacity, float inGhostMinSeparation, float inGhostSpecUpDot, float inGhostRamDepth, float inGhostRamUpDot);
++	unsigned long GetFacetCapacity();
++	unsigned long GetFacetTablePtr();
++	void SetFrictionCoupling(float inCoupling);
++};
++
++ConveyorContactListener implements ContactListener;
++
++interface BodySnapshot {
++	void BodySnapshot(unsigned long inCapacity);
++	unsigned long GetCapacity();
++	unsigned long GetIdsPtr();
++	unsigned long GetOutPtr();
++	void Fill(PhysicsSystem inSystem, unsigned long inCount);
++};
++
+ interface SoftBodyManifold {
+ 	[Const, Ref] ArraySoftBodyVertex GetVertices();
+ 	boolean HasContact([Const, Ref] SoftBodyVertex inVertex);
+diff --git a/patches/0001-coupled-planar-friction.patch b/patches/0001-coupled-planar-friction.patch
+new file mode 100644
+index 0000000..0dc8acd
+--- /dev/null
++++ b/patches/0001-coupled-planar-friction.patch
+@@ -0,0 +1,82 @@
++diff --git a/Jolt/Physics/Collision/ContactListener.h b/Jolt/Physics/Collision/ContactListener.h
++index ea9fb56..f64fa5e 100644
++--- a/Jolt/Physics/Collision/ContactListener.h
+++++ b/Jolt/Physics/Collision/ContactListener.h
++@@ -47,6 +47,7 @@ public:
++ 	float					mInvMassScale2 = 1.0f;				///< Scale factor for the inverse mass of body 2 (0 = infinite mass, 1 = use original mass, 2 = body has half the mass). For the same contact pair, you should strive to keep the value the same over time.
++ 	float					mInvInertiaScale2 = 1.0f;			///< Scale factor for the inverse inertia of body 2 (usually same as mInvMassScale2)
++ 	bool					mIsSensor;							///< If the contact should be treated as a sensor vs body contact (no collision response)
+++	float					mFrictionCoupling = 0.0f;			///< Couples torsional friction to tangential friction (0 = uncoupled, the default and historical behavior; 1 = fully coupled). Tangential and torsional friction physically draw on the same Coulomb budget: a body that is already sliding has spent its traction and should offer little resistance to spinning. Solved independently the two budgets are additive, so a sliding body resists yaw as strongly as a stationary one - which prevents e.g. conveyed cargo from pivoting off an obstruction it catches on. Set to 1 to shrink the torsional limit by the fraction of the tangential limit that was consumed.
++ 	Vec3					mRelativeLinearSurfaceVelocity = Vec3::sZero(); ///< Relative linear surface velocity between the bodies (world space surface velocity of body 2 - world space surface velocity of body 1), can be used to create a conveyor belt effect
++ 	Vec3					mRelativeAngularSurfaceVelocity = Vec3::sZero(); ///< Relative angular surface velocity between the bodies (world space angular surface velocity of body 2 - world space angular surface velocity of body 1). Note that this angular velocity is relative to the center of mass of body 1, so if you want it relative to body 2's center of mass you need to add body 2 angular velocity x (body 1 world space center of mass - body 2 world space center of mass) to mRelativeLinearSurfaceVelocity.
++ };
++diff --git a/Jolt/Physics/Constraints/ContactConstraintManager.cpp b/Jolt/Physics/Constraints/ContactConstraintManager.cpp
++index 7bc0140..711baf6 100644
++--- a/Jolt/Physics/Constraints/ContactConstraintManager.cpp
+++++ b/Jolt/Physics/Constraints/ContactConstraintManager.cpp
++@@ -822,6 +822,7 @@ JPH_INLINE ContactConstraintManager::ContactConstraint<Type1, Type2> *ContactCon
++ 	tangent1.StoreFloat3(&constraint->mWorldSpaceTangent1);
++ 	inWorldSpaceNormal.Cross(tangent1).StoreFloat3(&constraint->mWorldSpaceTangent2);
++ 	constraint->mCombinedFriction = inSettings.mCombinedFriction;
+++	constraint->mFrictionCoupling = inSettings.mFrictionCoupling;
++ 	constraint->mInvInertiaScale1 = inSettings.mInvInertiaScale1;
++ 	constraint->mInvInertiaScale2 = inSettings.mInvInertiaScale2;
++ 	constraint->mCachedManifoldHandle = inCachedManifoldHandle;
++@@ -1727,6 +1728,9 @@ bool ContactConstraintManager::sSolveVelocityConstraint(ContactConstraintBase &i
++ 		max_angular_lambda *= constraint.mCombinedFriction;
++ 	}
++ 
+++	// Squared tangential impulse actually applied, used to shrink the torsional friction budget (see mFrictionCoupling)
+++	float linear_lambda_sq = 0.0f;
+++
++ 	// First apply friction constraint (non-penetration is more important than friction)
++ 	if (linear_friction_active)
++ 	{
++@@ -1741,7 +1745,9 @@ bool ContactConstraintManager::sSolveVelocityConstraint(ContactConstraintBase &i
++ 			float scale = MulRSqrtApproximate(max_linear_lambda, total_lambda_sq);
++ 			lambda1 *= scale;
++ 			lambda2 *= scale;
+++			total_lambda_sq = Square(max_linear_lambda);
++ 		}
+++		linear_lambda_sq = total_lambda_sq;
++ 
++ 		// Apply the friction impulse
++ 		if (constraint.mFrictionConstraint1.SolveVelocityConstraintApplyLambda(linear_velocity1, angular_velocity1, linear_velocity2, angular_velocity2, constraint.mInvMass1, constraint.mInvMass2, t1, lambda1))
++@@ -1752,8 +1758,23 @@ bool ContactConstraintManager::sSolveVelocityConstraint(ContactConstraintBase &i
++ 
++ 	// Apply angular friction
++ 	Vec3 ws_normal = constraint.GetWorldSpaceNormal();
++-	if (angular_friction_active && constraint.mAngularFrictionConstraint.SolveVelocityConstraint(angular_velocity1, angular_velocity2, ws_normal, -max_angular_lambda, max_angular_lambda))
++-		any_impulse_applied = true;
+++	if (angular_friction_active)
+++	{
+++		// Tangential and torsional friction draw on the same Coulomb budget. Solved with independent
+++		// limits they are additive, so a body that is already sliding (tangential budget spent) still
+++		// resists spinning at full strength. When mFrictionCoupling > 0 the torsional limit is reduced
+++		// by the fraction of the tangential limit that was consumed, which is the projection onto an
+++		// ellipsoidal limit surface. mFrictionCoupling == 0 leaves the historical behavior untouched.
+++		float angular_limit = max_angular_lambda;
+++		if (constraint.mFrictionCoupling > 0.0f && max_linear_lambda > 0.0f)
+++		{
+++			float consumed = min(linear_lambda_sq / Square(max_linear_lambda), 1.0f);
+++			angular_limit *= Sqrt(max(1.0f - constraint.mFrictionCoupling * consumed, 0.0f));
+++		}
+++
+++		if (constraint.mAngularFrictionConstraint.SolveVelocityConstraint(angular_velocity1, angular_velocity2, ws_normal, -angular_limit, angular_limit))
+++			any_impulse_applied = true;
+++	}
++ 
++ 	// Then apply all non-penetration constraints
++ 	for (uint32 i = 0; i < constraint.mNumContactPoints; ++i)
++diff --git a/Jolt/Physics/Constraints/ContactConstraintManager.h b/Jolt/Physics/Constraints/ContactConstraintManager.h
++index ed6f06d..5904f4d 100644
++--- a/Jolt/Physics/Constraints/ContactConstraintManager.h
+++++ b/Jolt/Physics/Constraints/ContactConstraintManager.h
++@@ -470,6 +470,7 @@ private:
++ 		Float3					mWorldSpaceTangent1;
++ 		Float3					mWorldSpaceTangent2;
++ 		float					mCombinedFriction;
+++		float					mFrictionCoupling;
++ 		float					mInvMass1;
++ 		float					mInvInertiaScale1;
++ 		float					mInvMass2;
+diff --git a/patches/README.md b/patches/README.md
+new file mode 100644
+index 0000000..330bdb8
+--- /dev/null
++++ b/patches/README.md
+@@ -0,0 +1,66 @@
++# OIP patches against upstream Jolt
++
++Applied by `PATCH_COMMAND` in `FetchContent_Declare(JoltPhysics ...)` (CMakeLists.txt), once
++when the dependency is populated. To re-apply after editing a patch, wipe `Build/` so
++FetchContent re-clones, or apply by hand in each `Build/*/_deps/joltphysics-src`.
++
++These are patches to **Jolt itself**, distinct from the fork's additions in `JoltJS.h` /
++`JoltJS.idl` (`ConveyorContactListener`, `BodySnapshot`), which are edits to this repo.
++
++Read this before bumping `GIT_TAG` — each patch is a semantic change to upstream code, so a
++version bump needs the patch re-checked against the new source, not just re-applied.
++
++## 0001-coupled-planar-friction.patch
++
++Pinned against Jolt `v5.7.0` (cf16769b).
++
++**What upstream does.** Jolt solves contact friction at the manifold level with three planar
++DOFs: two linear tangents (`mFrictionConstraint1/2`) plus a torsional constraint about the
++normal (`mAngularFrictionConstraint`), all applied at the averaged contact point. Both budgets
++derive from the same normal impulse and combined friction:
++
++```
++max_linear_lambda  = friction * Sum(lambda_n)
++max_angular_lambda = friction * Sum(|r| * lambda_n)
++```
++
++The linear pair is clamped **jointly** (a proper friction cone). The torsional constraint is
++clamped **independently**, with no reference to how much of the linear budget was consumed.
++
++**Why that's wrong.** Tangential and torsional friction physically draw on the same Coulomb
++budget. A body already sliding has spent its traction dragging forward and should offer almost
++no resistance to spinning. Solved with independent limits the two are additive, so a sliding
++body resists yaw exactly as hard as a stationary one.
++
++Measured on stock v5.6.0, a 10 kg box on a belt: yaw resistance breaks at the same torque
++(~21 N.m = mu*N*r) whether the belt is slipping under a stalled box or stopped. Lateral
++translation, by contrast, correctly loses its budget when the drive saturates. The consequence
++in an industrial sim: conveyed cargo that catches a corner on an obstruction **dead-stops
++instead of pivoting off it**, and it can never pivot, for any box geometry - the catch's couple
++is bounded by the drive force times half the box width, always less than the torsional limit's
++lever arm of the footprint's corner radius.
++
++**What the patch does.** Adds `ContactSettings::mFrictionCoupling` (default `0.0f`) and, when
++it is > 0, shrinks the torsional limit by the fraction of the tangential limit consumed:
++
++```
++angular_limit *= Sqrt(max(1 - mFrictionCoupling * consumed, 0))
++```
++
++which is the projection onto an ellipsoidal limit surface. At `0.0` the arithmetic is
++bit-identical to upstream, so every contact that does not opt in is unaffected.
++
++**Known limitation.** The coupling is one-directional: linear saturation reduces torsional
++capacity, but not the reverse (a spinning body keeps full linear grip). That covers the
++conveyor case and keeps the default path exact. A symmetric version would solve all three
++lambdas and project them together, which needs a get/apply split on
++`AngularFrictionConstraintPart` mirroring the one `ContactConstraintPart` already has.
++
++**Second-order effect, not addressed here.** `Sum(|r| * lambda_n)` puts every contact point at
++the footprint's corner radius (0.361 m for a 0.6 x 0.4 m box) where a real distributed pressure
++patch integrates to the area-mean (~0.19 m), so torsional friction runs ~1.9x high regardless of
++coupling. If pivots still feel sticky with coupling at 1.0, that weighting is the next knob.
++
++**Consumers.** `ConveyorContactListener::SetFrictionCoupling()` (JoltJS.h) sets it on driven
++deck contacts only - the ghost gates and undriven registered bodies return before that point.
++`ContactSettings.mFrictionCoupling` is also exposed to `ContactListenerJS` via JoltJS.idl.
+diff --git a/patches/apply.cmake b/patches/apply.cmake
+new file mode 100644
+index 0000000..91d8a79
+--- /dev/null
++++ b/patches/apply.cmake
+@@ -0,0 +1,25 @@
++# Idempotently apply the OIP patches to the fetched Jolt tree (see patches/README.md).
++#
++# FetchContent re-runs PATCH_COMMAND every time the populate sub-build re-runs -- e.g. after a
++# failed configure -- so a bare `git apply` succeeds once and then fails with "patch does not
++# apply" on every retry. Reverse-check first and skip anything already applied.
++#
++# Runs with the working directory set to the fetched source tree, so git operates on it directly.
++
++foreach(patch IN LISTS PATCHES)
++	execute_process(
++		COMMAND git apply --whitespace=nowarn --reverse --check ${patch}
++		RESULT_VARIABLE already_applied
++		ERROR_QUIET OUTPUT_QUIET)
++	if(already_applied EQUAL 0)
++		message(STATUS "OIP Jolt patch already applied, skipping: ${patch}")
++	else()
++		execute_process(
++			COMMAND git apply --whitespace=nowarn ${patch}
++			RESULT_VARIABLE apply_result)
++		if(NOT apply_result EQUAL 0)
++			message(FATAL_ERROR "Failed to apply OIP Jolt patch: ${patch}")
++		endif()
++		message(STATUS "OIP Jolt patch applied: ${patch}")
++	endif()
++endforeach()
+-- 
+2.53.0.windows.2
+

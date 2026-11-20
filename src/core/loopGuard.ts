@@ -1,4 +1,4 @@
-// A CPU budget for part scripts. Part code runs in-process (core/partScript.ts), so without it a `for (;;)` in
+// A CPU budget for part scripts. Part code runs in-process (core/parts/partScript.ts), so without it a `for (;;)` in
 // step() hangs the sim worker forever and one in geometry() freezes the UI. There is no preemption, and a
 // wall-clock timeout would make the sim nondeterministic. So loops are counted instead: every loop test is
 // rewritten to call a guard first, the guard counts iterations across one call into part code, and past the

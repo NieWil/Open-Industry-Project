@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { flexStations } from './flexPath'
-import { flexPull, toWorldXZ, withFlexPose } from './partGeometry'
-import type { FlexGrip, FlexPose } from './partGeometry'
-import { PACKAGE_FORMAT } from './partPackage'
-import { clearPackages, registerPackage } from './partRegistry'
+import { flexStations } from './conveyor/flexPath'
+import { flexPull, toWorldXZ, withFlexPose } from './parts/partGeometry'
+import type { FlexGrip, FlexPose } from './parts/partGeometry'
+import { PACKAGE_FORMAT } from './parts/partPackage'
+import { clearPackages, registerPackage } from './parts/partRegistry'
 import type { PartInstance } from './types'
 
 // Pulling a flex conveyor (core flexPull), the one rule behind the editor's path dots and the walking character's

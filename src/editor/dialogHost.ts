@@ -14,6 +14,7 @@
 // for new code: from a node, `windowOf(node)`; with no node in hand, the `active*` functions.
 
 import { useEffect, useRef } from 'react'
+import { keyBelongsToControl } from '../core/keymap'
 
 const popouts = new Set<Window>()
 const listeners = new Set<() => void>()
@@ -83,9 +84,21 @@ export function isElement(x: unknown): x is HTMLElement {
   return !!x && typeof x === 'object' && (x as Node).nodeType === 1
 }
 
-/** Is a key event's target somewhere text is typed (so a bare key belongs to it, not to a shortcut)? */
-export function isEditableTarget(t: unknown): boolean {
-  return isElement(t) && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
+/** regions that handle their own keys: a CodeMirror editor with its panels (the find bar's buttons included), and
+ *  the ladder sheet's find bar */
+const KEY_OWNING_REGION = '.cm-editor, .ld-find'
+
+/**
+ * Does this key belong to the element it was pressed on, rather than to an app shortcut? A key-owning region owns
+ * all its keys: a focused button in the code editor's find bar used to pass Escape and Delete through to the 3D
+ * editor. Anywhere else the control decides (core/keymap.ts `keyBelongsToControl`: text entry owns every key, a
+ * checkbox, slider, select or button only the keys it uses itself).
+ */
+export function keyBelongsToTarget(e: KeyboardEvent, opts: { spaceOnButton?: boolean } = {}): boolean {
+  const t = e.target
+  if (!isElement(t)) return false
+  if (t.closest(KEY_OWNING_REGION)) return true
+  return keyBelongsToControl(e, t, opts)
 }
 
 /** inside a dialog or an open menu, where Space and Enter confirm or pick - an app-wide key must leave them be */

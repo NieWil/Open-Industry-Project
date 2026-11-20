@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_SIM_HZ } from '../core/types'
 import type { StepStats } from '../sim/protocol'
-import { loadAtRate, renderWindow, rowMs, splitRows, stepWindow, sustainableHz } from './simLoad'
+import { budgetShare, limitOf, loadAtRate, renderWindow, rowMs, splitRows, stepWindow, sustainableHz, type RenderSample } from './simLoad'
 
 const phases = { cull: 0, behaviors: 0, beams: 0, zones: 0, script: 0, scriptTags: 0, scriptSetup: 0, scriptBody: 0, drives: 0, facets: 0, solver: 0, flow: 0 }
 
@@ -88,24 +88,88 @@ describe('splitRows', () => {
   })
 })
 
+/** a render sample; the GPU unmeasured unless given */
+const S = (cpuTotalMs: number, frames: number, at: number, gpuTotalMs: number | null = null, gpuFrames = 0): RenderSample => ({ cpuTotalMs, frames, at, gpuTotalMs, gpuFrames })
+
 describe('renderWindow', () => {
   it('weights by time: one long frame among quick ones drags fps and raises the load, where an interval clamp would hide it', () => {
     // 9 frames of 10 ms in 9 x 16.7 ms, then one 1500 ms frame: 10 frames in ~1650 ms of real time
-    const w = renderWindow({ cpuTotalMs: 0, frames: 0, at: 0 }, { cpuTotalMs: 9 * 10 + 1500, frames: 10, at: 9 * 16.7 + 1500 })!
+    const w = renderWindow(S(0, 0, 0), S(9 * 10 + 1500, 10, 9 * 16.7 + 1500))!
     expect(w.fps).toBeCloseTo(6.06, 1)
     expect(w.msPerFrame).toBeCloseTo(159)
     expect(w.load).toBeCloseTo(0.96, 2)
   })
 
   it('reads a vsync-paced frame as its share of the interval', () => {
-    const w = renderWindow({ cpuTotalMs: 100, frames: 10, at: 0 }, { cpuTotalMs: 220, frames: 40, at: 500 })!
+    const w = renderWindow(S(100, 10, 0), S(220, 40, 500))!
     expect(w.fps).toBeCloseTo(60)
     expect(w.msPerFrame).toBeCloseTo(4)
     expect(w.load).toBeCloseTo(0.24)
   })
 
   it('has no frame cost when no frame ran, and no window across a remount', () => {
-    expect(renderWindow({ cpuTotalMs: 5, frames: 3, at: 0 }, { cpuTotalMs: 5, frames: 3, at: 500 })).toEqual({ fps: 0, msPerFrame: null, load: 0 })
-    expect(renderWindow({ cpuTotalMs: 5, frames: 3, at: 0 }, { cpuTotalMs: 1, frames: 1, at: 500 })).toBeNull()
+    expect(renderWindow(S(5, 3, 0), S(5, 3, 500))).toEqual({ fps: 0, msPerFrame: null, load: 0, gpuMsPerFrame: null, gpuLoad: null })
+    expect(renderWindow(S(5, 3, 0), S(1, 1, 500))).toBeNull()
+  })
+
+  it('reads the GPU per its own resolved frames, which trail the drawn ones', () => {
+    // 15 frames drawn in 500 ms (30 fps); 14 resolved at 28 ms each
+    const w = renderWindow(S(0, 0, 0, 1000, 50), S(120, 15, 500, 1000 + 14 * 28, 64))!
+    expect(w.gpuMsPerFrame).toBeCloseTo(28)
+    expect(w.gpuLoad).toBeCloseTo(0.84)
+  })
+
+  it('caps a GPU frame at the frame interval, so the GPU is never busier than the time that passed', () => {
+    // 30 frames in 500 ms (16.7 ms each) while the passes add up to 20 ms a frame
+    const w = renderWindow(S(0, 0, 0, 0, 0), S(240, 30, 500, 600, 30))!
+    expect(w.gpuMsPerFrame).toBeCloseTo(16.67, 1)
+    expect(w.gpuLoad).toBeCloseTo(1)
+  })
+
+  it('has no GPU reading where the GPU is not measured', () => {
+    const w = renderWindow(S(0, 0, 0), S(120, 15, 500))!
+    expect(w.gpuMsPerFrame).toBeNull()
+    expect(w.gpuLoad).toBeNull()
+  })
+})
+
+describe('budgetShare', () => {
+  it('reads a frame over budget as over 100%, by how much', () => {
+    // the AS/RS demo on a 60 Hz display: an 18.3 ms GPU frame, busy 90% of the time at 49 fps
+    expect(budgetShare(18.3, 1000 / 60)).toBeCloseTo(1.1, 2)
+  })
+
+  it('has no share without a time or a budget', () => {
+    expect(budgetShare(null, 16.7)).toBeNull()
+    expect(budgetShare(5, null)).toBeNull()
+    expect(budgetShare(5, 0)).toBeNull()
+  })
+})
+
+describe('limitOf', () => {
+  const HZ60 = 1000 / 60
+
+  it('names the side furthest into its budget', () => {
+    expect(limitOf({ render: 0.34, gpu: 1.1, sim: 0.14 }, 49, HZ60)).toBe('gpu')
+    expect(limitOf({ render: 1.4, gpu: 1.1, sim: 0.14 }, 30, HZ60)).toBe('render')
+    expect(limitOf({ render: 0.3, gpu: 0.5, sim: 1.2 }, 60, HZ60)).toBe('sim')
+  })
+
+  it('names a side close to its budget, though the run still keeps up', () => {
+    expect(limitOf({ render: 0.3, gpu: 0.93, sim: 0.2 }, 58, HZ60)).toBe('gpu')
+  })
+
+  it('names nothing while every side has headroom', () => {
+    expect(limitOf({ render: 0.3, gpu: 0.5, sim: 0.2 }, 60, HZ60)).toBeNull()
+  })
+
+  it('names the GPU by elimination when it is not measured and neither CPU side explains a slow frame rate', () => {
+    expect(limitOf({ render: 0.24, gpu: null, sim: 0.21 }, 30, HZ60)).toBe('gpu')
+    expect(limitOf({ render: 0.24, gpu: null, sim: 0.21 }, 60, HZ60)).toBeNull()
+    expect(limitOf({ render: 0.24, gpu: null, sim: 0.21 }, 30, null)).toBeNull()
+  })
+
+  it('does not guess when the GPU is measured and has headroom', () => {
+    expect(limitOf({ render: 0.24, gpu: 0.4, sim: 0.2 }, 30, HZ60)).toBeNull()
   })
 })

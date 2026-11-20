@@ -4,11 +4,11 @@ import { webCorner, wrapAnchor, wrapLoad } from '../core/cargoWrap'
 import type { WrapBody } from '../core/cargoWrap'
 import { CARGO_CAP_LOAD_BASE } from '../core/frame'
 import type { FrameDressing } from '../core/frame'
-import type { CargoMarkValue } from '../core/partPackage'
-import { reportPartDiagnostic } from '../core/partDiagnostics'
-import { getPackage } from '../core/partRegistry'
-import { POSE_STRIDE, qApply, qConjugate, rigLinkIndex } from '../core/rigPose'
-import type { Quat, Vec3 } from '../core/rigPose'
+import type { CargoMarkValue } from '../core/parts/partPackage'
+import { reportPartDiagnostic } from '../core/parts/partDiagnostics'
+import { getPackage } from '../core/parts/partRegistry'
+import { POSE_STRIDE, qApply, qConjugate, rigLinkIndex } from '../core/rig/rigPose'
+import type { Quat, Vec3 } from '../core/rig/rigPose'
 import { pointInZone } from './cargoSensing'
 import type { BehaviorRecord, LiveBox, RigInstance, UnitLoad } from './worldTypes'
 
@@ -94,7 +94,7 @@ export function packageMaterialColor(pkgId: string | null, material: string): [n
 // roll is seen, before there is a direction of travel to trail.
 export function filmWeb(
   rigs: readonly RigInstance[],
-  webRollPrev: Map<BehaviorRecord, [number, number]>,
+  webRollPrev: WeakMap<BehaviorRecord, [number, number]>,
   b: BehaviorRecord,
   web: { link: string; offset: [number, number, number]; height: number },
   anchor: WrapBody,

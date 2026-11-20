@@ -18,8 +18,9 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 
-// LICENSE / COPYING / NOTICE, and Monaco's ThirdPartyNotices.txt (the licenses of the code IT bundles)
-const LICENSE_FILE = /^(licen[sc]e|copying|notice|thirdpartynotices)([-._].*)?$/i
+// LICENSE / COPYING / NOTICE, and the licenses of the code a package bundles: Monaco's ThirdPartyNotices.txt,
+// @huggingface/usd-web-viewer's THIRD_PARTY_LICENSES (the Rust crates compiled into its wasm)
+const LICENSE_FILE = /^(licen[sc]e|copying|notice|thirdpartynotices|third_party_licen[sc]es)([-._].*)?$/i
 
 /** The package a module id belongs to: its folder under the LAST node_modules, or null for the app's own code. */
 export function packageRootOf(id) {

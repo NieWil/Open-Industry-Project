@@ -3,37 +3,38 @@ import { CARGO_KIND_BOX, cargoFriction, cargoRefKey, cargoView, kindSpawnRef, pa
 import { unitPieces } from '../core/frame'
 import type { BoxFrame, FrameBeamHit, FrameDressing, ZoneMix } from '../core/frame'
 import type { CargoPiece } from '../core/cargoBody'
-import type { FlowFact } from '../core/flowFacts'
+import type { FlowFact } from '../core/flow/flowFacts'
 import type { Measurements, SimCore } from '../core/simCore'
 import { hexToRgb } from '../core/math'
-import { curvedConveyorView, faceHandleOfPkg, isBeltLike, pathHandleOfPkg, rigInclineRad, sdkSpurCorners, spurConveyorView } from '../core/partGeometry'
-import type { SpurConveyorView } from '../core/partGeometry'
-import { beltGuardWalls } from '../core/beltGuards'
-import { curvedGuardWalls } from '../core/curvedGuards'
-import { functionStaticHulls, functionStaticWalls } from '../core/functionGuards'
+import { bedOf, faceHandleOfPkg, pathHandleOfPkg, rigInclineRad, sdkSpurCorners } from '../core/parts/partGeometry'
+import type { SpurConveyorView } from '../core/parts/partGeometry'
+import { beltGuardWalls } from '../core/guards/beltGuards'
+import { curvedGuardWalls } from '../core/guards/curvedGuards'
+import { functionStaticHulls, functionStaticWalls } from '../core/guards/functionGuards'
 import { rotateXZ } from '../core/transforms'
-import { resolvePartParams } from '../core/geometryEval'
-import { clearPartDiagnostics, reportPartDiagnostic } from '../core/partDiagnostics'
-import type { ParamValue } from '../core/partApi'
-import { conveyorSpeedParams } from '../core/conveyorDirection'
-import type { GuardOpenings } from '../core/guardOpenings'
-import type { GuardExtents } from '../core/guardExtents'
+import { resolvePartParams } from '../core/geometry/geometryEval'
+import { clearPartDiagnostics, reportPartDiagnostic } from '../core/parts/partDiagnostics'
+import type { ParamValue } from '../core/parts/partApi'
+import { conveyorSpeedParams } from '../core/conveyor/conveyorDirection'
+import { conveyorSurfaceFriction, packageSurfaceFriction } from '../core/conveyor/conveyorFriction'
+import type { GuardOpenings } from '../core/guards/guardOpenings'
+import type { GuardExtents } from '../core/guards/guardExtents'
 import type { StructureConnections } from '../core/structureConnections'
 import { structureCutGeo } from '../core/structureCuts'
 import type { DeckCluster } from '../core/deckClusters'
-import type { GuardRun } from '../core/guardRuns'
-import { resolveScene, simResolvedKey } from '../core/sceneResolve'
-import type { ResolvedContext } from '../core/sceneResolve'
-import { beltDeckSubsLocal, conveyorDeckSubs, worldSub } from '../core/collisionShapes'
-import type { ConveyorEntry, ConveyorSubShape } from '../core/collisionShapes'
+import type { GuardRun } from '../core/guards/guardRuns'
+import { resolveScene, simResolvedKey } from '../core/scene/sceneResolve'
+import type { ResolvedContext } from '../core/scene/sceneResolve'
+import { beltDeckSubsLocal, conveyorDeckSubs, worldSub } from '../core/geometry/collisionShapes'
+import type { ConveyorEntry, ConveyorSubShape } from '../core/geometry/collisionShapes'
 import type { BeltSegmentSpec } from '../core/types'
-import type { PartPackage } from '../core/partPackage'
-import { isCargoPackage, servoJointsJson } from '../core/partPackage'
+import type { PartPackage } from '../core/parts/partPackage'
+import { isCargoPackage, rigJointsJson, subPosedLinkNames } from '../core/parts/partPackage'
 import * as behavior from './embeddedBehavior'
-import { getPackage, registerNewScenePackages, registerScenePackages } from '../core/partRegistry'
-import { linkHalfExtents, qApply, qFromAxisAngle, qMul, rigWorldPoses } from '../core/rigPose'
-import type { RigParams } from '../core/rigPose'
-import type { Vec3 } from '../core/rigPose'
+import { getPackage, registerNewScenePackages, registerScenePackages } from '../core/parts/partRegistry'
+import { arrayInstanceDeltas, linkHalfExtents, pitchCapMessage, posableArraysJson, qApply, qFromAxisAngle, qMul, rigWorldPoses } from '../core/rig/rigPose'
+import type { RigParams } from '../core/rig/rigPose'
+import type { Vec3 } from '../core/rig/rigPose'
 import type {
   BuildingPart,
   SdkPart,
@@ -52,25 +53,28 @@ import {
   toSimRate,
 } from '../core/types'
 import { BehaviorBus } from './behaviorBus'
-import { BUILDING_FRICTION, deckFriction, GROUND_FRICTION, surfaceFriction } from './bodyFactory'
+import { BUILDING_FRICTION, deckFriction, GROUND_FRICTION } from './bodyFactory'
 import { BodyHolds } from './bodyHolds'
-import { buildingBoxes } from './buildingColliders'
+import { buildingBoxes, groundHalfExtent } from './buildingColliders'
 import { CargoFlow } from './cargoFlow'
 import { CargoRegistry } from './cargoRegistry'
 import { DECK_AXES } from './conveyorContacts'
 import { ConveyorFacets } from './conveyorFacets'
+import { newSleepState, noteCall, waits } from './partSleep'
 import { driveDeckEntries } from './deckDrive'
 import { SimFlowFacts } from './flowFacts'
 import { buildFrame } from './frameBuild'
 import { LAYER_MOVING, LAYER_NON_MOVING, NUM_BROAD_PHASE_LAYERS, NUM_OBJECT_LAYERS } from './layers'
-import { PartBodies } from './partBodies'
+import { BodyTableFull, PartBodies } from './partBodies'
 import { PilotCapsule } from './pilotCapsule'
-import { buildRigBodies, linkDrivenByJoint } from './rigBuild'
+import { buildRigBodies, linkMovesAtRuntime } from './rigBuild'
 import type { RigBodySink } from './rigBuild'
 import { RigDriver } from './rigDriver'
 import { SensorRegistry } from './sensorRegistry'
-import { behaviorRecord, partPackageRev, partSignature } from './worldTypes'
-import type { BehaviorRecord, BodyHolder, JoltModule, KinematicScratch, LiveBox, PartGroup, StepClock, UnitLoad } from './worldTypes'
+import { LoadCells } from './loadCells'
+import { cargoContacts } from './cargoContacts'
+import { behaviorRecord, marksOf, partPackageRev, partSignature } from './worldTypes'
+import type { BehaviorRecord, BodyHolder, JoltModule, KinematicScratch, LiveBox, PartGroup, RigBody, StepClock, UnitLoad } from './worldTypes'
 
 export type { JoltModule } from './worldTypes'
 
@@ -163,6 +167,8 @@ export class SimWorld implements SimCore<BoxFrame> {
   private readonly rigDriver: RigDriver
   /** the sensing parts' beams and zones, and the casts/counts over the cargo (sensorRegistry.ts) */
   private readonly sensors: SensorRegistry
+  /** the rigs' load-cell links and what they read (loadCells.ts, ctx.weight) */
+  private readonly loadCells: LoadCells
   /** every part's bodies, filed by part, and the constructors that file them (partBodies.ts) */
   private readonly bodies: PartBodies
   /** the part groups, read-only (PartBodies.groups): updateScene's reconcile reads them, and sdkConveyorParity
@@ -212,6 +218,7 @@ export class SimWorld implements SimCore<BoxFrame> {
    *  8 of them per step, ~2.8 us, most of its reported cost. That overhead makes the per-part script floor
    *  look flat and body-independent. Probes turn it on; shipping runs leave it off. */
   perfParts = false
+  private readonly wakeAllParts: boolean // a test's check: call every reactive part on every step
   private disposed = false
 
   /** benchRaw (?joltraw, bench-only): skip the contact listener entirely and disable sleeping, so
@@ -222,7 +229,8 @@ export class SimWorld implements SimCore<BoxFrame> {
    *  hz: the scene's physics step rate; absent steps at DEFAULT_SIM_HZ; anything else goes through toSimRate.
    *  flowFacts: false skips collecting flow facts (sim/flowFacts.ts): the A/B lever that shows they cost little and
    *  change nothing. */
-  constructor(jolt: JoltModule, scene: SceneJSON, opts: { benchRaw?: boolean; forceJsListener?: boolean; perfParts?: boolean; hz?: number; flowFacts?: boolean } = {}) {
+  constructor(jolt: JoltModule, scene: SceneJSON, opts: { benchRaw?: boolean; forceJsListener?: boolean; perfParts?: boolean; hz?: number; flowFacts?: boolean; wakeAllParts?: boolean } = {}) {
+    this.wakeAllParts = opts.wakeAllParts === true
     const J = jolt
     this.J = J
     this.hz = toSimRate(opts.hz)
@@ -289,10 +297,11 @@ export class SimWorld implements SimCore<BoxFrame> {
     // the order of their dependencies. The cargo list is the registry's to fill; the holds, sensors, rigs and flow
     // read it, and so does everything here (`boxes`).
     const boxes: LiveBox[] = []
-    this.holds = new BodyHolds(J, this.bodyInterface, this.axisY, this.kin, boxes, this.partGroups)
+    this.holds = new BodyHolds(J, this.bodyInterface, this.axisY, this.kin, boxes, this.partGroups, (id, pos, rot) => this.cargo.placeBody(id, pos, rot))
     this.pilot = new PilotCapsule(J, this.bodyInterface, this.axisY, this.kin)
     this.cargo = new CargoRegistry(J, this.system, this.bodyInterface, this.axisY, this.clock, this.hz, boxes, this.holds, this.partGroups)
     this.sensors = new SensorRegistry(this.cargo, boxes, this.holds, this.pilot, this.clock, this.hz)
+    this.loadCells = new LoadCells(J, this.system, this.bodyInterface, this.cargo, boxes, this.holds, this.dt)
     this.rigDriver = new RigDriver(this.bodyInterface, this.kin, this.dt, boxes, this.cargo, this.holds, this.sensors, this.rigMsByPart)
     this.flow = new CargoFlow(this.cargo, boxes, this.holds, this.sensors, this.rigDriver.rigs, this.partGroups, this.cargo.dressings, this.clock, this.hz)
     this.flowFacts = opts.flowFacts === false ? null : new SimFlowFacts(scene.parts, this.cargo, boxes, this.holds, this.sensors, this.bus, this.clock, this.hz)
@@ -301,7 +310,7 @@ export class SimWorld implements SimCore<BoxFrame> {
     this.dressings = this.cargo.dressings
     this.holders = this.holds.holders
 
-    this.bodies.addStaticBox(GROUND_SIZE / 2, 0.5, GROUND_SIZE / 2, 0, -0.5, 0, 0, GROUND_FRICTION)
+    this.bodies.fitGround(groundHalfExtent(scene.parts, GROUND_SIZE / 2), GROUND_FRICTION)
 
     // The sim runs in a worker with its own module state, so the scene's embedded custom-part packages
     // must be registered here for the 'part' builder to resolve them (the main-thread registry that
@@ -312,9 +321,16 @@ export class SimWorld implements SimCore<BoxFrame> {
     // the parts again now, or the first run's facts name no conveyor at all (a drop reads as "over no conveyor")
     this.flowFacts?.tracker.setParts(scene.parts)
 
-    const resolved = resolveScene(scene.parts, 'sim')
-    for (const part of scene.parts)
-      this.buildPart(part, resolved.get(part.id))
+    // a part whose build throws fails the whole world; free what was made here, since the worker that catches the
+    // error outlives the run and never sees this object
+    try {
+      const resolved = resolveScene(scene.parts, 'sim')
+      for (const part of scene.parts)
+        this.buildPart(part, resolved.get(part.id))
+    } catch (e) {
+      this.dispose()
+      throw e
+    }
 
     this.system.OptimizeBroadPhase()
   }
@@ -331,6 +347,8 @@ export class SimWorld implements SimCore<BoxFrame> {
       conveyorKeys: [],
       boxIds: [],
     }
+    // a (re)build starts this part's runtime diagnostics fresh - anything still wrong re-reports
+    clearPartDiagnostics(part.id)
     this.bodies.begin(part.id, group)
     // track any speed-bearing part's commanded speed so a spawner can interlock against it
     // ("pause when conveyor stopped"). Rewritten on every rebuild, incl. PLC speed edits.
@@ -339,12 +357,29 @@ export class SimWorld implements SimCore<BoxFrame> {
     const speedKey = conveyorSpeedParams(part).speed
     const speedParam = speedKey ? (part.params as Record<string, unknown>)[speedKey] : undefined
     if (typeof speedParam === 'number') this.bus.setConveyorSpeed(part.id, speedParam)
+    // the bus and the rig list only append, so what this build attaches is what lands past these marks
+    const behaviorsFrom = this.bus.behaviors.length
+    const rigsFrom = this.rigDriver.rigs.length
+    const fileAttached = (): void => {
+      if (this.bus.behaviors.length > behaviorsFrom) group.behaviors = this.bus.behaviors.slice(behaviorsFrom)
+      if (this.rigDriver.rigs.length > rigsFrom) group.rigs = this.rigDriver.rigs.slice(rigsFrom)
+    }
     try {
       // dispatch table mirrors render/parts/registry.ts; types with no physics
       // bodies (sensors, controls, manipulators, floor_marking, group) have no
       // entry and fall through as a no-op.
       const builder = SimWorld.partBuilders.get(part.type)
       builder?.(this, part, { ctx })
+      fileAttached()
+    } catch (e) {
+      if (!(e instanceof BodyTableFull)) throw e
+      fileAttached()
+      this.bodies.end()
+      // take down what the part had built, then file it bodiless under the same signature: it builds again on its
+      // next edit or the next run, not on every scene update while the world stays full
+      this.destroyPart(part.id)
+      this.bodies.begin(part.id, { signature: group.signature, sigPart: group.sigPart, sigKey: group.sigKey, sigRev: group.sigRev, bodies: [], conveyorKeys: [], boxIds: [] })
+      reportPartDiagnostic({ source: 'build', partId: part.id, message: 'the physics world holds as many bodies as it can, so this part was built without collision. Stop clears the cargo that filled it.' })
     } finally {
       this.bodies.end()
     }
@@ -353,15 +388,16 @@ export class SimWorld implements SimCore<BoxFrame> {
   step(): void {
     const t0 = performance.now()
     const boxesIn = this.boxes.length
+    this.cargo.beginStep()
     if (this.flow.seedDue) this.flow.seedAuthoredUnits(this.sceneParts)
     // Cull cargo that has fallen off the world (SDK sinks remove in-zone cargo via CargoFlow.fulfillDespawns).
     // Heights come from the batched pose snapshot when the forked build provides one - one WASM
-    // crossing for every body, shared with beams via the (stepCount, boxesRev) cache - instead of two
+    // crossing for every body, shared with beams via the step snapshot (CargoRegistry.stepSnapshot) - instead of two
     // getters per box. Downward iteration keeps row i aligned with boxes[i] across removals, and a
     // removal bumps boxesRev so any later consumer re-snapshots rather than reading shifted rows.
     const cargo = this.cargo
     const boxes = this.boxes
-    const cullSnap = cargo.beamSnapshot()
+    const cullSnap = cargo.stepSnapshot()
     for (let i = boxes.length - 1; i >= 0; i--) {
       const box = boxes[i]
       if (!box) continue
@@ -384,7 +420,7 @@ export class SimWorld implements SimCore<BoxFrame> {
     this.pilot.drive(this.dt)
     this.rigDriver.drive(this.perfParts)
     const t3 = performance.now()
-    this.facets.sync() // After behaviors mutate entries, before the solver reads the table
+    for (const b of this.called) this.facets.syncPart(b) // only a called part drove an entry; the solver reads the table next
     const t4 = performance.now()
     this.joltInterface.Step(this.dt, 1)
     const p = this.phaseMs
@@ -408,12 +444,14 @@ export class SimWorld implements SimCore<BoxFrame> {
       w.facets = t4 - t3
       w.solver = t5 - t4
     }
+    this.cargo.endStep()
     this.clock.step++
   }
 
   // Run each attached custom-part script and fold its surface-velocity output into the live conveyor
   // entry, before the physics Step so cargo is dragged this tick. Event-cheap: a handful of parts, a
   // flat JSON in/out per part - dwarfed by the solver. simTime/dt are sim time (deterministic).
+  private readonly called: BehaviorRecord[] = [] // this tick: every `step` part, and the `react` parts with a reason
   private tickBehaviors(): void {
     const bus = this.bus
     const behaviors = bus.behaviors
@@ -435,15 +473,38 @@ export class SimWorld implements SimCore<BoxFrame> {
     // this tick's conveyor updates (which happen below), invisible at spawn cadences. undefined ⇒ no conveyors.
     const conveyorSpeeds = bus.speedSnapshot()
     const sensors = this.sensors
+    this.called.length = 0
     for (const b of behaviors) {
       // C-sensing: cast this part's sensor beams against cargo and hand the nearest hits in as `input.beams`
       const emitters = b.partId ? sensors.beamsOf(b.partId) : undefined
       let beams: Record<string, FrameBeamHit> | undefined
       if (emitters) {
         const tb = this.perfParts ? performance.now() : 0
-        beams = {}
-        for (const e of emitters) beams[e.name] = sensors.castBeam(e.origin, e.dir, e.range)
+        // The record by link name is built again only on a step where a beam reads something new. Most beams
+        // read the same on most steps, and on a line with 840 of them building every entry each step cost a third of
+        // the time this loop spends outside the parts.
+        const list = (b.beamList ??= [])
+        const n = emitters.length
+        let changed = b.beamHits === undefined || list.length !== n
+        let hitBoxes: Record<string, LiveBox> | undefined
+        for (let i = 0; i < n; i++) {
+          const e = emitters[i]!
+          const was = list[i]
+          const now = sensors.castBeam(e.origin, e.dir, e.range, was)
+          const hit = sensors.lastBeamHit.box
+          if (hit) (hitBoxes ??= {})[e.name] = hit
+          if (now !== was) {
+            changed = true
+            list[i] = now
+          }
+        }
+        if (changed) {
+          list.length = n
+          beams = {}
+          for (let i = 0; i < n; i++) beams[emitters[i]!.name] = list[i]!
+        } else beams = b.beamHits
         b.beamHits = beams // captured for the frame - the view draws beams from this, never re-casting
+        b.beamBoxes = hitBoxes // what ctx.markHit marks, so the mark lands on the body the part saw
         if (this.perfParts) this.phaseMs.beams += performance.now() - tb
       }
       const zoneList = b.partId ? sensors.zonesOf(b.partId) : undefined // C-despawn
@@ -481,10 +542,16 @@ export class SimWorld implements SimCore<BoxFrame> {
       inp.zoneAges = zoneAges
       inp.zoneMarks = zoneMarks
       inp.zoneMix = zoneMix
+      inp.weights = b.partId ? this.loadCells.readingsOf(b.partId) : undefined // ctx.weight
       inp.joints = b.measuredJoints
       inp.grips = b.heldGrips
+      inp.gripWidths = b.heldWidths
       inp.used = used
       inp.conveyorSpeeds = conveyorSpeeds
+      // A reactive part with nothing new to answer is not called, and its outputs stand (partSleep.ts)
+      const sl = (b.sleep ??= newSleepState())
+      if (waits(sl, inp, this.wakeAllParts)) continue
+      this.called.push(b)
       const ts = this.perfParts ? performance.now() : 0
       const parsed = behavior.stepDirect(b.handle, inp, dt)
       if (this.perfParts) {
@@ -508,6 +575,17 @@ export class SimWorld implements SimCore<BoxFrame> {
       try {
         const sv = parsed.surfaceVelocity
         driveDeckEntries(b, parsed, sv) // C-convey (deckDrive.ts): every conveying deck, in place, arc over linear
+        if (b.copyDecks) {
+          // a copy whose belt starts wakes the cargo asleep on it, as a zone of an accumulating bed does
+          for (const cd of b.copyDecks) {
+            const speeds = parsed.copySpeeds?.[cd.link]
+            for (let i = 0; i < cd.bodies.length; i++) {
+              const on = (speeds?.[i] ?? 0) !== 0
+              if (on && !cd.was[i]) startedDecks.push(cd.bodies[i]!)
+              cd.was[i] = on
+            }
+          }
+        }
         // stopped→running edge for this deck (linear speed = sv·forward, or arc omega): flag a cargo wake below.
         if (b.conveyorEntries || b.entry) {
           const conveying = parsed.arc ? parsed.arc.omega !== 0 : parsed.deckSpeed !== undefined ? (typeof parsed.deckSpeed === 'number' ? parsed.deckSpeed !== 0 : parsed.deckSpeed.some((v) => v !== 0)) : sv ? sv[0] * b.fwd[0] + sv[2] * b.fwd[2] !== 0 : false
@@ -542,6 +620,7 @@ export class SimWorld implements SimCore<BoxFrame> {
           b.values = parsed.values ?? {}
           b.displays = parsed.displays ?? {}
           b.subPoses = parsed.subPoses ?? {}
+          if (b.copyDecks) b.copySpeeds = parsed.copySpeeds ?? {}
         }
         // a behavior's tag writes are captured for any part (deck or rig): the part→PLC half of the bus.
         b.tags = parsed.tags ?? {}
@@ -564,6 +643,7 @@ export class SimWorld implements SimCore<BoxFrame> {
           b.pos = [b.pos[0] + b.fwd[0] * v, b.pos[1], b.pos[2] + b.fwd[2] * v]
           b.mobile = true
         }
+        noteCall(sl, inp, parsed)
       } catch {
         // a script error already surfaced via behavior.error(); leave the last velocity/joints in place
       }
@@ -613,6 +693,12 @@ export class SimWorld implements SimCore<BoxFrame> {
     this.bus.setInputTags(tags)
   }
 
+  /** PLC→part from the links to PLCs outside the app (the main thread's setTags): a layer of its own beside the
+   *  program's, so a run with both keeps both (sim/behaviorBus.ts). */
+  setBehaviorLinkTags(tags: Record<string, number | boolean>): void {
+    this.bus.setLinkTags(tags)
+  }
+
   /** part→PLC: the tags behaviors wrote on the last step, flattened across parts - the in-worker
    *  PLC scan's %I source (PlcHost.interleave). Same order + last-wins as frame().tags, and the
    *  same partId gate, so the scan reads exactly what a main-thread controller would. */
@@ -633,19 +719,44 @@ export class SimWorld implements SimCore<BoxFrame> {
   // C-convey: build a static conveyor body for each `conveys` (box) link of a rig - a powered deck whose top
   // carries cargo. The behavior's setSurfaceVelocity drives the (first) link's ConveyorEntry, so a belt's deck
   // conveys exactly like the deck-geometry path, but inside a rich rig (frame, guards, …).
-  private attachRigConveyors(rec: BehaviorRecord, part: SdkPart, geo: Extract<PartPackage['geometry'], { kind: 'rig' }>, scale: number, bodies: { name: string; body: Jolt.Body; id: Jolt.BodyID; offset?: Vec3 }[], inclineRad = 0): void {
-    const decks = geo.links.filter((l) => l.conveys && l.shape.kind === 'box')
-    if (decks.length === 0) return
+  // Returns the deck bodies by link name.
+  private attachRigConveyors(rec: BehaviorRecord, part: SdkPart, geo: Extract<PartPackage['geometry'], { kind: 'rig' }>, scale: number, bodies: RigBody[], inclineRad = 0, behaviorSource?: string): Map<string, Jolt.Body> {
+    const built = new Map<string, Jolt.Body>()
+    // a box deck, or a frame with a collision box: a deck that draws nothing, its look attached from geometry()
+    const decks = geo.links.filter((l) => l.conveys && (l.shape.kind === 'box' || (l.shape.kind === 'frame' && typeof l.collision === 'object')))
+    if (decks.length === 0) return built
     const partQuat = qFromAxisAngle([0, 1, 0], part.rotationY)
     const rest = rigWorldPoses(geo, {}, undefined, scale, part.params as RigParams, inclineRad)
     // an inclined deck tilts about the rig root: the FK already lifted lp.pos + rolled lp.quat, so the static
     // box gets the full world orientation (partYaw ∘ link tilt) and the surface velocity gets the deck tangent
     // {cos, sin}; tickBehaviors then carries cargo up the grade (× commanded speed), same path as a tilted belt run.
     const tan = inclineRad !== 0 ? { x: Math.cos(inclineRad), y: Math.sin(inclineRad) } : undefined
-    const friction = surfaceFriction(getPackage(part.packageId)) // the declared surface's grip (roller unless it says belt)
+    const friction = conveyorSurfaceFriction(part) // its friction param's grip, else its declared surface's
+    const subPosed = subPosedLinkNames(behaviorSource)
     for (const link of decks) {
       const lp = rest.get(link.name)
       if (!lp) continue
+      if (link.array?.posable) {
+        // a posable conveying array (a cross-belt sorter's carriers): one kinematic deck per copy, each with its own
+        // entry, posed by RigDriver.drive like any posable instance and run only by setSurfaceSpeed(speed, link, i)
+        const he = linkHalfExtents(link, part.params as RigParams)
+        const copies: NonNullable<BehaviorRecord['copyDecks']>[number] = { link: link.name, entries: [], bodies: [], was: [] }
+        const dq = qMul(partQuat, lp.quat) // the row's world orientation
+        const wp = qApply(partQuat, lp.pos)
+        arrayInstanceDeltas(link.array, part.params as RigParams, undefined, link.showParam).forEach((delta, i) => {
+          // built at its rest place in the row; the driver poses it from the first step
+          const d = qApply(dq, delta)
+          const body = this.bodies.addKinematicBoxQuat(he[0], he[1], he[2], [part.position[0] + wp[0] + d[0], part.position[1] + wp[1] + d[1], part.position[2] + wp[2] + d[2]], dq, friction)
+          const entry: Extract<ConveyorEntry, { kind: 'linear' }> = { kind: 'linear', vx: 0, vy: 0, vz: 0 }
+          this.bodies.registerConveyorBody(body, [entry], DECK_AXES)
+          copies.entries.push(entry)
+          copies.bodies.push(body)
+          copies.was.push(false)
+          bodies.push({ name: link.name, body, id: body.GetID(), instance: i, rest: delta })
+        })
+        ;(rec.copyDecks ??= []).push(copies)
+        continue
+      }
       const wp = qApply(partQuat, lp.pos)
       const he = linkHalfExtents(link, part.params as RigParams) // resolved box half-extents (C-paramgeo aware)
       const cx = part.position[0] + wp[0], cy = part.position[1] + wp[1], cz = part.position[2] + wp[2]
@@ -656,15 +767,20 @@ export class SimWorld implements SimCore<BoxFrame> {
       // `bodies` so RigDriver.drive re-poses it each tick from FK: it then both lifts cargo (kinematic push) and
       // carries it (surface velocity). A plain (unjointed) belt/roller deck stays static: a moving body would
       // shove its cargo (buildRigBodies skips conveys links for exactly that reason).
-      const jointDriven = linkDrivenByJoint(geo, link.name)
+      // ...and so must one the behavior poses with setSubPose, or a deck under a posed link (a shuttle's top)
+      const jointDriven = linkMovesAtRuntime(geo, link.name, subPosed)
       // One body at the declared box. Conveying is scoped to the running surface by the facet axes
       // below, not by geometry: the listener drives only contacts on the deck's top face, and treats
       // a contact on a side as the wall it is. One body works because the listener can keep a
       // contact's collision and drop its conveying; with only accept-or-disable it would take a thin inset
       // slab in a proud plain housing: two bodies per deck, a 5 mm notch at every junction.
+      // A deck whose link is turned in the part (a side belt standing on its edge, a deck tipped onto a slope or yawed
+      // across the bed) is built at that turn, as a jointed one is: its running face is its local +Y wherever that
+      // points. Built from the part's yaw alone, the turn was dropped without a word.
+      const turned = Math.abs(lp.quat[0]) > 1e-9 || Math.abs(lp.quat[1]) > 1e-9 || Math.abs(lp.quat[2]) > 1e-9
       const body = jointDriven
         ? this.bodies.addKinematicBoxQuat(he[0], he[1], he[2], [cx, cy, cz], dq, friction)
-        : tan
+        : tan || turned
           ? this.bodies.addStaticBoxQuat(he[0], he[1], he[2], cx, cy, cz, { x: dq[0], y: dq[1], z: dq[2], w: dq[3] }, friction)
           : this.bodies.addStaticBox(he[0], he[1], he[2], cx, cy, cz, part.rotationY, friction)
       const entry: ConveyorEntry = { kind: 'linear', vx: 0, vy: 0, vz: 0, ...(tan ? { tan } : {}) }
@@ -675,6 +791,7 @@ export class SimWorld implements SimCore<BoxFrame> {
       // segments many, all sharing the behavior's surface/arc command.
       ;(rec.conveyorEntries ??= []).push(entry)
       ;(rec.deckBodies ??= []).push(body)
+      built.set(link.name, body)
       // a joint-driven deck is re-posed each tick by RigDriver.drive (the body centre is the link origin).
       if (jointDriven) bodies.push({ name: link.name, body, id: body.GetID() })
     }
@@ -682,6 +799,7 @@ export class SimWorld implements SimCore<BoxFrame> {
     // until the conveyor's behavior first commands a non-zero speed - a real-but-not-yet-ticked conveyor reads
     // "stopped", not "unknown" (which a dangling id reads). Overwritten each tick by tickBehaviors.
     this.bus.setConveyorSpeed(part.id, 0)
+    return built
   }
 
   /** the new box's frame id, or -1 when the physics system has no room left for another body */
@@ -765,8 +883,9 @@ export class SimWorld implements SimCore<BoxFrame> {
    * spawnScriptedConveyor for a `function`-geometry belt (geometry() builds the matching visual). One compound
    * conveyor body of run boxes + bend prisms (beltDeckSubsLocal), each facet carrying its own tangent; the
    * script's commanded surface velocity is distributed per-facet each tick (see tickBehaviors' `tan` branch),
-   * so cargo rides up/over the inclines and a PLC run-gate actually stops it. Returns false if there are no
-   * runs (degenerate segments) or the script failed to compile.
+   * so cargo rides up/over the inclines and a PLC run-gate actually stops it. Returns 'no-runs' when the
+   * segments are degenerate (nothing was built, so the caller may build a flat deck instead) and 'script-failed'
+   * when the deck was built but the script failed to compile (no fallback: it would add a second deck).
    */
   spawnScriptedBeltConveyor(
     position: [number, number, number],
@@ -777,9 +896,9 @@ export class SimWorld implements SimCore<BoxFrame> {
     source: string,
     paramsJson = '{}',
     friction = BELT_FRICTION,
-  ): boolean {
+  ): 'built' | 'no-runs' | 'script-failed' {
     const subs = beltDeckSubsLocal(segments, height, width)
-    if (subs.length === 0) return false
+    if (subs.length === 0) return 'no-runs'
     const [x, y, z] = position
     // a path bed's surface grip: the caller passes the part's declared surface (a belt, as the belt conveyor is)
     const body = this.bodies.addCompoundConveyor(subs, x, y, z, rotationY, friction)
@@ -787,14 +906,14 @@ export class SimWorld implements SimCore<BoxFrame> {
     // folds in neighbour-derived openings - the one place guards are built on both the lone and clustered path.)
     const forward: [number, number, number] = [Math.cos(rotationY), 0, -Math.sin(rotationY)]
     const handle = behavior.create(source, paramsJson)
-    if (handle <= 0) return false
+    if (handle <= 0) return 'script-failed'
     // the same entry objects addCompoundConveyor registered in the conveyors map - driving them per tick
     // mutates what the live contact listener reads (in place), exactly like a flat deck's single entry.
     const entries: ConveyorEntry[] = []
     const seen = new Set<ConveyorEntry>()
     for (const s of subs) if (s.entry && !seen.has(s.entry)) { seen.add(s.entry); entries.push(s.entry) }
     this.bus.add(behaviorRecord(handle, position, forward, null, { conveyorEntries: entries, body }))
-    return true
+    return 'built'
   }
 
   /**
@@ -807,8 +926,8 @@ export class SimWorld implements SimCore<BoxFrame> {
     const subs = conveyorDeckSubs(part)
     if (subs.length === 0) return false
     const [x, y, z] = part.position
-    // a curve declared a belt surface grips like the built-in curved belt; a curved roller stays 0.8
-    const friction = surfaceFriction(pkg)
+    // its friction param's grip, else its declared surface's
+    const friction = conveyorSurfaceFriction(part)
     const body = this.bodies.addCompoundConveyor(subs, x, y, z, part.rotationY, friction)
     const handle = behavior.create(pkg.behavior, JSON.stringify(part.params))
     if (handle <= 0) return false
@@ -845,13 +964,15 @@ export class SimWorld implements SimCore<BoxFrame> {
       if (segs && path) {
         const hv = resolved(path.heightKey)
         const height = typeof hv === 'number' && hv > 0 ? hv : pkg.geometry.bounds.top
-        if (this.spawnScriptedBeltConveyor(position, rotationY, segs, height, wid, pkg.behavior, paramsJson, surfaceFriction(pkg))) return true
+        const belt = this.spawnScriptedBeltConveyor(position, rotationY, segs, height, wid, pkg.behavior, paramsJson, packageSurfaceFriction(pkg, overrides))
+        // only a belt that built nothing falls back to the flat deck; a failed script already has its bent deck
+        if (belt !== 'no-runs') return belt === 'built'
       }
       const lv = resolved(face.lengthKey)
       const len = typeof lv === 'number' && lv > 0 ? lv : pkg.geometry.bounds.length
-      // the flat fallback still serves belt-bedded parts (the SDK spur belt has no segments): give a
-      // declared belt surface the belt grip, matching the built-in spur_belt_conveyor's deck friction.
-      const friction = surfaceFriction(pkg)
+      // the flat fallback still serves belt-bedded parts (the SDK spur belt has no segments): its friction param's
+      // grip, else its declared surface's
+      const friction = packageSurfaceFriction(pkg, overrides)
       return this.spawnScriptedConveyor(position, rotationY, len, wid, pkg.behavior, paramsJson, friction)
     }
     return false
@@ -866,9 +987,12 @@ export class SimWorld implements SimCore<BoxFrame> {
    */
   private addSdkPart(part: SdkPart, cluster?: DeckCluster, openings?: GuardOpenings, extents?: GuardExtents, structConn?: StructureConnections, guardRun?: GuardRun): void {
     const pkg = getPackage(part.packageId)
-    if (!pkg) return
-    // a (re)build starts this part's runtime diagnostics fresh - anything still wrong re-reports
-    clearPartDiagnostics(part.id)
+    if (!pkg) {
+      // The render resolves packages on the main thread, so the part still draws. Without this report a conveyor
+      // with no package here looks normal and cargo falls through it.
+      reportPartDiagnostic({ source: 'build', partId: part.id, packageId: part.packageId, message: `the sim was not given part package "${part.packageId}", so this part has no collision or behavior` })
+      return
+    }
     if (isCargoPackage(pkg)) {
       // C-cargo: the part is dynamic cargo (a box, pallet or tote, or a rig with its own body, core/cargoBody.ts), one dynamic body through the same pipeline as the built-in
       // box/pallet (frame → instanced batch render, gizmo grab/freeze, pilot carry). No behavior attach:
@@ -914,60 +1038,53 @@ export class SimWorld implements SimCore<BoxFrame> {
       }
       this.flow.noteUnitRebuilt(part.id)
     }
-    if (cluster && cluster.members.length > 1 && pkg.geometry.kind === 'drawn' && pkg.geometry.conveys && isBeltLike(part)) {
-      // Clustered belt-like SDK belt (butted end-to-end with another conveyor): the merged deck + this member's
-      // conveying behavior are built by the cluster owner (addConveyorDeck: order-independent, attaches every
-      // custom member). It rides one compound so Jolt's edge removal spans the seam (no cargo snag), for
-      // built-in belt parity. Guards stay per-part (they don't merge), so build this member's here (with any neighbour openings).
-      this.addConveyorDeck(part, cluster)
-      this.addCustomBeltGuards(part, openings, extents, guardRun)
-      return
-    }
-    const curved = pkg.geometry.kind === 'drawn' && pkg.geometry.conveys ? curvedConveyorView(part) : null
-    if (curved) {
-      // a curved SDK conveyor (`arc` handle): build the arc chord + stub deck (curvedDeckSubs, via conveyorDeckSubs)
-      // and attach its behavior, so it both collides and carries cargo around the sweep (setArcSurfaceVelocity each
-      // tick). The flat-deck fallback in spawnFromPackage would put a straight box at the origin, missing the arc.
-      if (this.spawnCurvedConveyor(part, pkg)) {
-        const rec = this.bus.last()
-        if (rec) rec.partId = part.id
-      } else this.reportAttachFailure(part)
-      // the arc's inner/outer guard walls (+ tangent stubs) - this early-return path must build them itself
-      this.addCustomCurvedGuards(part, guardRun)
-      return
-    }
-    const spurV = pkg.geometry.kind === 'drawn' && pkg.geometry.conveys ? spurConveyorView(part) : null
-    if (spurV) {
-      // an SDK spur conveyor (length face handle declares splay params): build the parallelogram hull deck
-      // the built-in spur gets (addSpurConveyor's centre-origin twin). The flat length×width fallback box
-      // misses the splay overhang past ±length/2, so cargo crossing the angled discharge/infeed face would
-      // fall off a bed that looks solid. Guards go through the general static-box channel with the host's
-      // snap extents folded in, so a merged junction's guard colliders reach the host wall like the visual.
-      if (this.spawnSdkSpurConveyor(part, pkg, spurV)) {
-        const rec = this.bus.last()
-        if (rec) rec.partId = part.id
-      } else this.reportAttachFailure(part)
-      this.addFunctionStaticColliders(part, pkg, extents, guardRun)
-      return
-    }
     if (pkg.geometry.kind === 'drawn' && pkg.geometry.conveys) {
-      // deck / conveying function bed: a conveying body + behavior; tag the just-
-      // pushed record with the part id so any joint output is routed to its visual (decks/beds emit none, harmless).
+      const bed = bedOf(part)
+      if (bed?.kind === 'path' && cluster && cluster.members.length > 1) {
+        // Clustered belt (butted end-to-end with another conveyor): the merged deck + this member's conveying
+        // behavior are built by the cluster owner (addConveyorDeck: order-independent, attaches every custom
+        // member). It rides one compound so Jolt's edge removal spans the seam (no cargo snag). Guards stay per-part
+        // (they don't merge), so build this member's here (with any neighbour openings).
+        this.addConveyorDeck(part, cluster)
+        this.addCustomBeltGuards(part, openings, extents, guardRun)
+        return
+      }
+      if (bed?.kind === 'arc') {
+        // a curve: build the arc chord + stub deck (curvedDeckSubs, via conveyorDeckSubs) and attach its behavior,
+        // so it both collides and carries cargo around the sweep (setArcSurfaceVelocity each tick). The flat-deck
+        // fallback in spawnFromPackage would put a straight box at the origin, missing the arc.
+        if (this.spawnCurvedConveyor(part, pkg)) {
+          const rec = this.bus.last()
+          if (rec) rec.partId = part.id
+        } else this.reportAttachFailure(part)
+        // the arc's inner/outer guard walls (+ tangent stubs)
+        this.addCustomCurvedGuards(part, guardRun)
+        return
+      }
+      if (bed?.kind === 'spur') {
+        // a spur: build the parallelogram hull deck. The flat length×width fallback box misses the splay overhang
+        // past ±length/2, so cargo crossing the angled discharge/infeed face would fall off a bed that looks solid.
+        // Guards go through the general static-box channel with the host's snap extents folded in, so a merged
+        // junction's guard colliders reach the host wall like the visual.
+        if (this.spawnSdkSpurConveyor(part, pkg, bed.view.spur)) {
+          const rec = this.bus.last()
+          if (rec) rec.partId = part.id
+        } else this.reportAttachFailure(part)
+        this.addFunctionStaticColliders(part, pkg, { extents, openings, guardRun })
+        return
+      }
+      // any other drawn conveying bed (a lone belt, a drawn straight, a deck with no declared bed): a conveying
+      // body + behavior; tag the just-pushed record with the part id so any joint output is routed to its visual
+      // (decks/beds emit none, harmless).
       if (this.spawnFromPackage(pkg, part.position, part.rotationY, JSON.stringify(part.params))) {
         const rec = this.bus.last()
         if (rec) rec.partId = part.id
       } else this.reportAttachFailure(part)
-      // belt-like beds get their static side guards here (one place for both the lone + clustered path); a
-      // non-belt conveying part is self-gated out by addCustomBeltGuards (no belt view → no guards).
-      this.addCustomBeltGuards(part, openings, extents, guardRun)
-      // an SDK curved conveying part (curved belt/roller) gets its inner/outer arc guard walls instead; the
-      // belt path above self-gates out for a curve (no belt view), and this self-gates out for a non-curve.
-      this.addCustomCurvedGuards(part, guardRun)
-      // a conveying function part that is neither belt-like nor curved (a plain straight SDK conveyor; spurs
-      // early-returned above): the two path-aware guard builders self-gate out for it, so its
-      // collision:'box' guards get the general AABB-box channel: the same coarse static colliders a
+      // a belt gets its path-aware side guards here (one place for both the lone + clustered path). Anything else
+      // gets the general AABB-box channel for its collision:'box' guards: the same coarse static colliders a
       // non-conveying function part gets, so cargo can't leave its bed.
-      if (pkg.geometry.kind === 'drawn' && !isBeltLike(part) && !curvedConveyorView(part)) this.addFunctionStaticColliders(part, pkg)
+      if (bed?.kind === 'path') this.addCustomBeltGuards(part, openings, extents, guardRun)
+      else this.addFunctionStaticColliders(part, pkg, { openings })
     } else if (pkg.geometry.kind === 'drawn') {
       // a non-conveying function part: realize its declared solids, collision:'box' submeshes as AABB
       // boxes, collision:'hull' ones as convex hulls (the general collision channel; a conveying belt
@@ -977,20 +1094,36 @@ export class SimWorld implements SimCore<BoxFrame> {
       // rig: a joint-emitting behavior + a kinematic collision body per link. tickBehaviors captures the
       // joints, RigDriver.drive runs FK (shared with the renderer) and MoveKinematic's each body so the
       // links both push cargo and animate the visual identically.
-      const rec = this.attachJointBehavior(part.id, pkg.behavior, JSON.stringify(part.params), part.position, part.rotationY, servoJointsJson(pkg.geometry))
+      const rec = this.attachJointBehavior(part.id, pkg.behavior, JSON.stringify(part.params), part.position, part.rotationY, rigJointsJson(pkg.geometry), posableArraysJson(pkg.geometry))
       if (!rec) this.reportAttachFailure(part)
       if (rec) {
+        // The bodies are built from the default-resolved params, as the renderer draws the links (rig.ts refresh): a
+        // part saved without a size param collides at its default, where it is drawn, not at the link's static
+        // size. The driver keeps this object for the run; an edit replaces the part and rebuilds it.
+        const params = resolvePartParams(pkg.params, part.params as Record<string, ParamValue>)
+        const resolved = { ...part, params } as SdkPart
         // per-instance cut geometry: a platform with a snapped stair opens its railing + carves its deck; a
         // top-connected stair retracts its top handrail. Colliders build from the same cut links the renderer
         // rebuilds its meshes from (structureCutGeo), so the physical footprint can't drift from the visual.
-        const geo = structConn ? structureCutGeo(pkg.geometry, part.id, part.params as unknown as Record<string, unknown>, structConn) : pkg.geometry
-        const scale = typeof part.params.scale === 'number' && part.params.scale > 0 ? part.params.scale : 1
-        const inclineRad = rigInclineRad(geo, part.params as unknown as Record<string, unknown>)
-        const bodies = this.buildRigBodies(geo, part.position, part.rotationY, scale, part.params as RigParams, pkg.params, inclineRad, openings, extents, guardRun)
-        this.rigDriver.add({ rec, geo, pkg, pos: part.position, rotationY: part.rotationY, scale, params: part.params as RigParams, inclineRad, bodies, grips: new Map(), emptied: new Set() })
-        this.sensors.collectBeams(part, geo, scale, resolvePartParams(pkg.params, part.params as Record<string, ParamValue>))
-        this.sensors.collectZones(part, geo, scale)
-        this.attachRigConveyors(rec, part, geo, scale, bodies, inclineRad)
+        const geo = structConn ? structureCutGeo(pkg.geometry, part.id, params, structConn) : pkg.geometry
+        const scale = typeof params.scale === 'number' && params.scale > 0 ? params.scale : 1
+        const inclineRad = rigInclineRad(geo, params)
+        const bodies = this.buildRigBodies(geo, part.position, part.rotationY, scale, params as RigParams, pkg.params, inclineRad, openings, extents, guardRun)
+        for (const link of geo.links) {
+          const capped = pitchCapMessage(link, params as RigParams)
+          if (capped) reportPartDiagnostic({ source: 'geometry', partId: part.id, packageId: pkg.id, message: capped })
+        }
+        this.rigDriver.add({ rec, geo, pkg, pos: part.position, rotationY: part.rotationY, scale, params: params as RigParams, inclineRad, bodies, grips: new Map(), emptied: new Set() })
+        this.sensors.collectBeams(resolved, geo, scale, params)
+        this.sensors.collectZones(resolved, geo, scale)
+        const decks = this.attachRigConveyors(rec, resolved, geo, scale, bodies, inclineRad, pkg.behavior)
+        const cells: { name: string; body: Jolt.Body; he: Vec3 }[] = []
+        for (const link of geo.links) {
+          if (!link.loadCell) continue
+          const body = decks.get(link.name) ?? bodies.find((rb) => rb.name === link.name)?.body
+          if (body) cells.push({ name: link.name, body, he: linkHalfExtents(link, params as RigParams) })
+        }
+        this.loadCells.set(part.id, cells)
       }
     }
   }
@@ -1042,11 +1175,11 @@ export class SimWorld implements SimCore<BoxFrame> {
   }
 
   /** Static inner/outer side-guard walls for an SDK curved conveying part (curved belt/roller): the collision
-   *  twin of the built-in addCurvedSideGuards, but driven by the arc `handle` recognizer (curvedConveyorView)
+   *  twin of the built-in addCurvedSideGuards, but driven by the arc bed's view
    *  instead of a built-in part type, so cargo can't leave the band. Self-gates out for a non-curved part (the
    *  belt path builds those). SDK arc convention: P(t) = (r·cos t, 0, −r·sin t), the box yaw = t + π/2. */
   private addCustomCurvedGuards(part: SdkPart, guardRun?: GuardRun): void {
-    // Walls come from core/curvedGuards.ts, the same enumeration guardRuns.ts reads, so a merge decision
+    // Walls come from core/guards/curvedGuards.ts, the same enumeration guardRuns.ts reads, so a merge decision
     // keyed by wall applies to the box the resolver meant. Only the straight tangent stubs can ever merge (the
     // arc chords turn, and sameWall's parallel test drops them), which is what a butted straight meets.
     for (const w of curvedGuardWalls(part)) {
@@ -1063,7 +1196,7 @@ export class SimWorld implements SimCore<BoxFrame> {
    *  behavior, so the splay overhang past ±length/2 is real conveying deck, not air, and cargo rides the
    *  sheared bed across the merge. A declared belt surface grips like the built-in spur belt (BELT_FRICTION). */
   private spawnSdkSpurConveyor(part: SdkPart, pkg: PartPackage, view: SpurConveyorView): boolean {
-    const friction = surfaceFriction(pkg)
+    const friction = conveyorSurfaceFriction(part)
     const [px, py, pz] = part.position
     const corners = sdkSpurCorners(view)
     // One prism. The sheared bed's flanks wall rather than convey because the facet declares its
@@ -1086,14 +1219,16 @@ export class SimWorld implements SimCore<BoxFrame> {
    *  solid whose AABB would be a lie. Used both for a non-conveying function part and for a conveying one that
    *  isn't belt-like/curved (the spur's side guards), where the path-aware guard builders don't apply. The box
    *  channel is coarse for a very non-boxy solid, but a real wall, and the only one a guard merge can span.
-   *  `extents` (snap extents) are folded into the params first, so a merged mover's guard colliders reach
-   *  the host wall plane exactly like its rendered rails/guards: a spur extends to it, a flush straight/belt
-   *  retracts to it (withSnapExtents is a no-op for parts without a guardExtents param). */
-  private addFunctionStaticColliders(part: SdkPart, pkg: PartPackage, extents?: GuardExtents, guardRun?: GuardRun): void {
+   *  `extents` (snap extents) and `openings` (as `guardGaps`) are folded into the params first, so a merged
+   *  mover's guard colliders reach the host wall plane exactly like its rendered rails/guards (a spur extends to
+   *  it, a flush straight/belt retracts to it), and a diverter's gap is open in the collider too. Each fold is a
+   *  no-op for a part that does not declare its param. */
+  private addFunctionStaticColliders(part: SdkPart, pkg: PartPackage, facts: { extents?: GuardExtents; openings?: GuardOpenings; guardRun?: GuardRun } = {}): void {
+    const { extents, openings, guardRun } = facts
     this.addFunctionStaticHulls(part, pkg)
     // walls come from the shared enumeration guardRuns.ts also reads, so a merge override keyed by wall
-    // applies to the box the resolver meant (core/functionGuards.ts)
-    for (const w of functionStaticWalls(part, pkg, extents)) {
+    // applies to the box the resolver meant (core/guards/functionGuards.ts)
+    for (const w of functionStaticWalls(part, pkg, extents, openings)) {
       // Merged run: a sideGuard box butting a collinear neighbour's guard (a spur butted to a roller) is
       // emitted once by the run's owner covering both, and skipped by every other member. Two bodies meeting
       // at the seam would ram cargo riding the wall.
@@ -1103,7 +1238,7 @@ export class SimWorld implements SimCore<BoxFrame> {
         if (hi - lo <= 1e-4) continue
         // span midpoint along the box's own local +X, then the whole local offset rotated into world
         const r = rotateXZ(w.localCx + (lo + hi) / 2, w.localCz, part.rotationY)
-        this.bodies.addStaticBox((hi - lo) / 2, w.hy, w.hz, part.position[0] + r.x, part.position[1] + w.localCy, part.position[2] + r.z, part.rotationY, 0)
+        this.bodies.addStaticBox((hi - lo) / 2, w.hy, w.hz, part.position[0] + r.x, part.position[1] + w.localCy, part.position[2] + r.z, part.rotationY, w.friction ?? 0)
       }
     }
   }
@@ -1112,17 +1247,18 @@ export class SimWorld implements SimCore<BoxFrame> {
    *  part pose: the channel for a solid an AABB would misrepresent (a round pillar, a wedge/ramp). The hull points
    *  are the submesh's own vertices, so the collider is the visible surface; addStaticHull composes them with the
    *  part's position + yaw exactly like the box channel. Unlike guards these never merge across parts, so there
-   *  is no run/override to consult. Friction matches the building shell - a hulled solid is scenery cargo bumps
-   *  into or slides down, not a guard rail it should skate along frictionlessly. */
+   *  is no run/override to consult. Friction is the submesh's declared surface (MeshPart.friction: a slide chute's
+   *  plate), else the building shell's - a hulled solid is scenery cargo bumps into or slides down, not a guard rail
+   *  it should skate along frictionlessly. */
   private addFunctionStaticHulls(part: SdkPart, pkg: PartPackage): void {
     for (const h of functionStaticHulls(part, pkg)) {
-      this.bodies.addStaticHull(h.points, part.position[0], part.position[1], part.position[2], part.rotationY, BUILDING_FRICTION)
+      this.bodies.addStaticHull(h.points, part.position[0], part.position[1], part.position[2], part.rotationY, h.friction ?? BUILDING_FRICTION)
     }
   }
 
   /** Attach a joint-only rig behavior (no deck body/conveyor entry), tracked by part id for the frame. */
-  private attachJointBehavior(partId: string, source: string, paramsJson: string, position: [number, number, number], rotationY: number, servosJson?: string): BehaviorRecord | null {
-    const handle = behavior.create(source, paramsJson, servosJson)
+  private attachJointBehavior(partId: string, source: string, paramsJson: string, position: [number, number, number], rotationY: number, jointsJson?: string, arraysJson?: string): BehaviorRecord | null {
+    const handle = behavior.create(source, paramsJson, jointsJson, arraysJson)
     if (handle <= 0) return null
     const rec = behaviorRecord(handle, position, [Math.cos(rotationY), 0, -Math.sin(rotationY)], null, { partId, joints: {} })
     this.bus.add(rec)
@@ -1131,7 +1267,7 @@ export class SimWorld implements SimCore<BoxFrame> {
 
   // One kinematic box (LAYER_MOVING) per link at its rest world pose (rigBuild buildRigBodies), made by this
   // world's own constructors so each body is filed in the part group being built.
-  private buildRigBodies(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>, pos: [number, number, number], rotationY: number, scale = 1, params: RigParams = {}, paramSpecs?: PartPackage['params'], inclineRad = 0, openings?: GuardOpenings, extents?: GuardExtents, guardRun?: GuardRun): { name: string; body: Jolt.Body; id: Jolt.BodyID; offset?: Vec3 }[] {
+  private buildRigBodies(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>, pos: [number, number, number], rotationY: number, scale = 1, params: RigParams = {}, paramSpecs?: PartPackage['params'], inclineRad = 0, openings?: GuardOpenings, extents?: GuardExtents, guardRun?: GuardRun): RigBody[] {
     const sink: RigBodySink = {
       kinematicBoxQuat: (hx, hy, hz, p, q, friction) => this.bodies.addKinematicBoxQuat(hx, hy, hz, p, q, friction),
       staticBox: (hx, hy, hz, x, y, z, rotY, friction) => this.bodies.addStaticBox(hx, hy, hz, x, y, z, rotY, friction),
@@ -1141,8 +1277,36 @@ export class SimWorld implements SimCore<BoxFrame> {
   }
 
   frame(): BoxFrame {
-    // one WASM call for all pos+quats (snapshotBoxes); null = stock-build fallback, read per box in buildFrame
-    return buildFrame(this.boxes, this.cargo.snapshotBoxes(), this.bus.behaviors, this.units, this.dressings, this.conveyorSpeeds, this.clock.step / this.hz, this.cargo.shapeRefs)
+    // one WASM call for all pos+quats, kept as the next step's snapshot (frameSnapshot); null = stock-build fallback,
+    // read per box in buildFrame
+    return buildFrame(this.boxes, this.cargo.frameSnapshot(), this.bus.behaviors, this.units, this.dressings, this.conveyorSpeeds, this.clock.step / this.hz, this.cargo.shapeRefs)
+  }
+
+  /** each cargo row's marks (ctx.mark, markHit, product attributes), index-aligned with frame(); null for a row with
+   *  none. The frame carries marks only for authored parts, and a test's `marked` filter reads spawned cargo too */
+  cargoMarks(): (Readonly<Record<string, number | boolean | string>> | null)[] {
+    return this.boxes.map((b) => marksOf(b))
+  }
+
+  /** What each cargo body touches, by frame id (cargoContacts.ts). For a test run's snapshots only: it runs a
+   *  collision query per body. */
+  cargoContacts(): Map<number, string[]> {
+    return cargoContacts(this.J, { system: this.system, boxes: this.boxes, groups: this.bodies.groups, ground: this.bodies.ground })
+  }
+
+  /** Each cargo row's frame id and linear velocity in m/s (x, y, z), index-aligned with frame(). A unit load's pieces
+   *  read the load's body, so a piece on a spinning load shows the load's centre velocity. */
+  cargoVelocities(): { ids: Uint32Array; velocities: Float32Array } {
+    const ids = new Uint32Array(this.boxes.length)
+    const velocities = new Float32Array(this.boxes.length * 3)
+    for (const [i, b] of this.boxes.entries()) {
+      const v = b.body.GetLinearVelocity()
+      ids[i] = b.id
+      velocities[i * 3] = v.GetX()
+      velocities[i * 3 + 1] = v.GetY()
+      velocities[i * 3 + 2] = v.GetZ()
+    }
+    return { ids, velocities }
   }
 
   /** cumulative stepDirect cost split from the behavior runtime - merged into StepStats.phases
@@ -1239,6 +1403,8 @@ export class SimWorld implements SimCore<BoxFrame> {
         }
       }
     }
+    // a building grown, moved or added mid-run takes the floor with it
+    if (this.bodies.fitGround(groundHalfExtent(scene.parts, GROUND_SIZE / 2), GROUND_FRICTION)) structural = true
     // a static body that moved out from under a sleeping box won't wake it on its
     // own; keep cargo responsive so it follows the geometry being edited
     if (structural) {
@@ -1295,10 +1461,10 @@ export class SimWorld implements SimCore<BoxFrame> {
       if (box.unit) this.cargo.splitUnit(box.unit) // a hand moving one piece takes the load apart
       const id = box.body.GetID()
       if (rotation === null) {
-        this.bodyInterface.SetPosition(id, pos, J.EActivation_Activate)
+        this.cargo.placeBody(id, pos, null)
       } else {
         const rot = new J.Quat(rotation[0], rotation[1], rotation[2], rotation[3])
-        this.bodyInterface.SetPositionAndRotation(id, pos, rot, J.EActivation_Activate)
+        this.cargo.placeBody(id, pos, rot)
         J.destroy(rot)
       }
       this.bodyInterface.SetLinearAndAngularVelocity(id, zero, zero)
@@ -1437,8 +1603,15 @@ export class SimWorld implements SimCore<BoxFrame> {
   private destroyPart(id: string): void {
     const group = this.partGroups.get(id)
     if (!group) return
+    // its grippers let go first: a body still held by a removed rig stays kinematic and can't be grabbed again
+    for (const rig of group.rigs ?? []) this.holds.releaseRig(rig)
     this.bodies.destroyBodies(group)
+    // its scripts stop with it: a stale one would keep writing its old PLC tags
+    if (group.behaviors) this.bus.remove(group.behaviors)
+    if (group.rigs) this.rigDriver.remove(group.rigs)
+    this.sensors.forget(id)
     this.bus.deleteConveyorSpeed(id) // a speed-bearing part no longer exists to interlock against
+    this.loadCells.set(id, []) // its platforms' bodies are gone
     this.holds.forgetPart(id)
     for (const boxId of [...group.boxIds]) {
       const i = this.boxes.findIndex((b) => b.id === boxId)
@@ -1458,6 +1631,8 @@ export class SimWorld implements SimCore<BoxFrame> {
     this.bus.destroyAll()
     this.rigDriver.clear() // bodies are torn down via their part group; just drop the stale refs
     this.sensors.clear()
+    this.loadCells.clear()
+    this.loadCells.dispose()
     J.destroy(this.joltInterface)
     this.facets.dispose()
     this.cargo.dispose()
@@ -1483,8 +1658,12 @@ export class SimWorld implements SimCore<BoxFrame> {
       // a behavior-driven (SDK) belt member carries zero-velocity `tan` facets the host drives each tick; keep
       // each such member's entries so the owner can attach its script to drive them inside the merged body.
       const customMembers: { part: SdkPart; entries: ConveyorEntry[] }[] = []
-      for (const m of cluster.members) {
+      // members that grip differently stamp their own friction on their facets; one body has one friction
+      const frictions = cluster.members.map(conveyorSurfaceFriction)
+      const mixed = frictions.some((f) => f !== frictions[0])
+      cluster.members.forEach((m, i) => {
         const memberSubs = conveyorDeckSubs(m).map((s) => worldSub(s, m))
+        if (mixed) for (const s of memberSubs) if (s.entry) s.entry.friction = frictions[i]
         for (const s of memberSubs) subs.push(s)
         if (m.type === 'part') {
           const entries: ConveyorEntry[] = []
@@ -1492,7 +1671,7 @@ export class SimWorld implements SimCore<BoxFrame> {
           for (const s of memberSubs) if (s.entry && !seen.has(s.entry)) { seen.add(s.entry); entries.push(s.entry) }
           if (entries.length > 0) customMembers.push({ part: m as SdkPart, entries })
         }
-      }
+      })
       if (subs.length === 0) return
       const body = this.bodies.addCompoundConveyor(subs, 0, 0, 0, 0, deckFriction(cluster.members))
       // the owner attaches every custom member's behavior (a non-owner member skips this branch entirely), so

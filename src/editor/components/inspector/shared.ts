@@ -3,9 +3,12 @@
 import type { PartInstance } from '../../../core/types'
 import { unitTable } from '../../../core/units'
 
-/** Title Case each word (capitalises every property word) */
+/** Title Case each word (capitalises every property word). A trailing bracket is kept as written: it holds a unit or
+ *  an explanation, and capitalising one turns "(m/s)" into "(M/S)" and "(s)" into "(S)", which are other units. */
 export function titleCase(s: string): string {
-  return s.replace(/\b\w/g, (c) => c.toUpperCase())
+  const m = /^(.*?)(\s*\([^()]*\))$/.exec(s)
+  const head = m ? m[1]! : s
+  return head.replace(/\b\w/g, (c) => c.toUpperCase()) + (m ? m[2]! : '')
 }
 
 /** how many decimals `n` needs to print exactly, up to `cap` */
@@ -68,12 +71,35 @@ function convertUnits(s: string, unit: string): number | null {
   return terms > 0 ? total / table[unit.toLowerCase()]! : null
 }
 
+// a comma a thousands number could hold: one to three digits before it, exactly three after
+const THOUSANDS_GROUP = /(?:^|[^\d,])(\d{1,3}),\d{3}(?!\d)/g
+
+/** Could a comma in `s` be a thousands separator? Not after a lone 0 ("0,125") or a fourth digit ("1234,567"). */
+function couldBeThousands(s: string): boolean {
+  for (const m of s.matchAll(THOUSANDS_GROUP)) if (m[1] !== '0') return true
+  return false
+}
+
+/**
+ * A comma between digits read as the decimal point ("1,5" -> "1.5"), as in most of Europe. parseFloat stopped at
+ * the comma and stored 1. Null when the comma could also be a thousands separator ("1,500", or with a point as well,
+ * "1,500.5"), or when a comma stands anywhere else: the field then keeps its value rather than guess.
+ */
+function decimalComma(s: string): string | null {
+  if (!s.includes(',')) return s
+  if (s.includes('.') || couldBeThousands(s)) return null
+  const out = s.replace(/(\d),(\d)/g, '$1.$2')
+  return out.includes(',') ? null : out
+}
+
 /**
  * Parse a number field's committed text: a length or speed typed in another unit converts into the field's
  * ("5ft" or "5' 6\"" into metres, "394 fpm" into m/s), the field's own unit suffix is stripped ("1.5 m" -> 1.5),
  * and simple math expressions evaluate ("2*0.75" -> 1.5). Returns null when nothing numeric is present.
  */
-export function evalNumeric(raw: string, unit: string): number | null {
+export function evalNumeric(text: string, unit: string): number | null {
+  const raw = decimalComma(text)
+  if (raw === null) return null
   // before the suffix strip, which would read "600mm" in a metre field as "600m"
   const converted = unit ? convertUnits(raw.trim(), unit) : null
   if (converted !== null) return Number.isFinite(converted) ? converted : null
@@ -95,4 +121,27 @@ export function evalNumeric(raw: string, unit: string): number | null {
   return Number.isFinite(plain) ? plain : null
 }
 
-export type Update = (label: string, key: string, mutate: (p: PartInstance) => PartInstance) => void
+/**
+ * A relative entry: "+= 1.2" or "-= 600mm" is an offset from the value the field holds, the rest read as
+ * evalNumeric reads a value. undefined when the text isn't one (a plain "-5" stays an absolute value), null when
+ * it is one whose amount doesn't parse.
+ */
+export function parseOffset(raw: string, unit: string): number | null | undefined {
+  const m = /^\s*([+-])=(.*)$/s.exec(raw)
+  if (!m) return undefined
+  const v = evalNumeric(m[2]!, unit)
+  return v === null ? null : m[1] === '-' ? -v : v
+}
+
+export type Update =(label: string, key: string, mutate: (p: PartInstance) => PartInstance) => void
+
+/** the fold map after row `removed` is deleted: its own entry gone, every later entry one index down */
+export function shiftFoldsAfterRemove(folds: Readonly<Record<number, boolean>>, removed: number): Record<number, boolean> {
+  const out: Record<number, boolean> = {}
+  for (const [k, v] of Object.entries(folds)) {
+    const i = Number(k)
+    if (i < removed) out[i] = v
+    else if (i > removed) out[i - 1] = v
+  }
+  return out
+}

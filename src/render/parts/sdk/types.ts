@@ -1,14 +1,14 @@
 // The shared Content contract every SDK geometry builder (deck / cargo / mesh / function / rig)
 // implements and the factory in sdkPart.ts consumes.
 import type { Material } from 'three'
-import type { SubPose } from '../../../core/rigPose'
-import type { RollerGrid } from '../../../core/rollerGrid'
-import type { GuardOpenings } from '../../../core/guardOpenings'
-import type { GuardExtents } from '../../../core/guardExtents'
+import type { SubPose } from '../../../core/rig/rigPose'
+import type { RollerGrid } from '../../../core/conveyor/rollerGrid'
+import type { GuardOpenings } from '../../../core/guards/guardOpenings'
+import type { GuardExtents } from '../../../core/guards/guardExtents'
 import type { LegRestRows } from '../../../core/legRests'
-import type { GuardHoles } from '../../../core/guardHoles'
+import type { GuardHoles } from '../../../core/guards/guardHoles'
 import type { PlatformCut } from '../../../core/structureCuts'
-import type { PartPackage } from '../../../core/partPackage'
+import type { PartPackage } from '../../../core/parts/partPackage'
 import type { SdkPart } from '../../../core/types'
 import type { RobotGizmoApi } from '../../api'
 import type { BeamProbe } from '../sensor'
@@ -40,6 +40,10 @@ export interface Content {
   applyJoints?: (joints: Record<string, number>) => void
   /** apply free-form link pose overrides (rig setSubPose); undefined for a deck */
   applySubPoses?: (subPoses: Record<string, SubPose>) => void
+  /** each conveying copy's belt speed (frame.copySpeeds), by posable array link; runs the copies' belt fabric */
+  applyCopySpeeds?: (speeds: Record<string, number[]>) => void
+  /** Stop: drop the run's joint values and subPoses and lay every link at rest (rig only); undefined for a deck */
+  resetRunPose?: () => void
   /** light/darken emissive lamp links (rig setEmissive/ctx.lamps); undefined for a deck/no-lamp rig */
   applyLamps?: (lamps: Record<string, boolean>) => void
   /** paint the part's live display values (frame.displays: what ctx.display published this step) onto its

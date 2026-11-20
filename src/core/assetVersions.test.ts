@@ -42,7 +42,7 @@ const FETCHES_NO_APP_ASSET: Record<string, string> = {
   'editor/components/GetPartsWindow.tsx': "shows a library's pictures from the library's host, each named by its hash",
   'editor/components/inspector/header.tsx': 'renders the url Inspector.tsx headerThumb already versioned',
   'editor/publish/github.ts': "talks to GitHub and the sign-in Worker, not to app assets",
-  'plc/plcLink.ts': 'talks to a PLC bridge, not to app assets',
+  'plc/link/plcLink.ts': 'talks to a PLC bridge, not to app assets',
   'collab/roomAssets.ts': "fetches a room's part assets from the collab server by SHA-256: the name is the content",
 }
 

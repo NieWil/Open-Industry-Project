@@ -29,7 +29,7 @@ try {
   await page.waitForTimeout(3000)
 
   const spawners = await page.evaluate(() => window.__oip.store.getState().scene.parts
-    .filter((p) => (p.packageId === 'oip.box-spawner' || p.packageId === 'oip.pallet-spawner') && p.params?.enableComms && p.params?.runTag)
+    .filter((p) => (p.packageId === 'oip.box-spawner' || p.packageId === 'oip.pallet-spawner') && p.params?.runTag)
     .map((p) => ({ name: p.name ?? p.packageId, tag: p.params.runTag, x: p.position[0], y: p.position[1], z: p.position[2] })))
   console.log('spawners:', spawners.map((s) => `${s.name}[${s.tag}]`).join(', '))
   console.log('scanMs:', await page.evaluate(() => window.__oip.store.getState().stScanMs))

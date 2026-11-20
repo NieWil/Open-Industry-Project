@@ -5,7 +5,7 @@
 // Net IDs and any secured connection to the PLC. Going through that library is the documented way for a local client,
 // and it keeps the app out of route and transport security handling. oip-comms' driver does the same
 // (tcads_loader.cpp) and this follows it: the same search for the DLL, symbol info and a
-// handle per symbol by name, reads and writes through the handle, the same error table (src/core/ads.ts). One thing
+// handle per symbol by name, reads and writes through the handle, the same error table (src/core/io/ads.ts). One thing
 // is added: a cycle is two ADS SUM commands (every write in one request, every read in another) instead of a request
 // per symbol, so a PLC across the network takes two round trips a cycle whatever the scene holds.
 //
@@ -16,12 +16,13 @@
 // Nothing here blocks main. Every ADS call runs on koffi's worker thread (`fn.async`), and the router gives up on an
 // unanswered request after ANSWER_MS. A synchronous call would freeze every window for as long as a dead PLC takes.
 //
-// One link per window, closed with it. Plain Node. Its tests never reach a TwinCAT router: they set OIP_TCADSDLL_PATH
+// One link per controller in a window (linkKeys.cjs), all closed with it. Plain Node. Its tests never reach a TwinCAT router: they set OIP_TCADSDLL_PATH
 // to a file that is not there and check what this module itself says (argument checks, the missing-DLL answer).
 
 const { execFileSync } = require('node:child_process')
 const { existsSync } = require('node:fs')
 const { join } = require('node:path')
+const { BAD_LINK, linkKey, listingLinkNo, onPageGone, windowKeys } = require('./linkKeys.cjs')
 
 /** How long the router waits for an answer before failing a request (0x745): inside the app's 1 s watchdog. */
 const ANSWER_MS = 500
@@ -31,8 +32,16 @@ const SYM_HNDBYNAME = 0xf003
 const SYM_VALBYHND = 0xf005
 const SYM_RELEASEHND = 0xf006
 const SYM_INFOBYNAMEEX = 0xf009
+const SYM_UPLOAD = 0xf00b
+const SYM_UPLOADINFO2 = 0xf00f
 const SUMUP_READ = 0xf080
 const SUMUP_WRITE = 0xf081
+/** how long the symbol table upload may take: one request carrying every symbol, larger than a cycle's */
+const UPLOAD_MS = 5000
+/** a symbol table past this is refused rather than allocated (a large project's runs to a few MB) */
+const MAX_UPLOAD = 64 * 1024 * 1024
+/** "invalid size": the table grew between asking its size and reading it (an online change), so it is asked again */
+const INVALID_SIZE = 0x705
 /** ADS's limit on one sum command's sub-requests */
 const MAX_SUM = 500
 /** "service not supported": a runtime too old for sum commands, which then gets a request per symbol */
@@ -149,7 +158,25 @@ function parseSymbolEntry(buf, length) {
   const typeLength = buf.readUInt16LE(26)
   const typeAt = 30 + nameLength + 1
   const typeName = typeAt + typeLength <= length ? buf.toString('latin1', typeAt, typeAt + typeLength) : ''
-  return { size, adsType, typeName }
+  const name = 30 + nameLength <= length ? buf.toString('latin1', 30, 30 + nameLength) : ''
+  return { size, adsType, typeName, name }
+}
+
+/**
+ * The runtime's symbol table (SYM_UPLOAD): AdsSymbolEntry records back to back, each starting with its own length.
+ * A record that runs past the buffer, or claims less than a header, ends the walk: what came before it stands.
+ */
+function parseSymbolTable(buf) {
+  const out = []
+  let at = 0
+  while (at + 30 <= buf.length) {
+    const length = buf.readUInt32LE(at)
+    if (length < 30 || at + length > buf.length) break
+    const e = parseSymbolEntry(buf.subarray(at, at + length), length)
+    if (e && e.name) out.push(e)
+    at += length
+  }
+  return out
 }
 
 class AdsLink {
@@ -238,6 +265,36 @@ class AdsLink {
         out.push({ code: 0, adsType: entry.adsType, size: entry.size, typeName: entry.typeName })
       }
       return { error: '', tags: out }
+    })
+  }
+
+  /**
+   * Every symbol the runtime publishes, as `{name, adsType, size, typeName}`, for the tag picker: the table's size first
+   * (SYM_UPLOADINFO2), then the table itself in one request, under a longer timeout than a cycle's. Variables only, as
+   * the runtime lists them (`MAIN.Run`, `GVL.Speed`, `MAIN.tCycle` of type TON): a structure's members are not listed.
+   */
+  listSymbols() {
+    return this.serial(async () => {
+      if (!lib || !this.addr) return { error: loadError ?? 'not connected' }
+      for (let attempt = 0; ; attempt++) {
+        const info = Buffer.alloc(24)
+        const got = [0]
+        let code = await call(lib.read, this.port, this.addr, SYM_UPLOADINFO2, 0, info.length, info, got)
+        if (code) return { error: '', code }
+        const tableSize = info.readUInt32LE(4)
+        if (tableSize === 0) return { error: '', code: 0, symbols: [] }
+        if (tableSize > MAX_UPLOAD) return { error: `the PLC's symbol table is ${Math.round(tableSize / 1e6)} MB, too large to list` }
+        const table = Buffer.alloc(tableSize)
+        await call(lib.setTimeout, this.port, UPLOAD_MS)
+        try {
+          code = await call(lib.read, this.port, this.addr, SYM_UPLOAD, 0, table.length, table, got)
+        } finally {
+          await call(lib.setTimeout, this.port, ANSWER_MS)
+        }
+        if (code === INVALID_SIZE && attempt === 0) continue
+        if (code) return { error: '', code }
+        return { error: '', code: 0, symbols: parseSymbolTable(table.subarray(0, got[0])) }
+      }
     })
   }
 
@@ -342,7 +399,7 @@ class AdsLink {
   }
 }
 
-/** @type {Map<number, AdsLink>} */
+/** @type {Map<string, AdsLink>} by linkKey (linkKeys.cjs) */
 const links = new Map()
 const watched = new Set()
 
@@ -354,20 +411,25 @@ async function shutdownAds() {
 }
 
 /**
- * Register the `ads:*` channels.
+ * Register the `ads:*` channels. Each call may name one of the window's links as `link` (linkKeys.cjs), 0 when absent.
  *   ads:open     {netId, port} -> {error, localNetId, target}   an ADS port on this PC's router; '' netId = this PC's runtime
  *   ads:bind     {tags: [{name}]} -> {error, tags: [{code, adsType, size, typeName}]}
  *                                                              each symbol's info and a handle
  *   ads:exchange {writes: [{name, value}], reads: [name]} -> {error, writes: [code], reads: [{value, status}]}
+ *   ads:symbols  {} -> {error, code, symbols: [{name, adsType, size, typeName}]}
+ *                                                              the runtime's whole symbol table, for the tag picker
  *   ads:close                                                  release the handles and the port
- * A code is an ADS return code, 0 for done (src/core/ads.ts says what each means).
+ * A code is an ADS return code, 0 for done (src/core/io/ads.ts says what each means).
  * `consent` (endpointConsent.cjs `allows`) is asked before a link to another PC's runtime.
  */
 function registerAdsIo(ipcMain, { consent }) {
   ipcMain.handle('ads:open', async (event, opts) => {
     const sender = event.sender
-    const old = links.get(sender.id)
-    links.delete(sender.id)
+    const n = listingLinkNo(opts)
+    if (n === null) return { error: BAD_LINK }
+    const key = linkKey(sender.id, n)
+    const old = links.get(key)
+    links.delete(key)
     await old?.close()
     const netId = typeof opts?.netId === 'string' ? opts.netId.trim() : ''
     const port = Number(opts?.port)
@@ -382,20 +444,19 @@ function registerAdsIo(ipcMain, { consent }) {
       await link.close()
       return opened
     }
-    links.set(sender.id, link)
-    if (!watched.has(sender.id)) {
-      watched.add(sender.id)
-      const id = sender.id
-      sender.once('destroyed', () => {
-        watched.delete(id)
-        void links.get(id)?.close()
-        links.delete(id)
-      })
-    }
+    links.set(key, link)
+    onPageGone(sender, watched, (id) => {
+      for (const k of windowKeys(links, id)) {
+        void links.get(k)?.close()
+        links.delete(k)
+      }
+    })
     return opened
   })
-  const withLink = async (event, fn) => {
-    const link = links.get(event.sender.id)
+  const withLink = async (event, opts, fn) => {
+    const n = listingLinkNo(opts)
+    if (n === null) return { error: BAD_LINK }
+    const link = links.get(linkKey(event.sender.id, n))
     if (!link) return { error: 'not connected' }
     try {
       return await fn(link)
@@ -403,13 +464,17 @@ function registerAdsIo(ipcMain, { consent }) {
       return { error: String(e?.message ?? e) }
     }
   }
-  ipcMain.handle('ads:bind', (event, opts) => withLink(event, (l) => l.bind(Array.isArray(opts?.tags) ? opts.tags : [])))
-  ipcMain.handle('ads:exchange', (event, opts) => withLink(event, (l) => l.exchange(Array.isArray(opts?.writes) ? opts.writes : [], Array.isArray(opts?.reads) ? opts.reads : [])))
-  ipcMain.handle('ads:close', async (event) => {
-    const link = links.get(event.sender.id)
-    links.delete(event.sender.id)
+  ipcMain.handle('ads:bind', (event, opts) => withLink(event, opts, (l) => l.bind(Array.isArray(opts?.tags) ? opts.tags : [])))
+  ipcMain.handle('ads:symbols', (event, opts) => withLink(event, opts, (l) => l.listSymbols()))
+  ipcMain.handle('ads:exchange', (event, opts) => withLink(event, opts, (l) => l.exchange(Array.isArray(opts?.writes) ? opts.writes : [], Array.isArray(opts?.reads) ? opts.reads : [])))
+  ipcMain.handle('ads:close', async (event, opts) => {
+    const n = listingLinkNo(opts)
+    if (n === null) return
+    const key = linkKey(event.sender.id, n)
+    const link = links.get(key)
+    links.delete(key)
     await link?.close()
   })
 }
 
-module.exports = { registerAdsIo, AdsLink, shutdownAds, checkTarget, dllCandidates, parseSymbolEntry, codec }
+module.exports = { registerAdsIo, AdsLink, shutdownAds, checkTarget, dllCandidates, parseSymbolEntry, parseSymbolTable, codec }

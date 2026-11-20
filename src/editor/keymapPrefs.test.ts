@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { activeBinding, activeKeymap, DEFAULT_KEYMAP, isRebound, resolveKeyAction, setKeymapOverrides } from '../core/keymap'
-import { KEYMAP_KEY, readStoredKeymap, rebindAction, resetAction, resetAllActions, sanitizeOverrides, saveStoredKeymap } from './keymapPrefs'
+import { applyStoredKeymapChange, KEYMAP_KEY, readStoredKeymap, rebindAction, resetAction, resetAllActions, sanitizeOverrides, saveStoredKeymap } from './keymapPrefs'
 
 /** a real-enough localStorage: these helpers read-modify-write one key (cf. storeViewport.test.ts) */
 function fakeStorage(seed: Record<string, string> = {}) {
@@ -188,5 +188,45 @@ describe('what the rest of the app sees', () => {
     rebindAction('tool.move', ['KeyJ'])
     expect(DEFAULT_KEYMAP.find((b) => b.id === 'tool.move')?.keys).toBe(before)
     expect(before).toEqual(['KeyW'])
+  })
+})
+
+// Two windows share one stored map (browser tabs; the desktop app's window per project). "This window" is the
+// module state here; "the other window" is simulated by writing storage behind its back, the way a real one does.
+describe('several windows', () => {
+  const other = (map: Record<string, string[]>) => localStorage.setItem(KEYMAP_KEY, JSON.stringify(map))
+  const stored = () => JSON.parse(localStorage.getItem(KEYMAP_KEY) ?? '{}') as Record<string, string[]>
+
+  it("a rebind here keeps a rebind the other window made after this one loaded", () => {
+    other({ 'tool.move': ['KeyJ'] }) // this window's table is still the default
+    expect(rebindAction('tool.rotate', ['KeyK'])).toBeNull()
+    expect(stored()).toEqual({ 'tool.move': ['KeyJ'], 'tool.rotate': ['KeyK'] })
+    // and this window now runs the other's rebind too
+    expect(resolveKeyAction(press('KeyJ'), 'editor')).toBe('tool.move')
+  })
+
+  it("a reset here keeps the other window's rebinds", () => {
+    rebindAction('tool.rotate', ['KeyK'])
+    other({ 'tool.move': ['KeyJ'], 'tool.rotate': ['KeyK'] })
+    resetAction('tool.rotate')
+    expect(stored()).toEqual({ 'tool.move': ['KeyJ'] })
+  })
+
+  it("a rebind checks clashes against the other window's chords", () => {
+    other({ 'tool.move': ['KeyJ'] })
+    expect(rebindAction('tool.rotate', ['KeyJ'])).toBe('tool.move')
+  })
+
+  it('follows a change the other window stores', () => {
+    other({ 'tool.move': ['KeyJ'] })
+    applyStoredKeymapChange(KEYMAP_KEY)
+    expect(activeBinding('tool.move')?.keys).toEqual(['KeyJ'])
+    // a different key is not ours to follow
+    other({})
+    applyStoredKeymapChange('oip-web/something-else')
+    expect(activeBinding('tool.move')?.keys).toEqual(['KeyJ'])
+    // storage cleared (key null), or the other window restored all defaults
+    applyStoredKeymapChange(null)
+    expect(activeKeymap()).toBe(DEFAULT_KEYMAP)
   })
 })

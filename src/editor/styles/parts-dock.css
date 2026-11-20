@@ -41,14 +41,26 @@
   display: none;
 }
 
+/* A .segmented group. It scrolls sideways where it doesn't fit (a phone's sheet) instead of wrapping, since a
+   wrapped row splits the one outline into two broken ones. The 2px padding, taken back by the margin, keeps a
+   focus ring inside the scroll box, which would clip it. */
 .catalog-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px;
+  margin: -2px;
 }
 
 .catalog-tab {
+  flex: none;
   padding: 4px 10px;
+  /* a category a part names itself can be long: its tab ellipsizes, and the whole name is its title */
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .catalog-tab.active {

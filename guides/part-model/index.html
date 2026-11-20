@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#17191b" />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <title>Make a part from your own model | Open Industry Project</title>
+    <meta name="description" content="Step by step: turn a model from Blender or a CAD program into a part you can place in the simulator, with the right size, a collider and a place in the Parts dock." />
+    <meta name="keywords" content="custom part, 3D model, GLB, glTF, STEP, USD, Blender, CAD, simulator, virtual commissioning" />
+    <link rel="canonical" href="https://www.openindustryproject.org/guides/part-model/" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Open Industry Project" />
+    <meta property="og:title" content="Make a part from your own model | Open Industry Project" />
+    <meta property="og:description" content="Step by step: turn a model from Blender or a CAD program into a part you can place in the simulator, with the right size, a collider and a place in the Parts dock." />
+    <meta property="og:url" content="https://www.openindustryproject.org/guides/part-model/" />
+    <meta property="og:image" content="https://www.openindustryproject.org/og-image.jpg?v=20261013" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- A hand-written page. Every label and message below is read from the app (editor/components/Catalog.tsx,
+         editor/components/inspector/rigNode.tsx and rig.tsx, core/parts/modelFit.ts), and e2e/guide-part-model.mjs
+         follows the page in the desktop app with public/guides/blade-stop.glb (the built-in Blade Stop's model, in metres).
+         Change those and this goes stale. -->
+
+    <link rel="preload" href="/fonts/plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
+
+    <link rel="stylesheet" href="/src/site/site.css" />
+  </head>
+
+  <body class="doc">
+
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
+        <nav class="nav-links" aria-label="Site">
+          <a href="/plc/">PLC reference</a>
+          <a href="/guides/">Guides</a>
+          <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </nav>
+        <a class="btn btn-sm" href="/app/">Open the editor</a>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="hero">
+        <h1>Making a part from your own model</h1>
+        <p class="lede">
+          The Parts dock has conveyors, sensors and other common equipment. For your own machine, you bring its model in
+          from Blender or a CAD program and the simulator turns it into a part: a model with the right size, standing on
+          the floor, with a solid shape that boxes and the walking character bump into.
+        </p>
+        <p class="lede">
+          In this guide you import a blade stop, the stop that rises between a conveyor's rollers to hold a box, then
+          check it, name it and mount it under a roller conveyor. Its blade is a separate piece in the file, so it can be
+          made to move later. The Parts dock already has a Blade Stop built from the same model, so you can compare your
+          part with it. It takes about ten minutes.
+        </p>
+
+        <h2>You need</h2>
+        <ul class="dash">
+          <li>The simulator, <a href="/app/">in the browser</a> or the desktop app for <a href="/#desktop">Windows or Linux</a>. Both work for this guide.</li>
+          <li>A model as a .glb file, a STEP file (.step or .stp) or a USD file. To follow along first, download the example: <a href="/guides/blade-stop.glb" download>blade-stop.glb</a> (92 KB).</li>
+        </ul>
+
+        <ul class="toc">
+          <li><a href="#prepare">1. Prepare the model</a></li>
+          <li><a href="#import">2. Import it</a></li>
+          <li><a href="#check">3. Check it</a></li>
+          <li><a href="#name">4. Name it</a></li>
+          <li><a href="#place">5. Mount it in a conveyor</a></li>
+          <li><a href="#trouble">Troubleshooting</a></li>
+        </ul>
+      </section>
+    </main>
+
+    <section class="section" id="prepare">
+      <div class="wrap">
+        <h2>1. Prepare the model</h2>
+        <p>
+          With the example file, skip to step 2. With your own model, two things decide how much you can do with it later:
+        </p>
+        <ul class="dash">
+          <li>
+            <b>Every piece that moves is its own object, with a name.</b> The example has two groups: <code>Base</code>,
+            the housing and its air cylinders, and <code>Blade</code>, the blade and its guide rods. A piece merged into the
+            rest can never move on its own.
+          </li>
+          <li>
+            <b>The model is in metres.</b> The simulator takes a .glb file's sizes as metres. A STEP or USD file records
+            its own units, and the simulator converts them.
+          </li>
+        </ul>
+
+        <h3>From Blender</h3>
+        <ol class="steps">
+          <li>Select each object and apply its rotation and scale: <span class="ui">Object &gt; Apply &gt; Rotation &amp; Scale</span>.</li>
+          <li>Choose <span class="ui">File &gt; Export &gt; glTF 2.0 (.glb/.gltf)</span>.</li>
+          <li>Set <span class="ui">Format</span> to <b>glTF Binary (.glb)</b>, and leave <span class="ui">+Y Up</span> ticked under <span class="ui">Transform</span>. Blender's Z up becomes the simulator's Y up.</li>
+          <li>Export. Blender can also open .fbx, .obj and .stl files, so this is the way in for those too.</li>
+        </ol>
+
+        <h3>From a CAD program</h3>
+        <p>
+          Export the assembly as STEP. When you import it in step 2, the simulator converts it and asks four things first:
+        </p>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Option</th><th>Choose</th></tr></thead>
+            <tbody>
+              <tr><td>Up axis</td><td>Preset from the program that wrote the file. If the model comes in lying on its side, import it again with the other one.</td></tr>
+              <tr><td>Detail</td><td><b>coarse</b> for a large assembly. It has about half the triangles.</td></tr>
+              <tr><td>Skip parts under</td><td>A few millimetres leaves out screws and washers, which add nothing to a simulation.</td></tr>
+              <tr><td>Merge by color</td><td>Off if a piece will move later, so each solid stays a named piece. On draws a large assembly as a handful of meshes.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="sub">The script that tests this guide uses the example file, so the Blender and CAD steps above are not tested by it.</p>
+      </div>
+    </section>
+
+    <section class="section" id="import">
+      <div class="wrap">
+        <h2>2. Import it</h2>
+        <ol class="steps">
+          <li>In the <span class="ui">Parts</span> dock, click <span class="ui">Import part</span>. On the desktop it offers three choices: pick <b>A model…</b>. In a browser the file picker opens straight away.</li>
+          <li>Pick your file. You can also drop it on the Parts dock instead.</li>
+        </ol>
+        <p>
+          The simulator makes a new part named after the file and opens it in the Part Editor, the view where you edit a part
+          itself. The Inspector says what it did:
+        </p>
+        <pre class="code" translate="no"><code>Imported blade-stop.glb. The part now fits the model: it stands on the floor, and its footprint and collider are the model's size.</code></pre>
+        <figure class="shot">
+          <img src="img/import-message.webp" width="390" height="144" loading="lazy" decoding="async"
+            alt="The Inspector after the import, saying the part now fits the model: it stands on the floor, and its footprint and collider are the model's size." />
+          <figcaption>The Inspector, right after the import.</figcaption>
+        </figure>
+        <p>The Scene dock now lists the part's two nodes:</p>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Node</th><th>Kind</th><th>What it is</th></tr></thead>
+            <tbody>
+              <tr><td>body</td><td>mesh</td><td>Your model, moved so its underside is on the floor and it is centred on the part's origin.</td></tr>
+              <tr><td>collider</td><td>box</td><td>A hidden box the size of the model. Boxes on a belt and the walking character bump into this, not into the model.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The part's footprint, the box it snaps, selects and lands on the floor by, is the model's size too.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="check">
+      <div class="wrap">
+        <h2>3. Check it</h2>
+        <p>Click <b>body</b> in the Scene dock. Two sections of the Inspector show what is in the file.</p>
+        <p>
+          <span class="ui">Split into pieces</span> lists the named pieces and the groups that hold them. The example has
+          eight pieces in two groups, <b>Base</b> and <b>Blade</b>. A piece you split out gets a node of its own, which can
+          then get a joint: that is how a piece is made to move. If a piece you mean to move is not listed on its own, it
+          is merged into another one in the file: split it in your 3D program and import again.
+        </p>
+        <figure class="shot">
+          <img src="img/model-nodes.webp" width="395" height="218" loading="lazy" decoding="async"
+            alt="The Split into pieces section of the body node: the blade stop's eight pieces and its two groups, Base and Blade." />
+          <figcaption>The example's pieces, and the two groups that hold them.</figcaption>
+        </figure>
+        <p>
+          <span class="ui">Mesh</span>, opened with a click on its title, lists the materials. A material marked
+          <b>⚠ renders dark</b> is fully metallic with no texture, and draws nearly black. Lower its metalness in your 3D
+          program. The example's four are fine.
+        </p>
+        <p>
+          Then check the size. Click <b>collider</b> in the Scene dock: its <span class="ui">Box size</span> is the model's,
+          in metres. The example is 0.180 by 0.409 by 1.080: a housing 18 cm deep and 41 cm tall, for a blade 0.9 m wide.
+        </p>
+        <p>
+          If the size is 100 or 1000 times off, the model was exported in centimetres or millimetres. If it is lying on its
+          side, it was exported with another up axis. Fix the export, select <b>body</b>, and use
+          <span class="ui">Import model…</span> at the bottom of the Inspector to import it again. The part is fitted to
+          the new file.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="name">
+      <div class="wrap">
+        <h2>4. Name it</h2>
+        <p>
+          Click the part's own name at the top of the Scene dock, <b>blade stop</b>. The Inspector shows its
+          <span class="ui">Name</span> and <span class="ui">Category</span>. The Parts dock already has a Blade Stop, so
+          give yours a name of its own. Type these in, pressing Enter after each:
+        </p>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Field</th><th>Type in</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Name</td><td class="m">Blade Stop 900</td><td>The name on its card in the Parts dock.</td></tr>
+              <tr><td>Category</td><td class="m">My Parts</td><td>The Parts dock tab the card is under. A new name makes a new tab, which keeps your own parts together.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <figure class="shot">
+          <img src="img/part-name.webp" width="380" height="93" loading="lazy" decoding="async"
+            alt="The Inspector for the part itself, with Name set to Blade Stop 900 and Category set to My Parts." />
+          <figcaption>The part's name and category.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="place">
+      <div class="wrap">
+        <h2>5. Mount it in a conveyor</h2>
+        <p>
+          A blade stop sits under a roller conveyor with its blade just below the rollers. Click
+          <span class="ui">‹ Scene</span> at the top of the Scene dock to go back to your scene, then:
+        </p>
+        <ol class="steps">
+          <li>From the <span class="ui">Equipment</span> tab of the Parts dock, drag a <b>Roller Conveyor</b> into the view.</li>
+          <li>From the <span class="ui">My Parts</span> tab, drag <b>Blade Stop 900</b> into the view.</li>
+          <li>Select each one and type these into the Inspector, in this order, pressing Enter after each:</li>
+        </ol>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Part</th><th>Field</th><th>Type in</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Roller Conveyor</td><td>Stand Height</td><td class="m">0.8</td><td>Its legs, for rollers 0.8 m off the floor.</td></tr>
+              <tr><td>Roller Conveyor</td><td>Width</td><td class="m">1</td><td>Its frames 1 m apart, so the blade stop's ends sit under them.</td></tr>
+              <tr><td>Roller Conveyor</td><td>Position</td><td class="m">0, 0.8, 0</td><td>X, Y and Z. A conveyor's Y is the top of its rollers.</td></tr>
+              <tr><td>Blade Stop 900</td><td>Position</td><td class="m">0.5, 0.38, 0</td><td>Under the conveyor, its blade across it.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          A part's Y is its underside, and the blade stop is 0.41 m tall, so at 0.38 the top of its blade is 1 cm below
+          the rollers, where boxes pass over it. From above, the blade shows as a dark line between the rollers.
+        </p>
+        <figure class="shot">
+          <img src="img/placed.webp" width="1260" height="630" loading="lazy" decoding="async"
+            alt="A roller conveyor with the blade stop mounted under it: the grey housing hangs below the conveyor's frame and the blade's top shows between the rollers." />
+          <figcaption>Blade Stop 900, mounted under a roller conveyor.</figcaption>
+        </figure>
+        <p>
+          Every copy you place is the same part. To change it later, right-click a copy, in the view or in the Scene
+          dock, and choose <span class="ui">Open Part Editor</span>, and every copy in the scene changes with it. The part
+          is saved with your project.
+        </p>
+        <div class="note">
+          <p>
+            The collider is one box around the whole model, blade included, so mounted under the rollers it is out of the
+            boxes' way. A blade that rises needs a collider of its own that rises with it, which the fourth guide adds.
+          </p>
+        </div>
+        <p>
+          Next: <a href="/guides/part-motion/">Making a piece move on a PLC command</a>, where the blade rises when a
+          program tells it to.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="trouble">
+      <div class="wrap">
+        <h2>Troubleshooting</h2>
+        <dl class="trouble">
+          <dt>"... is not a model this importer can read."</dt>
+          <dd>The file has a model's name but not its contents, for example a .gltf file renamed to .glb. Nothing was changed. Export it again as glTF Binary, as in step 1. A .gltf with separate files, .fbx, .obj or .stl needs the same: open it in Blender and export a .glb.</dd>
+
+          <dt>The file picker does not show my file.</dt>
+          <dd>It lists only the files the simulator reads: .glb, .step, .stp, .usd, .usda, .usdc and .usdz. Convert anything else first.</dd>
+
+          <dt>The model is tiny, huge, or lying on its side.</dt>
+          <dd>The export's units or up axis are off. Fix them and import again on the <b>body</b> node, as in step 3.</dd>
+
+          <dt>Parts of the model are black.</dt>
+          <dd>Their material is fully metallic with no texture. The Mesh section marks it <b>⚠ renders dark</b>. Lower its metalness in your 3D program.</dd>
+
+          <dt>The import says the model is heavy, or the scene slows down.</dt>
+          <dd>The model has more triangles than a simulation needs. Import a STEP file with Detail <b>coarse</b> and small parts skipped, a USD file with Detail <b>reduced</b>, or reduce it in Blender before you export.</dd>
+
+          <dt>Boxes catch on the blade stop, or it shows above the rollers.</dt>
+          <dd>Its Y is too high for the conveyor. Set it to the conveyor's Y minus 0.42, as in step 5.</dd>
+
+          <dt>The part is called "My Part" and shows a box.</dt>
+          <dd>You clicked <span class="ui">＋ New part</span>, which makes a blank part. Select its node and use <span class="ui">Import model…</span>, or start again with <span class="ui">Import part</span>.</dd>
+
+          <dt>I can't find the part in the Parts dock.</dt>
+          <dd>It is under the tab its Category names. Type its name in <span class="ui">Search parts</span> to find it in any tab.</dd>
+        </dl>
+      </div>
+    </section>
+
+    <footer class="site">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div>
+            <img class="mark" src="/oip-logo.svg" alt="Open Industry Project" />
+            <p class="blurb">A free industrial simulator, in your browser or as a desktop app.</p>
+          </div>
+          <div>
+            <h4>Get it</h4>
+            <ul>
+              <li><a href="https://downloads.openindustryproject.org/desktop/Open-Industry-Project-Setup.exe">Download for Windows</a></li>
+              <li><a href="https://downloads.openindustryproject.org/desktop/open-industry-project_amd64.deb">Download for Linux (.deb)</a></li>
+              <li><a href="/app/">Launch the simulator in the browser</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Explore</h4>
+            <ul>
+              <li><a href="/guides/">All guides</a></li>
+              <li><a href="https://github.com/Open-Industry-Project/Open-Industry-Project/blob/main/docs/part-authoring-guide.md" target="_blank" rel="noopener noreferrer">Part authoring reference</a></li>
+              <li><a href="/plc/">PLC language reference</a></li>
+              <li><a href="/app/?scene=demo">See a PLC-driven line run</a></li>
+              <li><a href="/">Back to the front page</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <span>&copy; Automation Standard LLC and contributors</span>
+        </div>
+        <p class="tm-notice">Blender is a trademark of the Blender Foundation, named here only to identify it. This project is not affiliated with or endorsed by it.</p>
+      </div>
+    </footer>
+  </body>
+</html>

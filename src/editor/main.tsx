@@ -2,47 +2,72 @@
 // (core/lockdownBoot.ts, docs/part-sandbox.md)
 import '../core/lockdownBoot'
 import { createRoot } from 'react-dom/client'
-import { blankScene, setNextIdSuffix } from '../core/scene'
+import { blankScene, setNextIdSuffix } from '../core/scene/scene'
 import { DEFAULT_SIM_HZ } from '../core/types'
 import type { SceneJSON, SimRate } from '../core/types'
 import type { Controller } from '../core/controller'
 import type { DemoSeed } from '../collab/demoRoom'
 import {
+  getCollabSnapshot,
   getLocalActorName,
+  getPeers,
   initCollabSession,
   isLocalDragging,
   remoteDragPoses,
   setCollabContext,
   setLocalRunning,
+  setLocalStream,
+  setLocalWatching,
   setLocalSelection,
   setRoomCodeGate,
+  setRoomState,
+  subscribeCollab,
   subscribePeers,
 } from '../collab/session'
-import { consumeSeedMark, resolveRoom, type ResolvedRoom } from '../collab/rooms'
+import { consumeSeedMark, resolveRoom, type ResolvedRoom, type SeedKind } from '../collab/rooms'
 import { SimClient } from '../sim/client'
 import { getPartThumbnails, renderPackageThumbnails } from '../render/viewport/thumbnails'
-import { getPackage, registerPackage } from '../core/partRegistry'
-import type { PackageManifest } from '../core/partPackage'
-import { partSandboxActive } from '../core/partSandbox'
-import { DESKTOP_SHELL } from './desktopMenuBridge'
+import { getPackage, registerPackage } from '../core/parts/partRegistry'
+import type { PackageManifest } from '../core/parts/partPackage'
+import { partSandboxActive } from '../core/parts/partSandbox'
+import { DESKTOP_SHELL } from './desktop/desktopMenuBridge'
 import { prefetchSceneAssets } from './prefetchSceneAssets'
 import { prefetchThumbnails } from '../render/prefetch'
-import { bundledBehaviors, bundledThumbnailIds, loadBundledExamples, registerBundledPackages } from './bundledExamples'
+import { bundledBehaviors, bundledThumbnailIds, loadBundledExamples, registerBundledPackages } from './parts/bundledExamples'
 import { speculativeFetches } from '../render/gltf'
 import { App } from './App'
 import { AppCrashBoundary } from './components/CrashDialog'
-import { createPlcDemoScene, DEMO_CONTROLLER, DEMO_PROGRAM } from './demoScenes'
-import { DEFAULT_SCAN_MS } from './stProgram'
-import { importSceneText, loadSceneText, sceneFileText } from './sceneFile'
-import { PROJECT_KEY, loadStoredProject, noteWorkingCopyWrite, onWorkingCopySuperseded, parkSplitOff, unopenedProject } from './projectFile'
-import { startSplitFiling } from './projectSplit'
-import { currentDocumentId, onCurrentDocumentChange, supportsDocumentLibrary, syncCurrentDocument, writeDocument } from './documentStore'
-import { EditorStore } from './store'
+import { createPlcDemoScene, DEMO_CONTROLLER, DEMO_PROGRAM } from './demo/demoScenes'
+import { DEFAULT_SCAN_MS } from './program/stProgram'
+import { importSceneText, loadSceneText, sceneFileText } from './project/sceneFile'
+import type { ProjectJSON } from '../core/project/project'
+import {
+  isWorkingCopyKey,
+  keepPendingWrite,
+  loadStoredProject,
+  noteWorkingCopyWrite,
+  onWorkingCopySuperseded,
+  onWorkingCopyWrite,
+  openWorkingCopy,
+  parkSplitOff,
+  storedAssetTexts,
+  unopenedProject,
+} from './project/projectFile'
+import { onLocalAssetsStored, supportsLocalAssets, sweepLocalAssets } from './project/localAssets'
+import { startSplitFiling } from './project/projectSplit'
+import { currentDocumentId } from './project/documentStore'
+import { EditorStore } from './store/store'
+import { liveChannel } from './live/liveChannel'
+import { followTarget, type FollowTarget } from './live/followTarget'
+import { registerRoomEntry } from './roomEntry'
+import { claimRoom, isStoppingSharing, ownSharedProject, setRoomNameWriter, sharedDemo, sharedProjectOf, startWriteBack } from './project/sharedProject'
+import { soloUrl } from './project/roomCopy'
+import { defaultCollabUrl, linkCollabServer } from '../collab/collabServer'
 import { initKeymapPrefs } from './keymapPrefs'
 import { initNavPrefs } from './navigationPrefs'
 import { initLanguage } from './autoTranslate'
 import { followAppearance } from './appearance'
-import { isFreshNavigation, isPhoneViewport, phoneOpensDemo } from './phoneDemo'
+import { isFreshNavigation, isPhoneViewport, phoneOpensDemo } from './demo/phoneDemo'
 import './styles.css'
 
 // iOS reports "launched from the home screen" only through this non-standard flag - the
@@ -101,16 +126,21 @@ const store = new EditorStore()
 const sim = new SimClient()
 // a gesture's autosave trails it by a moment (store.deferPersist): flush it before the page can go away.
 // `hidden` covers a mobile tab the OS may kill without a pagehide.
-addEventListener('pagehide', () => store.flushPersist())
+// The working copy's row write is asynchronous, so one still in flight is also kept where a closing page can write it.
+const flushOnHide = (): void => {
+  store.flushPersist()
+  keepPendingWrite()
+}
+addEventListener('pagehide', flushOnHide)
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') store.flushPersist()
+  if (document.visibilityState === 'hidden') flushOnHide()
 })
 
 /**
  * Park an older multi-scene working copy's other scenes (projectFile.parkSplitOff) before the boot saves over it. If
  * they cannot be parked, nothing may be saved: the session goes read-only rather than lose them.
  */
-function keepSplitOff(splitOff: readonly import('../core/project').ProjectJSON[] | undefined): void {
+function keepSplitOff(splitOff: readonly ProjectJSON[] | undefined): void {
   if (!splitOff || splitOff.length === 0) return
   const parked = parkSplitOff(splitOff)
   if (parked.ok) return
@@ -118,7 +148,7 @@ function keepSplitOff(splitOff: readonly import('../core/project').ProjectJSON[]
   store.showSaveNotice('Opened read-only', `This project holds several scenes, and they could not be kept apart for filing: ${parked.message}`)
 }
 
-/** the solo (no-room) boot path: demo / autosave / default */
+/** The solo (no-room) boot path: demo / autosave / default. The working copy has been read (projectFile.openWorkingCopy). */
 function bootSolo(): void {
   // This build's own parts, before any saved document is loaded: that document's snapshot of a built-in part must
   // lose to the part itself, and it only does once the id is registered (registerBundledPackages).
@@ -185,77 +215,6 @@ function bootSolo(): void {
 }
 
 /**
- * Keep the document library in sync with the working copy (editor/documentStore.ts).
- *
- * The library makes more than one project possible, but it must never get between an edit and the
- * autosave: `oip-web/project` is written synchronously on every commit, and this is a trailing,
- * best-effort copy of that into IndexedDB. Same shape as App’s dock-size persistence, for the same
- * reason: a full project serialize per keystroke is too expensive.
- *
- * The first sync is also the migration: a browser that predates the library has a working copy and
- * no records, so this files it as document #1 under the name it already had. It runs at boot rather
- * than on the first edit, so a returning user who opens the projects list to look sees their work in it.
- *
- * Three exclusions. Two are the ones the rename has: during the ?scene=demo preview nothing of the
- * user’s is on screen and snapshotProject() would mint a project out of a view that is
- * in no slot; in a room the collab doc is the document. The third is a stored project this session
- * could not open (projectFile.unopenedProject): what is on screen is a fallback, not that document, so
- * nothing is filed until it is discarded, and then as a new document, because the discard cuts the
- * pointer loose and the unopened one keeps its record.
- */
-function trackDocumentLibrary(): void {
-  if (!supportsDocumentLibrary()) return
-  let timer: ReturnType<typeof setTimeout> | null = null
-  // what a sync has to notice: the pieces a project document is made of, by reference, plus the
-  // unopened flag whose clearing lets syncing start. The store notifies on every selection and
-  // hover too, and re-serializing the project for those would be wasted work.
-  const docState = () => {
-    const s = store.getState()
-    return [s.scene, s.stProgram, s.userPackages, s.projectName, s.unopenedProject] as const
-  }
-  let last = docState()
-  // The row this session writes to, captured once. Not re-read per sync: an adoption (a .oip import,
-  // a desktop folder open) clears the pointer on its way out so the incoming project is
-  // filed as a new document (projectFile.forgetCurrentDocument), and the pagehide flush that follows
-  // has to write to the document being left rather than mint a second copy of it. It moves only when the
-  // document changes without a reload (a linked folder: documentStore.adoptDocumentInPlace). And it is
-  // never captured for an unopened project: that record is not this session's to write.
-  let docId = unopenedProject() !== null ? null : currentDocumentId()
-  onCurrentDocumentChange((id) => {
-    docId = id
-  })
-  const sync = (): void => {
-    if (timer !== null) clearTimeout(timer)
-    timer = null
-    const s = store.getState()
-    if (s.collab || s.demoSession || s.readOnly || s.unopenedProject) return
-    const project = store.snapshotProject()
-    if (docId !== null) void writeDocument(docId, project)
-    // no pointer yet: mint one and remember it (a first-ever visit, the boot after an adoption, or a
-    // discarded unopened project). Only if nothing moved it meanwhile: an in-place adoption can complete
-    // while this write is in flight, and its id is the one that must stick.
-    else
-      void syncCurrentDocument(project).then((id) => {
-        if (docId === null) docId = id
-      })
-  }
-  sync() // boot: file document #1 if this browser has never had a record
-  store.subscribe(() => {
-    const now = docState()
-    if (now.every((v, i) => v === last[i])) return
-    last = now
-    if (timer !== null) clearTimeout(timer)
-    timer = setTimeout(sync, 2000)
-  })
-  // A tab that goes away must not lose the library's last two seconds. pagehide covers the bfcache
-  // and the close; visibilitychange covers a phone being backgrounded, which may never fire pagehide.
-  addEventListener('pagehide', sync)
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') sync()
-  })
-}
-
-/**
  * Every tab of the app on this origin shares one working copy, and a save writes the whole document, so two
  * tabs editing at once would erase each other's work in silence. Once another tab writes something other
  * than what this one last saw, this tab yields: it stops saving (projectFile refuses from then on) and goes
@@ -265,11 +224,14 @@ function trackDocumentLibrary(): void {
  * Solo only: in a room the collab doc is the document and this tab never writes the working copy.
  */
 function watchOtherTabs(): void {
-  onWorkingCopySuperseded(() => store.yieldToOtherTab())
+  // a tab that has since entered a room in place (roomEntry.ts) writes no working copy, so another tab's has no claim on it
+  onWorkingCopySuperseded(() => {
+    if (!store.getState().collab) store.yieldToOtherTab()
+  })
   addEventListener('storage', (e) => {
     if (e.storageArea !== localStorage) return
     // key null is another tab's localStorage.clear(): the working copy is gone from under this one too
-    if (e.key === PROJECT_KEY || e.key === null) noteWorkingCopyWrite(e.key === null ? null : e.newValue)
+    if (e.key === null || isWorkingCopyKey(e.key)) noteWorkingCopyWrite(e.key === null ? null : e.newValue)
   })
 }
 
@@ -279,7 +241,117 @@ function watchOtherTabs(): void {
  * from the doc, then wires the two-way bridge. Awaits first sync so we don't flash an empty
  * scene before remote state arrives.
  */
-async function bootRoom(resolved: ResolvedRoom): Promise<void> {
+const sameTarget = (a: FollowTarget | null, b: FollowTarget | null): boolean => a === b || (!!a && !!b && a.who === b.who && a.stream === b.stream && a.why === b.why)
+
+/**
+ * A room's live share (collab/liveShare.ts, docs/live-share.md). Anyone running can be watched: an editor's run is
+ * announced to the server, and its frames go out only while someone follows it. This client follows the run
+ * live/followTarget.ts picks, and publishes whose run it draws. Registered before the first sync, so the server's
+ * word on the owner and the spotlight, sent on joining, is not missed.
+ */
+function joinLiveShare(
+  provider: {
+    sendStateless(payload: string): void
+    on(event: 'stateless', cb: (data: { payload: string }) => void): unknown
+    on(event: 'synced', cb: (data: { state: boolean }) => void): unknown
+  },
+  live: typeof import('../collab/liveShare'),
+  canShare: boolean,
+  queued: () => number,
+): void {
+  const send = (payload: string): void => provider.sendStateless(payload)
+  const receiver = new live.LiveShareReceiver(send, {
+    frame: (f, watch) => liveChannel.in?.frame(f, watch),
+    end: () => liveChannel.in?.end(),
+  })
+  let sender: InstanceType<typeof live.LiveShareSender> | null = null
+  provider.on('stateless', ({ payload }) => {
+    const m = live.parseLiveMessage(payload)
+    if (!m) return
+    if (m.kind === 'o') {
+      const owner = m.stream === '-' ? null : Number(m.stream)
+      setRoomState(owner !== null && Number.isSafeInteger(owner) ? owner : null, m.body === '1')
+    } else if (m.kind === 'w' || m.kind === 'q') sender?.accept(m.kind, m.stream, m.body)
+    else receiver.accept(m.kind, m.stream, m.body)
+  })
+
+  // this client's run: announced while it runs (not a Part Editor test run), so the others can watch it
+  const syncSender = (): void => {
+    const { running, packageEdit } = store.getState()
+    const want = canShare && running && !packageEdit
+    if (want && !sender) {
+      sender = new live.LiveShareSender(send, undefined, queued)
+      liveChannel.out = sender
+      setLocalStream(sender.stream)
+    } else if (!want && sender) {
+      sender.end()
+      sender = null
+      liveChannel.out = null
+      setLocalStream(null)
+    }
+  }
+
+  // whose run to draw, again on any change to this client, the room or the people in it
+  let spotlight = false
+  let watching: number | null | undefined
+  const follow = (): void => {
+    const s = store.getState()
+    const c = getCollabSnapshot()
+    if (c.spotlight !== spotlight) {
+      spotlight = c.spotlight
+      // a new spotlight asks again, though the last was dismissed, and brings a moved view back to the owner's
+      if (spotlight && (s.spotlightDismissed || s.liveViewDetached)) return store.setState({ spotlightDismissed: false, liveViewDetached: false })
+    }
+    // someone picked who left is not waited for
+    if (s.liveWatch !== null && !getPeers().some((p) => p.clientId === s.liveWatch)) return store.setState({ liveWatch: null })
+    const target = followTarget({
+      self: c.selfId,
+      running: s.running,
+      readOnly: s.readOnly,
+      picked: s.liveWatch,
+      owner: c.owner,
+      spotlight: c.spotlight,
+      dismissed: s.spotlightDismissed,
+      runners: c.runners,
+    })
+    // a spotlight never switches someone mid-drag: it takes them when they let go
+    if (target?.why === 'spotlight' && !sameTarget(target, s.liveTarget) && isLocalDragging()) return
+    // someone new to follow is followed from their own view (controller/liveCamera.ts)
+    if (!sameTarget(target, s.liveTarget)) return store.setState({ liveTarget: target, ...(target?.who !== s.liveTarget?.who ? { liveViewDetached: false } : {}) })
+    receiver.follow(target?.stream ?? null)
+    // published while waiting too, so the one followed sends their camera before they run
+    const following = target?.who ?? null
+    if (following !== watching) setLocalWatching((watching = following))
+  }
+  const update = (): void => {
+    syncSender()
+    follow()
+  }
+  store.subscribe(update)
+  subscribeCollab(follow)
+  subscribePeers(follow)
+  // a reconnect is a new connection to the server, which has forgotten this one's run and whom it follows
+  let synced = false
+  provider.on('synced', ({ state }) => {
+    if (!state) return
+    if (synced) {
+      if (sender) {
+        sender = null
+        liveChannel.out = null
+      }
+      syncSender()
+      receiver.refollow()
+    }
+    synced = true
+  })
+  update()
+}
+
+/**
+ * `seedHere`: this tab minted the room and enters it in place (roomEntry.ts), so it says what seeds the room. Opened
+ * from a link, the seed mark a minting tab left before reloading says it instead (rooms.ts).
+ */
+async function bootRoom(resolved: ResolvedRoom, seedHere: SeedKind | null = null): Promise<void> {
   // `resolved` is the ?room= value classified (rooms.ts resolveRoom) into the server doc name +
   // auth token; view-ness follows from whether we hold the edit secret, so the server enforces it too.
   const { room } = resolved
@@ -288,30 +360,56 @@ async function bootRoom(resolved: ResolvedRoom): Promise<void> {
   if (resolved.view) store.setReadOnly(true)
   // load the collaboration stack (yjs + hocuspocus + y-indexeddb + y-codemirror) only for
   // rooms, so the solo bundle stays lean
-  const [{ connectRoom, seedIfEmpty, collabUrl }, schema, { CollabBridge }, { createStCollabExtension }, trust, demoRoom, wasShipped, roomAssets] = await Promise.all([
+  const [{ connectRoom, seedIfEmpty, collabUrl }, schema, { CollabBridge }, { createStCollabExtension }, trust, demoRoom, wasShipped, roomAssets, liveShare] = await Promise.all([
     import('../collab/provider'),
     import('../collab/schema'),
     import('../collab/bridge'),
     import('../collab/stBinding'),
     import('../collab/codeTrust'),
     import('../collab/demoRoom'),
-    import('./shippedBehaviors').then((m) => m.loadShippedBehaviors()),
+    import('./parts/shippedBehaviors').then((m) => m.loadShippedBehaviors()),
     import('../collab/roomAssets'),
+    import('../collab/liveShare'),
   ])
   // a part's embedded models live in the collab server's asset store by hash (collab/roomAssets.ts), which an editor
   // may add to. Set before anything seeds or reads the room's packages: a read starts fetching the hashes it names.
   roomAssets.configureRoomAssets({ base: roomAssets.assetBaseFor(collabUrl()), room: resolved.docName, token: resolved.view ? null : resolved.token })
-  const { ydoc, provider, whenSynced, serverSynced } = connectRoom(resolved)
+  // A link that names another server sends this tab's edits, presence and name there. Harmless for a view link and
+  // what a self-hosted room is for, but anyone can write such a link, so say where the room is.
+  const otherServer = linkCollabServer()
+  if (otherServer && otherServer !== defaultCollabUrl()) {
+    store.showSaveNotice(
+      'This shared project is on another server',
+      `This shared project is kept on ${new URL(otherServer).host}, not on the Open Industry Project's server. What you do in it goes there. If you did not expect that, close this tab.`,
+    )
+  }
+  const { ydoc, provider, idb, whenSynced, serverSynced } = connectRoom(resolved)
+  // Its owner closed the room (Stop sharing, server/roomOwners.mjs): told while in it, or refused on the way in. Back to
+  // the app on its own, saying why, rather than on a copy of the room this browser happens to have cached.
+  const leaveClosed = (): void => {
+    if (isStoppingSharing()) return // this tab is the one closing it, and is on its way already
+    void idb.clearData()
+    const url = new URL(soloUrl(location.href), location.href)
+    url.searchParams.set('closed', '1')
+    location.replace(url.toString())
+  }
+  provider.on('authenticationFailed', ({ reason }: { reason?: string }) => {
+    if (reason === 'room-closed') leaveClosed()
+  })
+  provider.on('stateless', ({ payload }: { payload: string }) => {
+    if (payload === 'room1|closed|') leaveClosed()
+  })
   // room-unique part ids so two clients minting from the same count don't collide
   const idSuffix = '~' + ydoc.clientID.toString(36)
   setNextIdSuffix(idSuffix)
   initCollabSession(room, provider)
+  joinLiveShare(provider, liveShare, !resolved.view, () => provider.configuration.websocketProvider.webSocket?.bufferedAmount ?? 0)
   await whenSynced
   // An empty room is seeded from the creator's current scene + PLC program (Share's
   // payload) - but only by the tab that minted the room, so opening a mistyped or stale
   // link can't upload this browser's private solo scene into a foreign room id. A viewer
   // never seeds.
-  const mintedHere = consumeSeedMark(room)
+  const mintedHere = seedHere ?? consumeSeedMark(room)
   let seededCode: string[] = []
   if (!resolved.view && (mintedHere === 'demo' || demoRoom.isDemoRoom(ydoc))) {
     // Shared from the untouched demo: the room holds the demo until someone edits it, so an editor on a build with a
@@ -331,13 +429,12 @@ async function bootRoom(resolved: ResolvedRoom): Promise<void> {
   // Whose part code may run here (collab/codeTrust.ts): this app's own parts, in this build or any earlier one (a
   // room keeps a snapshot of the built-ins it places, shippedBehaviors.ts), and code this browser wrote itself,
   // whether just now (the seed, a part authored in the room) or on an earlier visit (remembered by fingerprint).
-  // The rest of the room's code: in a browser whose realm is locked down it runs in the part sandbox
-  // (docs/part-sandbox.md) unless this browser blocked the room; on the desktop, or where lockdown failed, it waits
-  // until the user allows the room (RoomCodePrompt), which this browser then remembers. The desktop keeps asking
-  // because its page also holds native file and network access, so the prompt stays as a second layer there.
+  // The rest of the room's code: where the realm is locked down it runs in the part sandbox (docs/part-sandbox.md),
+  // on the desktop too, whose main process also limits what an escape could reach (folder grants, endpoint consent).
+  // Where lockdown failed it waits until the user allows the room (RoomCodePrompt), which this browser then remembers.
   const shipped = bundledBehaviors()
   const shippedCode = new Set(shipped.values())
-  const sandboxed = partSandboxActive() && !DESKTOP_SHELL
+  const sandboxed = partSandboxActive()
   // Safe open: the room's foreign code is held this time even where it would run - asked for with `?nocode`, or
   // because the last open of this room never finished (it froze or crashed the page; codeTrust.ts recovery). The
   // sandbox confines part code but cannot stop it spinning, so this is how a room with a hostile part stays openable.
@@ -346,7 +443,7 @@ async function bootRoom(resolved: ResolvedRoom): Promise<void> {
     : sandboxed && trust.roomOpenDidNotFinish(resolved.docName)
       ? 'recovered'
       : null
-  const runsByDefault = sandboxed ? !trust.isRoomCodeBlocked(resolved.docName) : trust.isRoomCodeTrusted(resolved.docName)
+  const runsByDefault = sandboxed || trust.isRoomCodeTrusted(resolved.docName)
   const gate = new trust.PackageGate(
     { isFirstParty: (src) => shippedCode.has(src) || wasShipped(src), sourceFor: (id) => shipped.get(id) },
     safe ? false : runsByDefault,
@@ -374,9 +471,8 @@ async function bootRoom(resolved: ResolvedRoom): Promise<void> {
   })
   const unsubRemember = gate.subscribe(() => {
     if (!gate.trusted) return
-    // allowing a room the sandbox would have run anyway only undoes a Block; elsewhere it is remembered as a yes
-    if (sandboxed) trust.setRoomCodeBlocked(resolved.docName, false)
-    else trust.rememberRoomCodeTrust(resolved.docName)
+    // a sandboxed room runs its code on every normal open, so only an unsandboxed yes needs remembering
+    if (!sandboxed) trust.rememberRoomCodeTrust(resolved.docName)
     unsubRemember()
   })
   setRoomCodeGate(gate, { sandboxed, docName: resolved.docName, safe })
@@ -390,6 +486,8 @@ async function bootRoom(resolved: ResolvedRoom): Promise<void> {
   // (the review notifies the gate's listeners, which arm the recovery mark before any of this code can run)
   store.applyRemotePackages(gate.review(schema.readPackages(ydoc)), schema.editedPackageIds(ydoc))
   store.applyRemote(gate.admitScene(schema.docToScene(ydoc)))
+  // the demo, entered in place, is the room's document now and no longer a preview (a room link never opens one)
+  if (store.getState().demoSession) store.setState({ demoSession: false })
   // start the room scene's asset downloads now, not when the view mounts (see prefetchSceneAssets)
   prefetchSceneAssets(store.getState().scene)
   // the bridge also renders peers' live drags (over awareness, off the doc) via this presence source;
@@ -405,6 +503,38 @@ async function bootRoom(resolved: ResolvedRoom): Promise<void> {
     setLocalSelection(store.getState().selectedIds)
     setLocalRunning(store.getState().running)
   })
+  // a project of this browser's own, shared: the room's document flows back into it, and this browser registers as its
+  // owner, which is what lets Stop sharing close it (project/sharedProject.ts, server/roomOwners.mjs)
+  // The room carries the project's name, so everyone in it sees what they are in: written by its owner, read by the rest
+  // (a room from before names were written reads as "Shared project").
+  const own = ownSharedProject()
+  if (own && !resolved.view) {
+    schema.writeProjectName(ydoc, own.project)
+    setRoomNameWriter((name) => schema.writeProjectName(ydoc, name))
+  } else {
+    const readName = (): void => store.setState({ projectName: schema.readProjectName(ydoc) ?? 'Shared project' })
+    readName()
+    schema.metaMap(ydoc).observe((e) => {
+      if (e.keysChanged.has(schema.PROJECT_NAME_META)) readName()
+    })
+  }
+  if (own && !resolved.view) {
+    if (!own.demo) startWriteBack(store, own)
+    const line = {
+      send: (payload: string) => provider.sendStateless(payload),
+      listen: (cb: (payload: string) => void) => {
+        const on = ({ payload }: { payload: string }): void => cb(payload)
+        provider.on('stateless', on)
+        return () => provider.off('stateless', on)
+      },
+    }
+    // claimed again on every sync: a reconnect is a new connection, and the server knows the owner by it
+    const claim = (): void => claimRoom(ownSharedProject() ?? own, line, ydoc.clientID)
+    claim()
+    provider.on('synced', ({ state }: { state: boolean }) => {
+      if (state) claim()
+    })
+  }
 }
 
 function mount(): void {
@@ -478,6 +608,21 @@ function mount(): void {
 }
 
 const params = new URLSearchParams(location.search)
+// A link for a display (Share > Can view > For a display) opens with only the scene, locked: a visitor may move the
+// camera but not act on the design, so no key reaches the editor but the flight keys while they fly (right button held),
+// and there is no way out but the browser's own. This listener is added before the app mounts, so it runs ahead of every
+// key listener the app adds.
+if (params.get('present') === '1') {
+  store.setState({ presenting: true, presentLocked: true })
+  const block = (e: KeyboardEvent): void => {
+    const { presentLocked, navigating } = store.getState()
+    // the values list's filter takes typing (components/PresentValues.tsx)
+    if (e.target instanceof Element && e.target.closest('.present-values-filter')) return
+    if (presentLocked && !(navigating && !e.ctrlKey && !e.metaKey && !e.altKey)) e.stopImmediatePropagation()
+  }
+  window.addEventListener('keydown', block, true)
+  window.addEventListener('keyup', block, true)
+}
 
 /**
  * ?xremu: install an emulated WebXR runtime + on-page headset/controller controls
@@ -510,38 +655,130 @@ async function installXREmulator(): Promise<void> {
 const xremu = installXREmulator()
 
 function startSolo(): void {
+  // Share from this tab enters the room it mints without a reload (Toolbar copyShareLink, toggleLive). The solo saves
+  // stand down by themselves once the store is in collab mode (store persist, the library, the folder sync).
+  registerRoomEntry(async (roomUrl, seed) => {
+    const url = new URL(roomUrl)
+    const resolved = await resolveRoom(url.searchParams.get('room') ?? '')
+    if (!resolved) return
+    for (const p of ['scene', 'view', 'handoff']) url.searchParams.delete(p)
+    history.replaceState(history.state, '', url.pathname + url.search + url.hash)
+    // Held read-only until the room's document has synced and its bridge is up: an edit made in between would land in
+    // a store the room's document then replaces, and be lost. (A newer build's claim, met while booting, keeps it so.)
+    store.setReadOnly(true)
+    try {
+      await bootRoom(resolved, seed)
+    } finally {
+      if (!store.getState().roomNewerBuild) store.setReadOnly(false)
+    }
+  })
   watchOtherTabs()
-  bootSolo()
-  trackDocumentLibrary()
-  // an older multi-scene project's other scenes, parked by the boot: filed now (projectSplit.ts); the folder sync
-  // waits for it (App.tsx)
-  startSplitFiling(store)
-  // The scene is in the store now; its parts' GLBs/textures need not wait for the renderer
-  // handshake + React mount that emits them today (~2.6 s of idle link under WebGPU).
-  prefetchSceneAssets(store.getState().scene)
-  void xremu.then(mount)
+  const boot = (): void => {
+    bootSolo()
+    // an older multi-scene project's other scenes, parked by the boot: filed now (projectSplit.ts); the folder sync
+    // waits for it (App.tsx)
+    startSplitFiling(store)
+    // The scene is in the store now; its parts' GLBs/textures need not wait for the renderer
+    // handshake + React mount that emits them today (~2.6 s of idle link under WebGPU).
+    prefetchSceneAssets(store.getState().scene)
+    void xremu.then(mount).catch((e: unknown) => console.error('[oip] the editor failed to mount', e))
+  }
+  // the working copy is the open document's library row, read before the boot (projectFile.openWorkingCopy)
+  void openWorkingCopy()
+    .catch(() => {})
+    .then(boot)
+    .catch((e: unknown) => console.error('[oip] the editor failed to boot', e))
+  keepWorkingCopySmall()
 }
 
-const room = params.get('room')
+/**
+ * A model added this session is written embedded until its bytes are in the asset store (localAssets.ts). Save again
+ * once they are, so the working copy names it by hash rather than carrying its bytes on every save. Then delete
+ * stored models nothing names any more, once the boot is done with the database.
+ */
+function keepWorkingCopySmall(): void {
+  onLocalAssetsStored(() => {
+    const s = store.getState()
+    // persistProject would fork a demo preview into a project, and the other states write no working copy
+    if (s.collab || s.demoSession || s.readOnly || s.unopenedProject) return
+    store.persistProject()
+  })
+  // a save returns before its row is written (projectFile.saveStoredProject), so a failed write raises the banner here
+  onWorkingCopyWrite((result) => {
+    const next = result.ok ? null : result.message
+    if (store.getState().autosaveError !== next) store.setState({ autosaveError: next })
+  })
+  if (supportsLocalAssets()) {
+    setTimeout(
+      () =>
+        void storedAssetTexts()
+          .then((texts) => texts && sweepLocalAssets(texts))
+          .catch((e: unknown) => console.warn('[oip] sweeping stored model assets failed', e)),
+      30_000,
+    )
+  }
+}
+
+/**
+ * The room to open: the link's, or, when the project this browser has open is one of its own that it shared, that
+ * project's room (project/sharedProject.ts), since a shared project is edited in its room. The demo and a desktop
+ * hand-over are not the open project, so they open as they are.
+ */
+function roomToOpen(): string | null {
+  const linked = params.get('room')
+  if (linked !== null || params.has('handoff')) return linked
+  // the demo this browser shared opens in its room too, until its sharer stops sharing it there
+  const shared = params.get('scene') === 'demo' ? sharedDemo() : params.has('scene') ? null : sharedProjectOf(currentDocumentId())
+  if (!shared) return null
+  const url = new URL(location.href)
+  url.searchParams.delete('scene')
+  url.searchParams.set('room', shared.room)
+  if (shared.server) url.searchParams.set('server', shared.server)
+  history.replaceState(history.state, '', url.pathname + url.search + url.hash)
+  return shared.room
+}
+
+const room = roomToOpen()
 if (room) {
   void resolveRoom(room).then((resolved) => {
+    // the owner of a shared project seeds its room again if the server lost it (seedIfEmpty does nothing otherwise),
+    // from the project it keeps in step (project/sharedProject.ts), when that is the project this browser has open
+    const own = ownSharedProject()
+    const seed = own && !own.demo && own.docId === currentDocumentId() ? 'scene' : null
     // gate render on first sync so we don't flash an empty scene before remote state loads
-    if (resolved) return void Promise.all([bootRoom(resolved), xremu]).finally(mount)
+    // the working copy is read first: a room is seeded from it (soloDocOrDefault) and written back to it
+    if (resolved) {
+      return void Promise.all([openWorkingCopy().catch(() => {}).then(() => bootRoom(resolved, seed)), xremu])
+        .finally(mount)
+        .catch((e: unknown) => console.error('[oip] joining the shared project failed', e))
+    }
     // Not a room link (an unprefixed id from before edit secrets, or a garbled one): open solo and
     // say so, with the room taken out of the address bar so Share and a reload treat this tab as solo.
     const url = new URL(location.href)
     url.searchParams.delete('room')
     url.searchParams.delete('view')
+    url.searchParams.delete('server')
     history.replaceState(history.state, '', url)
     startSolo()
     store.showSaveNotice(
-      'Room link not recognized',
-      'This link does not name a shared room, so the editor opened on its own. Ask whoever sent it for a new link from Share.',
+      'Share link not recognized',
+      'This link does not name a shared project, so the editor opened on its own. Ask whoever sent it for a new link from Share.',
     )
-  })
+  }).catch((e: unknown) => console.error('[oip] opening the shared project failed', e))
 } else {
   startSolo()
+  // sent back from a room its owner closed (bootRoom leaveClosed)
+  if (params.has('closed')) {
+    const url = new URL(location.href)
+    url.searchParams.delete('closed')
+    history.replaceState(history.state, '', url.pathname + url.search + url.hash)
+    store.showSaveNotice('That shared project was closed', 'Its owner stopped sharing it, so its links no longer open it. Ask them to share it again.')
+  }
   // the desktop app booted to take a browser's project (Open in Desktop App; desktopHandoff.ts asks before importing)
   const handoff = DESKTOP_SHELL ? params.get('handoff') : null
-  if (handoff) void import('./desktopHandoff').then((m) => m.receiveDesktopHandoff(store, handoff))
+  if (handoff) {
+    void import('./desktop/desktopHandoff')
+      .then((m) => m.receiveDesktopHandoff(store, handoff))
+      .catch((e: unknown) => console.warn('[oip] taking the browser project failed', e))
+  }
 }

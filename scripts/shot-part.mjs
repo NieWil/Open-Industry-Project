@@ -1,12 +1,14 @@
 // Screenshot one custom part, headless, for an agent that cannot look at the app:
 //
-//   node scripts/shot-part.mjs <part-folder> [--out <dir>] [--pose <joint>=<value>,...] [--params <k>=<v>,...]
-//                              [--focus <x>,<y>,<z>,<r>]
+//   node scripts/shot-part.mjs <part-folder> [--out <dir>] [--pose <joint>=<value>,...] [--sub-pose <link>=<json>]...
+//                              [--params <k>=<v>,...] [--focus <x>,<y>,<z>,<r>]
 //
 // A part folder is manifest.json (or an example's rig.json) + behavior.js (or behavior.ts), as check-part reads.
 // Writes front.png / side.png / top.png / iso.png of the part at REST into --out (default <part-folder>/shots/).
 // REST is what the stopped editor shows: the part's own step() settled on its params with no tags or Use.
-// --pose writes a second set *-posed.png with those joint values applied. --focus frames a CLOSE-UP: a sphere of
+// --pose writes a second set *-posed.png with those joint values applied. --sub-pose poses a link the way the behavior's
+// ctx.setSubPose does, as JSON: `--sub-pose 'carriage={"position":[0,0.2,0]}'`, and `slat[3]={"rotation":[0,0,1]}` for
+// one copy of a posable array. It repeats, once per link or copy, and goes in the same posed set. --focus frames a CLOSE-UP: a sphere of
 // radius r round the part-local point (x, y, z), for detail too small to judge whole (a handle, a seam).
 //
 // How, all existing machinery:
@@ -19,7 +21,7 @@
 //     each view is a perspective camera fitted to its bounding sphere. front = from +Z (X right), side = from +X
 //     (-Z right), top = from +Y (X right, -Z up), iso = from (+X, +Y, +Z). The part is lifted so its lowest point
 //     sits on the floor, or, for a legged part (a rest:'surfaceBelow' param), its origin at that height.
-//   - POSE: view.applyIdlePose(partId, { joints }), the idle preview's own applier; unnamed joints keep their rest
+//   - POSE: view.applyIdlePose(partId, { joints, subPoses }), the idle preview's own applier; unnamed joints keep their rest
 //     value, and posed shots are framed on the union of both boxes. For a pose the behavior derives from a param
 //     (diverter `diverted`, blade stop `active`), pass --params instead.
 //   - --params sets instance params before load (true/false/numbers parsed; anything else is a string).
@@ -33,7 +35,7 @@ import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const USAGE = 'usage: node scripts/shot-part.mjs <part-folder> [--out <dir>] [--pose <joint>=<value>,...] [--params <k>=<v>,...] [--focus <x>,<y>,<z>,<r>] [--headed]'
+const USAGE = 'usage: node scripts/shot-part.mjs <part-folder> [--out <dir>] [--pose <joint>=<value>,...] [--sub-pose <link>=<json>]... [--params <k>=<v>,...] [--focus <x>,<y>,<z>,<r>] [--headed]'
 const usage = (msg) => {
   if (msg) console.error(msg)
   console.error(USAGE)
@@ -47,14 +49,16 @@ let outDir = null
 let poseArg = null
 let paramsArg = null
 let focusArg = null
+const subPoseArgs = []
 const headed = argv.includes('--headed')
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
   if (a === '--headed') continue
-  if (a === '--out' || a === '--pose' || a === '--params' || a === '--focus') {
+  if (a === '--out' || a === '--pose' || a === '--sub-pose' || a === '--params' || a === '--focus') {
     const v = argv[++i]
     if (v === undefined) usage(`${a} needs a value`)
     if (a === '--out') outDir = v
+    else if (a === '--sub-pose') subPoseArgs.push(v)
     else if (a === '--pose') poseArg = v
     else if (a === '--focus') focusArg = v
     else paramsArg = v
@@ -87,6 +91,34 @@ const paramOverrides = paramsArg ? parsePairs(paramsArg, '--params') : {}
 const focus = focusArg ? focusArg.split(',').map(Number) : null
 if (focus && (focus.length !== 4 || !focus.every(Number.isFinite) || focus[3] <= 0)) usage(`--focus: expected <x>,<y>,<z>,<r> in part-local metres, got "${focusArg}"`)
 if (pose) for (const [k, v] of Object.entries(pose)) if (typeof v !== 'number') usage(`--pose ${k}: a joint value must be a number (m or rad), got "${v}"`)
+// --sub-pose <link>[<i>]=<json>, into applyIdlePose's subPoses: { link: { position?, rotation?, quat?, instances? } }
+const vec = (v, n) => Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number' && Number.isFinite(x))
+const subPoses = {}
+for (const arg of subPoseArgs) {
+  const m = /^([^=[\]]+?)\s*(?:\[(\d+)\])?\s*=(.*)$/s.exec(arg)
+  if (!m) usage(`--sub-pose: expected <link>=<json> or <link>[<i>]=<json>, got "${arg}"`)
+  const [, link, index, json] = m
+  let p
+  try {
+    p = JSON.parse(json)
+  } catch (e) {
+    usage(`--sub-pose ${link}: not JSON (${e.message}): ${json}`)
+  }
+  if (typeof p !== 'object' || p === null || Array.isArray(p)) usage(`--sub-pose ${link}: expected an object like {"position":[x,y,z]}`)
+  for (const k of Object.keys(p)) if (k !== 'position' && k !== 'rotation' && k !== 'quat') usage(`--sub-pose ${link}: "${k}" is not position, rotation (Euler XYZ, rad) or quat`)
+  if (p.position !== undefined && !vec(p.position, 3)) usage(`--sub-pose ${link}: position wants [x, y, z] in metres`)
+  if (p.rotation !== undefined && !vec(p.rotation, 3)) usage(`--sub-pose ${link}: rotation wants [x, y, z] in radians`)
+  if (p.quat !== undefined && !vec(p.quat, 4)) usage(`--sub-pose ${link}: quat wants [x, y, z, w]`)
+  const name = link.trim()
+  if (index === undefined) subPoses[name] = { ...subPoses[name], ...p }
+  else {
+    const instances = subPoses[name]?.instances ?? []
+    while (instances.length <= Number(index)) instances.push(null)
+    instances[Number(index)] = p
+    subPoses[name] = { ...subPoses[name], instances }
+  }
+}
+const posing = pose !== null || subPoseArgs.length > 0
 
 const pick = (names) => names.map((n) => join(folder, n)).find((p) => existsSync(p))
 const manifestPath = pick(['manifest.json', 'rig.json'])
@@ -114,9 +146,9 @@ let pkg, part, footprint, sceneVersion, standHeight = 0
   })
   try {
     const { validatePart } = await vite.ssrLoadModule('/src/sim/validatePart.ts')
-    const { registerPackage } = await vite.ssrLoadModule('/src/core/partRegistry.ts')
-    const { partFootprint, surfaceBelowParam } = await vite.ssrLoadModule('/src/core/partGeometry.ts')
-    const { createSdkPart } = await vite.ssrLoadModule('/src/core/scene.ts')
+    const { registerPackage } = await vite.ssrLoadModule('/src/core/parts/partRegistry.ts')
+    const { partFootprint, surfaceBelowParam } = await vite.ssrLoadModule('/src/core/parts/partGeometry.ts')
+    const { createSdkPart } = await vite.ssrLoadModule('/src/core/scene/scene.ts')
     ;({ SCENE_VERSION: sceneVersion } = await vite.ssrLoadModule('/src/core/types/base.ts'))
     const result = validatePart(manifest, readFileSync(behaviorPath, 'utf8'))
     if (!result.ok || !result.package) {
@@ -133,6 +165,14 @@ let pkg, part, footprint, sceneVersion, standHeight = 0
         const j = joints.find((x) => x.name === name)
         if (!j) usage(`--pose: no joint "${name}" (the part's joints: ${joints.map((x) => x.name).join(', ') || 'none'})`)
         if ((j.min !== undefined && v < j.min) || (j.max !== undefined && v > j.max)) console.warn(`! --pose ${name}=${v} is outside the joint's range ${j.min}..${j.max}`)
+      }
+    }
+    {
+      const links = geo.kind === 'rig' ? geo.links : []
+      for (const [name, sp] of Object.entries(subPoses)) {
+        const l = links.find((x) => x.name === name)
+        if (!l) usage(`--sub-pose: no link "${name}" (the part's links: ${links.map((x) => x.name).join(', ') || 'none'})`)
+        if (sp.instances && !l.array?.posable) usage(`--sub-pose ${name}[i]: "${name}" is not a posable array (array.posable), so it has no copies to pose one by one`)
       }
     }
     for (const k of Object.keys(paramOverrides)) if (!(k in (pkg.params ?? {}))) usage(`--params: no param "${k}" (the part's params: ${Object.keys(pkg.params ?? {}).join(', ') || 'none'})`)
@@ -321,8 +361,8 @@ try {
   const restBox = focusBox ?? rest?.box ?? fallbackBox
   await shoot(restBox, '')
 
-  if (pose) {
-    await page.evaluate(([id, joints]) => window.__oip.view.applyIdlePose(id, { joints }), [PART_ID, pose])
+  if (posing) {
+    await page.evaluate(([id, joints, subs]) => window.__oip.view.applyIdlePose(id, { ...(joints ? { joints } : {}), ...(Object.keys(subs).length ? { subPoses: subs } : {}) }), [PART_ID, pose, subPoses])
     await page.waitForTimeout(200)
     const posed = await measure()
     await shoot(focusBox ?? union(restBox, posed?.box ?? null), '-posed')
@@ -339,7 +379,7 @@ for (const f of written) console.log(f)
 const r3 = (n) => Math.round(n * 1000) / 1000
 console.log(
   `${failed || errors.length ? '✗' : '✓'} ${pkg.id.replace(/\.shot$/, '')} "${pkg.name}": ${meshCount} mesh(es) rendered, ${written.length} shot(s)` +
-    `${lift ? `, lifted ${r3(lift)} m onto the floor` : ''}${pose ? `, posed ${Object.entries(pose).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}` +
+    `${lift ? `, lifted ${r3(lift)} m onto the floor` : ''}${posing ? `, posed ${[...Object.entries(pose ?? {}).map(([k, v]) => `${k}=${v}`), ...subPoseArgs].join(' ')}` : ''}` +
     `, ${errors.length} error(s)`,
 )
 for (const e of errors.slice(0, 10)) console.log(`    ✗ ${e}`)

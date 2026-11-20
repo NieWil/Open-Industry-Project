@@ -111,7 +111,7 @@ export function loadParts(page, parts) {
   }, parts)
 }
 
-/** One row of a guide's wiring table, done as the reader does it: select the part, open Comms, tick Enable Comms, type. */
+/** One row of a guide's wiring table, done as the reader does it: select the part, open Comms, type. */
 export async function wire(page, row, { expect, says, partIds }) {
   const id = partIds[row.part]
   if (!expect(!!id, `the guide's part "${row.part}" is one this scene has`)) return
@@ -122,12 +122,9 @@ export async function wire(page, row, { expect, says, partIds }) {
   const head = page.locator('.inspector-group-head', { hasText: fieldLabel(says('Comms')) }).first()
   await head.waitFor({ timeout: 10000 })
   if ((await head.getAttribute('aria-expanded')) === 'false') await head.click()
-  const enable = page.locator('label.field', { has: page.locator('.field-label', { hasText: fieldLabel(says('Enable Comms')) }) }).locator('input[type="checkbox"]')
-  if (expect((await enable.count()) === 1, `${row.part}: the Inspector has "Enable Comms"`) && !(await enable.isChecked())) await enable.check()
   const field = page.locator('label.field', { has: page.locator('.field-label', { hasText: fieldLabel(row.field) }) }).locator('input').first()
-  // the Comms fields render once the Enable Comms commit has gone through the store
   await field.waitFor({ timeout: 10000 }).catch(() => {})
-  if (!expect((await field.count()) === 1, `${row.part}: the Inspector has "${row.field}" once comms are on`)) return
+  if (!expect((await field.count()) === 1, `${row.part}: the Inspector has "${row.field}"`)) return
   await field.fill(row.address)
   await field.press('Enter')
   await sleep(200)
@@ -138,7 +135,7 @@ export async function wire(page, row, { expect, says, partIds }) {
   expect(stored, `${row.part}: "${row.field}" holds ${row.address}`)
 }
 
-/** Simulation > External PLC…, through the command palette (the native menu is out of a script's reach). */
+/** Simulation > PLC Controllers…, through the command palette (the native menu is out of a script's reach). */
 export async function openExternalPlc(page, { expect, says }) {
   // the palette's chord is the app's, and a focused code editor keeps it (a reader in the PLC panel's editor reaches
   // for the menu instead): leave any text field first
@@ -146,7 +143,7 @@ export async function openExternalPlc(page, { expect, says }) {
   await page.keyboard.press('Control+Shift+P')
   const input = page.locator('.palette-input')
   await input.waitFor({ timeout: 10000 })
-  const command = says('External PLC…')
+  const command = says('PLC Controllers…')
   await input.fill(command)
   const item = page.locator('.palette-item', { has: page.locator('.palette-label', { hasText: labelled(command) }) }).first()
   expect((await item.locator('.palette-group').innerText()).trim() === says('Simulation'), `"${command}" is under Simulation, as the guide's menu path says`)
@@ -198,7 +195,7 @@ const PICTURE_RE = /<img\b[^>]*\bsrc="img\/([\w-]+)\.webp"[^>]*>/g
  * script takes at the moment the page describes, so a picture is retaken by the same run that proves the text, never
  * by hand, and goes stale only as fast as the script does.
  *
- *   ui(page, name, locator)     the app's own UI, cropped to one element (lossless)
+ *   ui(page, name, locator)     the app's own UI, cropped to one element, or to an array of them (lossless)
  *   scene(page, name, pose)     the 3D view alone, from a camera pose (cleanShot: no gizmo, no HUD), cut to a 2:1 band
  *   window(win, name, opts)     a whole window, such as a third-party tool's; `{ app, size }` shoots it at that content
  *                               size (an Electron app), then maximizes it again; `{ until }` cuts it below the bottom
@@ -248,9 +245,14 @@ export function guidePictures(slug, { html, expect }, argv = process.argv.slice(
     async ui(p, name, locator, { pad = 10 } = {}) {
       if (!wants(name)) return
       await tidy(p)
-      await locator.scrollIntoViewIfNeeded()
-      const box = await locator.boundingBox()
-      if (!expect(!!box, `picture ${name}: its element is on screen`)) return
+      // several locators: the one picture holds them all (two fields one above the other)
+      const locators = [locator].flat()
+      await locators[0].scrollIntoViewIfNeeded()
+      const boxes = await Promise.all(locators.map((l) => l.boundingBox()))
+      if (!expect(boxes.every(Boolean), `picture ${name}: its element is on screen`)) return
+      const x0 = Math.min(...boxes.map((b) => b.x))
+      const y0 = Math.min(...boxes.map((b) => b.y))
+      const box = { x: x0, y: y0, width: Math.max(...boxes.map((b) => b.x + b.width)) - x0, height: Math.max(...boxes.map((b) => b.y + b.height)) - y0 }
       const vp = await p.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
       const x = Math.max(0, Math.floor(box.x - pad))
       const y = Math.max(0, Math.floor(box.y - pad))

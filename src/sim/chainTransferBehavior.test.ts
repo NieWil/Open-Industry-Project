@@ -90,7 +90,7 @@ describe('chain transfer behavior (tweened pop-up lift)', () => {
 })
 
 // Output ownership (ctx.tagDriven): the pop-up tag commands the chains only while a controller actually
-// drives it. Gating on `enableComms && popupTag` (the truthiness of the tag name) would pin the transfer to
+// drives it. Gating on `popupTag` (the truthiness of the tag name) would pin the transfer to
 // any typed tag, and a hand Use would go dead even with no program attached. Same handoff the blade stop and
 // diverter ship (src/plc/DEVICE-IO.md); the generic guard is idlePose.test.ts, the
 // end-to-end one e2e/verify-tag-driven-auto.mjs.
@@ -101,7 +101,7 @@ describe('chain transfer pop-up ownership (hand vs auto)', () => {
     h = 0
   })
 
-  const COMMS = JSON.stringify({ enableComms: true, popupTag: 'Popup', speed: 2 })
+  const TAGGED = JSON.stringify({ popupTag: 'Popup', speed: 2 })
   // one tick. `driven` is keyed by presence (ctx.tagDriven reads the key, not the value), so a tag is only
   // "owned" when the driven table carries it - exactly how the host projects a program's outputs.
   const tick = (opts: { used?: boolean; tag?: boolean; driven?: boolean } = {}): BehaviorOutput =>
@@ -121,8 +121,8 @@ describe('chain transfer pop-up ownership (hand vs auto)', () => {
     return out
   }
 
-  it('comms on with a tag set but nothing driving it: a hand Use still pops the chains', () => {
-    h = create(SOURCE, COMMS)
+  it('a tag set but nothing driving it: a hand Use still pops the chains', () => {
+    h = create(SOURCE, TAGGED)
     expect(tick().joints['lift']).toBe(0)
     press() // pinned to a tag no controller owns, which must not leave Use dead
     expect(settle().joints['lift']).toBeCloseTo(RAISE, 10)
@@ -131,7 +131,7 @@ describe('chain transfer pop-up ownership (hand vs auto)', () => {
   })
 
   it('a driven tag seizes the pop-up, and a hand Use is ignored while owned', () => {
-    h = create(SOURCE, COMMS)
+    h = create(SOURCE, TAGGED)
     press() // hand-raise first…
     expect(settle().joints['lift']).toBeCloseTo(RAISE, 10)
     // …then a program declaring the tag attaches commanding false: auto overwrites the hand latch
@@ -144,7 +144,7 @@ describe('chain transfer pop-up ownership (hand vs auto)', () => {
   })
 
   it('releasing ownership is bumpless - the chains hold, then hand control returns', () => {
-    h = create(SOURCE, COMMS)
+    h = create(SOURCE, TAGGED)
     expect(settle({ tag: true, driven: true }).joints['lift']).toBeCloseTo(RAISE, 10)
     expect(settle().joints['lift']).toBeCloseTo(RAISE, 10) // detach: holds its last commanded state
     press()
@@ -152,7 +152,7 @@ describe('chain transfer pop-up ownership (hand vs auto)', () => {
   })
 
   it('the divert direction follows the driven tag, not only the hand latch', () => {
-    h = create(SOURCE, COMMS)
+    h = create(SOURCE, TAGGED)
     expect(tick({ tag: false, driven: true }).surfaceVelocity![0]).toBeCloseTo(2, 10) // THROUGH
     const out = tick({ tag: true, driven: true })
     expect(out.surfaceVelocity![0]).toBeCloseTo(0, 10)

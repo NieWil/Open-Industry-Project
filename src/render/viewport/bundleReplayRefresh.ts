@@ -20,7 +20,7 @@ import { TICK_UNIFORM_GROUP } from '../parts/common'
  * render, and re-records instead of replaying a recording three has disposed part of. Each step and the
  * bug it prevents: docs/three-coupling.md, "Render-bundle replay".
  *
- * Feature-detects three 0.186 internals (`_renderBundle`, `_nodes`, `_bundles`, `backend`,
+ * Feature-detects three 0.187 internals (`_renderBundle`, `_nodes`, `_bundles`, `backend`,
  * `_bindings.has` / `_bindings.deleteForRender`). If a bump moves them it warns and forces the
  * `?bundlelive` split (forceBundleLiveSplit), since stock replay freezes rig poses. Diagnostics on
  * `globalThis.__oipBundleCam`. Canaries: bundleReplayRefresh.test.ts. Gates: e2e/verify-render-bundles.mjs,
@@ -332,7 +332,7 @@ export function installBundleReplayRefresh(renderer: WebGPURenderer): void {
     // `?bundlelive` split instead of degrading silently. Movable parts leave the bundles, and
     // camera moves revert to re-records (markBundleCameraState never gets the patch handoff).
     console.warn(
-      `[oip] render-bundle replay-refresh patch: three internals moved (r186 shape not found: ${missing.join(', ')}) - ` +
+      `[oip] render-bundle replay-refresh patch: three internals moved (r187 shape not found: ${missing.join(', ')}) - ` +
         'forcing the ?bundlelive split so bundled rig poses cannot freeze mid-run; ' +
         'camera moves fall back to bundle re-records',
     )

@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, type PartPackage } from '../core/partPackage'
-import { clearPackages, registerPackage } from '../core/partRegistry'
+import { PACKAGE_FORMAT, type PartPackage } from '../core/parts/partPackage'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
 import { commsTags, type DeviceTags, devicesForTag, type TaggedPart, unhandledProgramTags } from './bindings'
-import { LocalPlcLink } from './plcLink'
+import { LocalPlcLink } from './link/plcLink'
 
 // The declarative binding table (PART_COMMS + InputBinding/OutputBinding) is gone with the built-in
 // sensor/button/conveyor parts. What's left is the authoring-warning walk over the device-IO tag bridge:
@@ -88,6 +88,7 @@ describe('devicesForTag (Cross Reference: which part is wired to this tag)', () 
     name: id,
     kind: 'Belt Conveyor',
     enabled,
+    switchable: true,
     fields: [
       { key: 'runTag', label: 'Run tag', section: 'VAR_OUTPUT', type: 'BOOL', value: run },
       { key: 'jamTag', label: 'Jam tag', section: 'VAR_INPUT', type: 'BOOL', value: '' },

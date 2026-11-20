@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { rigWorldPoses } from '../../core/rigPose'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { evalPartGeometry } from '../../core/geometryEval'
-import { resolvedBounds } from '../../core/partGeometry'
-import type { MeshPart } from '../../core/partApi'
+import { rigWorldPoses } from '../../core/rig/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import { resolvedBounds } from '../../core/parts/partGeometry'
+import type { MeshPart } from '../../core/parts/partApi'
 import { examplePart, type RigGeo } from './examplePart'
 const { behavior: DIVERTER_BEHAVIOR, geometry: DIVERTER_RIG, materials: DIVERTER_MATS, assets: DIVERTER_ASSETS, head: DIVERTER_HEAD } = examplePart<RigGeo>('oip.diverter')
 

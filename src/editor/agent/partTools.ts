@@ -4,16 +4,17 @@
 // (store.addUserPackage), and a change is one package commit (store.commitPackage), so editing a built-in makes this
 // project's own version of it, as an in-app edit does.
 
-import { getPackage, hasPackage, registerPackage } from '../../core/partRegistry'
-import { manifestOfPackage, type PackageManifest, type PartPackage } from '../../core/partPackage'
-import { partFootprint } from '../../core/partGeometry'
-import { emptyBox, growBox, meshLinkBox, parseGlb } from '../../core/glbBox'
-import { qApply, rigWorldPoses, type RigParams } from '../../core/rigPose'
-import { createSdkPart } from '../../core/scene'
+import { getPackage, hasPackage, registerPackage } from '../../core/parts/partRegistry'
+import { manifestOfPackage, type PackageManifest, type PartPackage } from '../../core/parts/partPackage'
+import { partFootprint } from '../../core/parts/partGeometry'
+import { drawnElsewhere, emptyBox, growBox, meshLinkBox, parseGlb } from '../../core/glbBox'
+import { qApply, rigWorldPoses, type RigParams } from '../../core/rig/rigPose'
+import { createSdkPart } from '../../core/scene/scene'
 import { checkManifestAgainst, type SchemaProblem } from '../../core/manifestSchemaCheck'
 import { stepUpAxisGuess, type StepUpAxis } from '../../core/stepToGlb'
 import { validatePart, type PartDiagnostic } from '../../sim/validatePart'
 import { setLinkMesh } from '../controller/partAuthoring'
+import { partSourceInFolder } from '../project/projectFolderSync'
 import type { SdkPart } from '../../core/types'
 import {
   AGENT_LABEL,
@@ -172,7 +173,9 @@ export const getPartSource: AgentTool = {
   description:
     'Read a part definition the way its folder holds it: the manifest (geometry, snap, conveyor...; embedded models ' +
     'are summarized by size), the behavior script, the params the script declares, its footprint at default params, ' +
-    'whether it is a built-in, this project\'s own, or this project\'s version of a built-in, and which placed parts use it.',
+    'whether it is a built-in, this project\'s own, or this project\'s version of a built-in, and which placed parts use it. ' +
+    "When the project folder builds the part from a part.js, `partJs` holds that source and the command that builds it: " +
+    'the manifest and behavior are then its output.',
   inputSchema: {
     type: 'object',
     properties: { id: { type: 'string', description: 'package id, from list_catalog or a placed part\'s package' } },
@@ -193,8 +196,30 @@ export const getPartSource: AgentTool = {
       params: pkg.params,
       footprint: footprintOf(pkg),
       placed: s.scene.parts.filter((p) => p.type === 'part' && (p as SdkPart).packageId === pkg.id).map((p) => p.id),
+      ...partJsOf(pkg.id),
     }
   },
+}
+
+/**
+ * get_part_source's `partJs` for a part the project folder builds from a part.js: its text, and how to build it. The
+ * manifest and behavior above are then that build's output.
+ */
+function partJsOf(id: string): { partJs?: { path: string; source: string; build: string; note: string } } {
+  const src = partSourceInFolder(id)
+  if (!src) return {}
+  const dir = src.path.slice(0, -'/part.js'.length)
+  return {
+    partJs: {
+      path: src.path,
+      source: src.text,
+      build: `npm run build-parts -- "${src.root.replace(/\\/g, '/')}/${dir}"`,
+      note:
+        'this part is built from part.js: the manifest and behavior are its output. To change it, edit part.js in the ' +
+        'project folder, run the build on that folder (in an oip-web checkout), then sync_folder. edit_part_definition ' +
+        'changes the output only, and the next build refuses to overwrite it until the change is also in part.js.',
+    },
+  }
 }
 
 export const checkPart: AgentTool = {
@@ -286,7 +311,8 @@ export const editPartDefinition: AgentTool = {
     'Change a part definition: its `behavior` script and/or `manifest` fields (name, category, geometry, snap, ' +
     'conveyor, commsParam, holds, materials; a field given replaces that field whole). Checked as check_part checks ' +
     'it and refused with the problems otherwise. Every placed part of this definition follows. One undo step. ' +
-    "Changing a built-in makes this project's own version of it; other projects keep the app's.",
+    "Changing a built-in makes this project's own version of it; other projects keep the app's. A part built from a " +
+    'part.js (get_part_source says) is edited in its part.js instead: this tool changes only the build output, and says so.',
   inputSchema: {
     type: 'object',
     properties: { id: { type: 'string' }, behavior: { type: 'string' }, manifest: { type: 'object' } },
@@ -304,12 +330,20 @@ export const editPartDefinition: AgentTool = {
     ctx.store.commitPackage(`${AGENT_LABEL}: edit part ${next.name}`, next)
     const error = ctx.store.getState().packageBuildErrors[pkg.id]
     if (error) throw new AgentToolError(`the app refused the change: ${typeof error === 'string' ? error : JSON.stringify(error)}`)
+    const source = partSourceInFolder(next.id)
     return {
       id: next.id,
       params: next.params,
       footprint: footprintOf(next),
       placed: ctx.store.getState().scene.parts.filter((p) => p.type === 'part' && (p as SdkPart).packageId === next.id).length,
       ...(wasLibrary ? {} : { note: "this project now has its own version of this part" }),
+      ...(source
+        ? {
+            warning:
+              `this part is built from ${source.path}, and this edit changed only its build output (manifest.json, ` +
+              'behavior.js). Copy the change into part.js, or the next build-parts refuses to overwrite it (--force throws it away).',
+          }
+        : {}),
     }
   },
 }
@@ -325,7 +359,7 @@ function modelFit(pkg: PartPackage, linkName: string, glb: Uint8Array): { model:
   if (!link || link.shape.kind !== 'mesh') return null
   let local: ReturnType<typeof meshLinkBox>
   try {
-    local = meshLinkBox(parseGlb(glb).json, link.shape)
+    local = meshLinkBox(parseGlb(glb).json, { ...link.shape, drawnElsewhere: drawnElsewhere(pkg.geometry.links, link) })
   } catch {
     return null
   }
@@ -359,8 +393,9 @@ function modelFit(pkg: PartPackage, linkName: string, glb: Uint8Array): { model:
 export const importModel: AgentTool = {
   name: 'import_model',
   description:
-    "Make one link of a part's rig a mesh of a model file on this computer: a .glb, or a STEP file (.step / .stp) " +
-    'from CAD, converted as the Inspector converts it. The model is embedded in the part. One undo step. A rig\'s ' +
+    "Make one link of a part's rig a mesh of a model file on this computer: a .glb, a STEP file (.step / .stp) " +
+    'from CAD, or a USD model (.usdz, or a .usd / .usda / .usdc root layer, read with the layers and images under ' +
+    'its folder), converted as the Inspector converts it. The model is embedded in the part. One undo step. A rig\'s ' +
     '`bounds` are declared, not measured from the model: compare the footprint with capture_view and set ' +
     'geometry.bounds with edit_part_definition when they disagree.',
   inputSchema: {
@@ -368,9 +403,11 @@ export const importModel: AgentTool = {
     properties: {
       id: { type: 'string', description: 'the part definition (package id)' },
       link: { type: 'string', description: 'the rig link to give the mesh' },
-      path: { type: 'string', description: 'absolute path of the .glb / .step / .stp file' },
+      path: { type: 'string', description: 'absolute path of the .glb / .step / .stp / .usd / .usda / .usdc / .usdz file' },
       upAxis: { type: 'string', enum: ['z', 'y'], description: "STEP only: the model's up axis; default guessed from the file's header" },
       minPartMm: { type: 'number', description: 'STEP only: skip solids smaller than this (default 10)' },
+      detail: { type: 'string', enum: ['full', 'reduced'], description: 'USD only: reduced simplifies each mesh to about a quarter of its triangles (default full)' },
+      maxTextureSize: { type: 'number', enum: [512, 1024, 2048], description: 'USD only: the longest side of an imported texture in pixels (default 1024)' },
     },
     required: ['id', 'link', 'path'],
     additionalProperties: false,
@@ -383,9 +420,10 @@ export const importModel: AgentTool = {
     const link = str(args, 'link')
     if (pkg.geometry.kind !== 'rig') throw new AgentToolError(`'${pkg.id}' builds its geometry in code (geometry()), so it has no links to give a model`)
     if (!pkg.geometry.links.some((l) => l.name === link)) throw new AgentToolError(`'${pkg.id}' has no link '${link}' (it has: ${pkg.geometry.links.map((l) => l.name).join(', ')})`)
+    if (/\.(urdf|xacro)$/i.test(str(args, 'path'))) throw new AgentToolError('a URDF is a whole robot, not one link\'s model: import it with import_robot')
     const file = await readModel(str(args, 'path'))
     if ('error' in file) throw new AgentToolError(file.error)
-    const { bytesToBase64, DEFAULT_STEP_OPTIONS, importStep, isStepFile } = await import('../stepImport')
+    const { DEFAULT_STEP_OPTIONS, importStep, isStepFile } = await import('../stepImport')
     let glb = file.bytes
     let stats: Record<string, unknown> | undefined
     if (isStepFile(file.name)) {
@@ -396,7 +434,27 @@ export const importModel: AgentTool = {
       glb = r.glb
       stats = { solids: r.stats.solids, meshes: r.stats.meshes, triangles: r.stats.triangles, size: r.stats.size.map(round), upAxis: up }
     }
-    const warning = setLinkMesh({ store: ctx.store }, pkg.id, link, bytesToBase64(glb), `${AGENT_LABEL}: import model into ${pkg.name}`)
+    let usd: Record<string, unknown> | undefined
+    const { DEFAULT_USD_OPTIONS, importUsd, isUsdFile } = await import('../usdImport')
+    if (isUsdFile(file.name)) {
+      const files = new Map<string, Blob>((file.files ?? [{ path: file.name, bytes: file.bytes }]).map((f) => [f.path, new Blob([f.bytes as Uint8Array<ArrayBuffer>])]))
+      const detail = optStr(args, 'detail') === 'reduced' ? 'reduced' : DEFAULT_USD_OPTIONS.detail
+      const maxTextureSize = optNum(args, 'maxTextureSize') ?? DEFAULT_USD_OPTIONS.maxTextureSize
+      const r = await importUsd(files, file.root ?? file.name, { detail, maxTextureSize })
+      if (r.stats.meshes === 0) throw new AgentToolError(`nothing to import: ${file.name} has no meshes this importer can read`)
+      glb = r.glb
+      usd = {
+        parts: r.stats.parts,
+        meshes: r.stats.meshes,
+        triangles: r.stats.triangles,
+        ...(r.stats.triangles < r.stats.sourceTriangles ? { sourceTriangles: r.stats.sourceTriangles } : {}),
+        size: r.stats.size.map(round),
+        images: r.stats.images,
+        ...(r.stats.warnings.length ? { warnings: r.stats.warnings.slice(0, 5).map((w) => w.message) } : {}),
+      }
+    }
+    const { warning, fitted, unreadable } = setLinkMesh({ store: ctx.store }, pkg.id, link, glb, `${AGENT_LABEL}: import model into ${pkg.name}`)
+    if (unreadable) throw new AgentToolError(`${file.name} is not a model this importer can read: export it as a .glb (glTF Binary), a STEP file or a USD file`)
     const now = getPackage(pkg.id)
     const footprint = now ? footprintOf(now) : null
     const fit = now ? modelFit(now, link, glb) : null
@@ -405,6 +463,9 @@ export const importModel: AgentTool = {
       link,
       bytes: glb.length,
       ...(stats ? { step: stats } : {}),
+      ...(usd ? { usd } : {}),
+      // a part that is just this model was stood on the origin, given a collider and bounds of its size
+      ...(fitted ? { fitted } : {}),
       ...(footprint ? { footprint } : {}),
       ...(fit ? { model: fit.model } : {}),
       ...(fit?.hint ? { boundsHint: fit.hint } : {}),

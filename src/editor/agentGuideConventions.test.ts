@@ -10,16 +10,16 @@
 // seems to refute the guide.
 
 import { describe, expect, it, beforeAll } from 'vitest'
-import { clearPackages, registerPackage } from '../core/partRegistry'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
 import { agentGuideMarkdown } from '../core/agentGuide'
-import { partFootprint } from '../core/partGeometry'
-import { validateScene } from '../core/scene'
+import { partFootprint } from '../core/parts/partGeometry'
+import { validateScene } from '../core/scene/scene'
 import { SCENE_VERSION } from '../core/types'
 import type { PartInstance } from '../core/types'
 import type { GuideDoc } from '../core/agentGuide'
-import type { ParamSpec } from '../core/partApi'
-import type { PartPackage } from '../core/partPackage'
-import { bundledPackagesFromData } from './bundledPackageData'
+import type { ParamSpec } from '../core/parts/partApi'
+import type { PartPackage } from '../core/parts/partPackage'
+import { bundledPackagesFromData } from './parts/bundledPackageData'
 
 let byId: Map<string, PartPackage>
 

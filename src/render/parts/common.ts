@@ -250,7 +250,7 @@ export interface BeltNodeMaterial {
 }
 
 // the WebGPU TSL scroll material (scrollNodeMaterial.ts), injected by createRenderer. A geometry() scroll channel
-// (MeshPart.scroll: a chain's links, a belt's weave) moves its texture.offset each running frame (sdk/rig.ts
+// (MeshPart.scroll: a chain's links, a belt's weave) moves its texture.offset each running frame (sdk/rigProcedural.ts
 // procTick); on WebGPU a plain material's uv transform never refreshes (the same NodeMaterialObserver gap as the
 // belt above), so the WebGPU path swaps in this node material. null on the WebGL path (a plain clone scrolls fine there).
 let scrollNodeFactory: ((tex: Texture, metalness: number, roughness: number) => MeshStandardMaterial) | null = null

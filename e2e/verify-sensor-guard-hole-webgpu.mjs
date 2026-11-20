@@ -1,7 +1,7 @@
 /* global console, process, window, Image, document */
 // WebGPU sensor-beam guard-hole gate (the WebGL twin is verify-sensor-guard-hole.mjs).
 //
-// A beam's hole through a side guard is geometry (core/guardHoles.ts works it out from the scene; the rig
+// A beam's hole through a side guard is geometry (core/guards/guardHoles.ts works it out from the scene; the rig
 // roller's guard splitter draws a panel with the hole cut through, tagged userData.guardHolePanel), not a
 // shader cutout. So this asserts structurally that the conveyor draws a holed panel in each guard the beam
 // crosses (and none once the sensor is removed), as well as by pixels: a pixel-only check can't tell

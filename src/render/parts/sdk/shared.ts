@@ -1,7 +1,7 @@
 // Constants + tiny helpers shared by more than one SDK geometry builder. Each lives here exactly
 // once so every builder sees the same instance/value.
 import { DoubleSide, MeshStandardMaterial } from 'three'
-import type { MeshDescription } from '../../../core/partApi'
+import type { MeshDescription } from '../../../core/parts/partApi'
 
 // ---- shared constants & helpers -------------------------------------------
 

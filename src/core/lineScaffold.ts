@@ -22,15 +22,15 @@
 // also stops while DischargeEye is blocked unless a sink follows; a source feeds while Running and neither end eye is
 // blocked. The starter test presses Start first.
 
-import { findSnap } from './snapFeatures'
-import type { SnapCandidate } from './snapFeatures'
-import { commitSnap } from './snapCommit'
-import { conveyorEndsOf, isConveyorLike, partFootprint } from './partGeometry'
-import { conveyingSurfaceAt } from './conveyorSurface'
-import { getPackage } from './partRegistry'
+import { findSnap } from './snap/snapFeatures'
+import type { SnapCandidate } from './snap/snapFeatures'
+import { commitSnap } from './snap/snapCommit'
+import { conveyorEndsOf, isConveyorLike, partFootprint } from './parts/partGeometry'
+import { conveyingSurfaceAt } from './conveyor/conveyorSurface'
+import { getPackage } from './parts/partRegistry'
 import { packageParamSpecs, switchValue, visibleWhenHolds } from './packageParams'
-import type { PartPackage } from './partPackage'
-import { isCargoPackage } from './partPackage'
+import type { PartPackage } from './parts/partPackage'
+import { isCargoPackage } from './parts/partPackage'
 import type { PartInstance, SdkPart, SdkPartParams } from './types'
 
 export type ScaffoldRole = 'conveyor' | 'guard' | 'panel' | 'source' | 'sink' | 'cargo' | 'other'

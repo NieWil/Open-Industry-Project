@@ -7,8 +7,8 @@
 // looked up on the page (`says`) and then found in, or compared with, the running app. Reword the page or the
 // app and this fails on the sentence that no longer matches.
 //
-//   step 1  the parts' Comms fields are set through the Inspector: group, checkbox and tag field by their labels
-//   step 2  External PLC... from the command palette; the radios, the port and the network box by their labels;
+//   step 1  the parts' Comms fields are set through the Inspector: group and tag field by their labels
+//   step 2  PLC Controllers... from the command palette; the radios, the port and the network box by their labels;
 //           the points it lists are the page's
 //   step 4  the page's "Example: OpenPLC", clicked through the installed OpenPLC Editor (e2e/_openplcEditor.mjs):
 //           new project, the program pasted in its two halves, the remote device on the page's port with its two

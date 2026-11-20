@@ -102,7 +102,7 @@ describe('behavior-editor soft lock (awareness signal)', () => {
 // The toolbar's presence chip reads this snapshot through useSyncExternalStore, so a new object re-renders the
 // whole toolbar. Awareness fires on every peer cursor move; only a change to what the chip shows may notify.
 describe('collab status snapshot', () => {
-  it('notifies on a change in people or previewing, never on a cursor move', () => {
+  it('notifies on a change in people or who runs, never on a cursor move', () => {
     const f = makeFakeProvider()
     initCollabSession('room-1', f.prov)
     let notified = 0
@@ -115,9 +115,13 @@ describe('collab status snapshot', () => {
       for (let i = 0; i < 20; i++) f.setPeer(2, { user: { name: 'Otter' }, cursor: { x: i, y: 0, z: 0 } })
       expect(notified).toBe(1)
       expect(getCollabSnapshot()).toBe(before)
-      f.setPeer(2, { user: { name: 'Otter' }, running: true })
-      expect(getCollabSnapshot().previewing).toBe(1)
+      f.setPeer(2, { user: { name: 'Otter' }, running: true, stream: 'run-1' })
+      expect(getCollabSnapshot().runners).toEqual([{ id: 2, name: 'Otter', stream: 'run-1' }])
       expect(notified).toBe(2)
+      // the same runners list rebuilt by a cursor move is the same snapshot
+      const running = getCollabSnapshot()
+      f.setPeer(2, { user: { name: 'Otter' }, running: true, stream: 'run-1', cursor: { x: 9, y: 0, z: 0 } })
+      expect(getCollabSnapshot()).toBe(running)
     } finally {
       unsub()
     }
@@ -138,6 +142,9 @@ describe('presence from a peer is validated on read', () => {
       running: true,
       pilot: { x: 1, y: 0, z: 2, yaw: 3.1 },
       editingPart: 'pkg_robot',
+      stream: 'abc-123',
+      watching: 4,
+      view: { px: 1, py: 2, pz: 3, tx: 0, ty: 0, tz: 0 },
     })
     expect(peer).toEqual({
       clientId: 7,
@@ -149,6 +156,9 @@ describe('presence from a peer is validated on read', () => {
       running: true,
       pilot: { x: 1, y: 0, z: 2, yaw: 3.1 },
       editingPart: 'pkg_robot',
+      stream: 'abc-123',
+      watching: 4,
+      view: { px: 1, py: 2, pz: 3, tx: 0, ty: 0, tz: 0, ortho: false },
     })
   })
 
@@ -206,8 +216,17 @@ describe('presence from a peer is validated on read', () => {
     expect(readPeer(2, { selection: 'a' }).selection).toEqual([])
   })
 
-  it('takes running only as true and editingPart only as a bounded string', () => {
+  it('takes running only as true, a stream only as an id, watching only as a client id, and editingPart only as a bounded string', () => {
     expect(readPeer(2, { running: 'yes' }).running).toBe(false)
+    expect(readPeer(2, { stream: 'has space' }).stream).toBeNull()
+    expect(readPeer(2, { stream: 'x'.repeat(65) }).stream).toBeNull()
+    expect(readPeer(2, { watching: true }).watching).toBeNull()
+    expect(readPeer(2, { watching: -1 }).watching).toBeNull()
+    expect(readPeer(2, { watching: 1.5 }).watching).toBeNull()
+    // a camera only with every coordinate finite and within reach of a scene
+    expect(readPeer(2, { view: { px: 1, py: 2, pz: 3, tx: 0, ty: 0 } }).view).toBeNull()
+    expect(readPeer(2, { view: { px: 1e9, py: 2, pz: 3, tx: 0, ty: 0, tz: 0 } }).view).toBeNull()
+    expect(readPeer(2, { view: { px: NaN, py: 2, pz: 3, tx: 0, ty: 0, tz: 0 } }).view).toBeNull()
     expect(readPeer(2, { editingPart: { id: 'pkg' } }).editingPart).toBeNull()
     expect(readPeer(2, { editingPart: 'x'.repeat(300) }).editingPart).toBeNull()
   })

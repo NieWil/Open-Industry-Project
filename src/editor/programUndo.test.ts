@@ -7,12 +7,12 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 import type { Controller } from '../core/controller'
-import { createPart } from '../core/scene'
+import { createPart } from '../core/scene/scene'
 import { SCENE_VERSION } from '../core/types'
 import type { SceneJSON } from '../core/types'
 import { CollabBridge } from '../collab/bridge'
 import { docToScene, readStDoc, sceneToDoc } from '../collab/schema'
-import { EditorStore } from './store'
+import { EditorStore } from './store/store'
 
 const CODE = 'VAR_OUTPUT Motor : BOOL; END_VAR\nMotor := TRUE;'
 const WITH_PROGRAM = `PROGRAM Sorter\nVAR_OUTPUT Divert : BOOL; END_VAR\nDivert := Motor;\nEND_PROGRAM\n\n${CODE}`

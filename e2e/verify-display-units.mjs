@@ -1,7 +1,7 @@
-// Gate: the scene's Units are one choice that decides both how the scene is shown and what its conveyors' speed tags
-// carry (core/sceneUnits.ts). Scene Properties > Units converts every conveyor as one undoable edit, the Inspector
-// shows and takes lengths and speeds in those units while the document keeps its own, and no conveyor offers a
-// units switch of its own.
+// Gate: the scene's Units are one choice that decides both how speeds are shown and what its conveyors' speed tags
+// carry, and its Length a second, display-only one for lengths (core/scene/sceneUnits.ts). Scene Properties > Units
+// converts every conveyor as one undoable edit, the Inspector shows and takes lengths and speeds in those units while
+// the document keeps its own, and no conveyor offers a units switch of its own.
 //
 // The failure it guards is quiet: a field that doesn't convert back would store inches as metres, a conveyor
 // with its own units switch would read the wrong tag, and every number on screen would still look plausible.
@@ -14,6 +14,9 @@
 //                   no per-part units switch.
 //   D. typed - a value typed in the shown unit is stored in the stored unit (48 in of stand height is 1.2192 m).
 //   E. back - Metric converts the conveyor back exactly (FPM is not rounded on the way) and reads m/s again.
+//   F. mm - Length mm shows and takes lengths in millimetres, and leaves conveyors and their tags in m/s.
+//   G. carried - Speed Imperial moves a Length of mm to inches in the same edit and says so (speeds in FPM, lengths
+//                   in inches), and a scene saved with Units 'metric-mm' opens as Metric with Length mm.
 // Run: node e2e/verify-display-units.mjs
 /* global process, console, window, document, localStorage */
 import { chromium } from 'playwright'
@@ -50,7 +53,7 @@ try {
     const st = window.__oip.store
     const belt = st.getState().bundledPackages.find((p) => p.id === 'oip.belt-conveyor')
     if (!belt) return 'the belt conveyor package is missing'
-    const params = (speed, tag) => ({ shapePreset: 'custom', segments: [[4, 0]], width: 0.8, standHeight: 0.8, speed, enableComms: true, ...(tag ? { speedTag: tag } : {}) })
+    const params = (speed, tag) => ({ shapePreset: 'custom', segments: [[4, 0]], width: 0.8, standHeight: 0.8, speed, ...(tag ? { speedTag: tag } : {}) })
     st.loadScene({
       version: st.getState().scene.version,
       parts: [
@@ -121,6 +124,50 @@ try {
   await page.waitForSelector('.inspector .prop-row[data-param="speed"] input.spin-input', { timeout: 10000 })
   const m = await readField(page, 'speed')
   check(m?.unit === 'm/s', `the speed field reads m/s again (got "${m?.unit}")`)
+
+  // --- F: Length mm shows lengths in millimetres and leaves conveyors as they are ---
+  await page.evaluate(() => window.__oip.store.setState({ selectedIds: [] }))
+  const length = page.locator('[data-testid="scene-length"]')
+  await length.waitFor({ timeout: 10000 })
+  check((await length.inputValue()) === 'm', 'Length starts at meters')
+  await length.selectOption('mm')
+  await page.waitForTimeout(200)
+  const mm = await paramsOf(page, 'b1')
+  check(mm?.fpmUnits === false && mm?.speed === 2 && mm?.speedTag === 'Line1Speed', `Length mm leaves the conveyor in m/s (speed ${mm?.speed}, tag "${mm?.speedTag}")`)
+  const saved = await page.evaluate(() => { const s = window.__oip.store.getState().scene; return [s.units, s.lengthUnit] })
+  check(saved[0] === 'metric' && saved[1] === 'mm', `the scene saves Metric with Length mm (got ${JSON.stringify(saved)})`)
+  await page.evaluate(() => window.__oip.store.select('b1'))
+  await page.waitForSelector('.inspector .prop-row[data-param="standHeight"] input.spin-input', { timeout: 10000 })
+  const standMm = await readField(page, 'standHeight')
+  check(standMm?.unit === 'mm' && standMm?.text === '1219.2', `stand height reads 1219.2 mm (got "${standMm?.text}" "${standMm?.unit}")`)
+  check((await readField(page, 'speed'))?.unit === 'm/s', 'the speed still reads m/s')
+  const standMmInput = page.locator('.inspector .prop-row[data-param="standHeight"] input.spin-input')
+  await standMmInput.click()
+  await standMmInput.fill('800')
+  await standMmInput.press('Enter')
+  await page.waitForTimeout(300)
+  const h2 = (await paramsOf(page, 'b1'))?.standHeight
+  check(typeof h2 === 'number' && Math.abs(h2 - 0.8) < 1e-9, `800 typed into the mm field stores 0.8 m (got ${h2})`)
+
+  // --- G: Imperial carries a Length of mm to inches, and a scene saved as 'metric-mm' opens in mm ---
+  await page.evaluate(() => window.__oip.store.setState({ selectedIds: [] }))
+  await select.waitFor({ timeout: 10000 })
+  await select.selectOption('imperial')
+  await page.waitForTimeout(200)
+  check((await length.inputValue()) === 'in', 'switching Speed to Imperial moves Length from mm to inches')
+  const noteText = await page.locator('[data-testid="scene-units-note"]').textContent()
+  check(/Lengths now show in Inches/.test(noteText ?? ''), `the note says lengths moved (got "${noteText}")`)
+  await page.evaluate(() => window.__oip.store.select('b1'))
+  await page.waitForSelector('.inspector .prop-row[data-param="speedFpm"] input.spin-input', { timeout: 10000 })
+  check((await readField(page, 'speedFpm'))?.unit === 'FPM', 'the speed reads FPM')
+  check((await readField(page, 'standHeight'))?.unit === 'in', 'and lengths read inches')
+  const legacyErr = await page.evaluate(() =>
+    window.__oip.loadSceneText(JSON.stringify({ version: window.__oip.store.getState().scene.version, parts: [], units: 'metric-mm' })),
+  )
+  await page.evaluate(() => window.__oip.store.setState({ selectedIds: [] }))
+  await select.waitFor({ timeout: 10000 })
+  const legacy = [legacyErr, await select.inputValue(), await length.inputValue()]
+  check(JSON.stringify(legacy) === '[null,"metric","mm"]', `a scene saved as 'metric-mm' opens as Metric with Length mm (got ${JSON.stringify(legacy)})`)
   check(pageErrors.length === 0, `no page errors (${pageErrors.join(' | ')})`)
 } catch (e) {
   console.log(`FAIL  ${e instanceof Error ? e.message : String(e)}`)

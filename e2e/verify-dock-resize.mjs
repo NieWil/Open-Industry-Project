@@ -196,6 +196,30 @@ async function main() {
     ok(await pageSurvived(page), 'page did not reload under the bottom-dock drag')
     ok((await page.evaluate(() => window.__sizeWrites)) === 1, 'bottom-dock drag also persisted exactly once')
 
+    // --- the corners where a column's gutter meets the bottom dock's: one drag moves both ---
+    ok((await page.locator('.gutter-corner').count()) === 2, 'one corner handle on each side of the bottom dock')
+    for (const [side, column, dx] of [['left', '.dock-column-left', 50], ['right', '.dock-column-right', -50]]) {
+      const cBox = await page.locator(`.gutter-corner-${side}`).boundingBox()
+      const cx = cBox.x + cBox.width / 2
+      const cy = cBox.y + cBox.height / 2
+      ok(
+        await page.evaluate(([x, y, s]) => !!document.elementFromPoint(x, y)?.classList.contains(`gutter-corner-${s}`), [cx, cy, side]),
+        `the ${side} corner is topmost over its gutter junction`,
+      )
+      const colBefore = (await page.locator(column).first().boundingBox()).width
+      const slotBefore = (await page.locator('.dock-slot-bottom, [class*="dock-slot"]').last().boundingBox()).height
+      await page.mouse.move(cx, cy)
+      await page.mouse.down()
+      await page.mouse.move(cx + dx, cy - 40, { steps: 10 })
+      await page.waitForTimeout(120)
+      await page.mouse.up()
+      await page.waitForTimeout(900)
+      const colAfter = (await page.locator(column).first().boundingBox()).width
+      const slotAfter = (await page.locator('.dock-slot-bottom, [class*="dock-slot"]').last().boundingBox()).height
+      ok(Math.abs(colAfter - (colBefore + 50)) < 6, `${side} corner drag widened its column (${Math.round(colBefore)} → ${Math.round(colAfter)})`)
+      ok(Math.abs(slotAfter - (slotBefore + 40)) < 6, `${side} corner drag raised the bottom dock (${Math.round(slotBefore)} → ${Math.round(slotAfter)})`)
+    }
+
     // --- the other resize trigger: the browser window itself (same deferred apply) ---
     await page.setViewportSize({ width: 1100, height: 780 })
     await page.waitForTimeout(400)

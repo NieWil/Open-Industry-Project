@@ -2,7 +2,6 @@
   "id": "oip.box-spawner",
   "name": "Spawner",
   "category": "Products",
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "links": [

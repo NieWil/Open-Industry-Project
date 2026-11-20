@@ -1,4 +1,4 @@
-// Verifies the live side of the linked project folder (src/editor/projectFolderLink.ts) in a real
+// Verifies the live side of the linked project folder (src/editor/project/projectFolderLink.ts) in a real
 // browser, which unit tests can't reach:
 //   - linking adopts the folder's project in place (no page reload; a reload per agent save would make
 //     the loop unusable)
@@ -310,7 +310,7 @@ async function main() {
     expect(paths.includes('scene.json'), 'the scene is written, at the folder root (format 4)')
     expect(paths.includes('plc/program.st'), 'and so is the program, under plc/ (format 7)')
     expect(!paths.some((p) => p.startsWith('scenes/')), 'and nothing in the old scenes/ layout')
-    // the version the app writes (core/project.ts PROJECT_VERSION), read from the app rather than hard-coded here,
+    // the version the app writes (core/project/project.ts PROJECT_VERSION), read from the app rather than hard-coded here,
     // so a format bump doesn't fail this check against a correct save
     const versions = await page.evaluate(() => ({
       manifest: JSON.parse(window.__savedFolder.written.get('project.json').contents).version,

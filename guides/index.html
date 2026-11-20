@@ -9,15 +9,15 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
-    <title>Connection Guides | Open Industry Project</title>
-    <meta name="description" content="Step-by-step guides for connecting the Open Industry Project simulator to a real PLC, SCADA or HMI over Modbus TCP, OPC UA, S7 PUT/GET and ADS." />
-    <meta name="keywords" content="PLC, SCADA, HMI, Modbus TCP, OPC UA, S7, PUT/GET, TwinCAT, ADS, simulator, guides, virtual commissioning" />
+    <title>Guides | Open Industry Project</title>
+    <meta name="description" content="Step-by-step guides for the Open Industry Project simulator: connect a real PLC, SCADA or HMI over Modbus TCP, OPC UA, S7 PUT/GET, SLMP and ADS, and make parts from your own models." />
+    <meta name="keywords" content="PLC, SCADA, HMI, custom parts, 3D models, Modbus TCP, OPC UA, S7, PUT/GET, SLMP, MELSEC, TwinCAT, ADS, simulator, guides, virtual commissioning" />
     <link rel="canonical" href="https://www.openindustryproject.org/guides/" />
 
     <meta property="og:type" content="article" />
     <meta property="og:site_name" content="Open Industry Project" />
-    <meta property="og:title" content="Connection Guides | Open Industry Project" />
-    <meta property="og:description" content="Step-by-step guides for connecting the Open Industry Project simulator to a real PLC, SCADA or HMI over Modbus TCP, OPC UA, S7 PUT/GET and ADS." />
+    <meta property="og:title" content="Guides | Open Industry Project" />
+    <meta property="og:description" content="Step-by-step guides for the Open Industry Project simulator: connect a real PLC, SCADA or HMI over Modbus TCP, OPC UA, S7 PUT/GET, SLMP and ADS, and make parts from your own models." />
     <meta property="og:url" content="https://www.openindustryproject.org/guides/" />
     <meta property="og:image" content="https://www.openindustryproject.org/og-image.jpg?v=20261013" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -37,7 +37,7 @@
         <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
         <nav class="nav-links" aria-label="Site">
           <a href="/plc/">PLC reference</a>
-          <a href="/guides/" aria-current="page">Connection guides</a>
+          <a href="/guides/" aria-current="page">Guides</a>
           <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
         <a class="btn btn-sm" href="/app/">Open the editor</a>
@@ -46,17 +46,21 @@
 
     <main class="wrap">
       <section class="hero">
-        <h1>Connection guides</h1>
+        <h1>Guides</h1>
         <p class="lede">
-          Step-by-step guides for connecting a real PLC, SCADA or HMI to the simulator. Three guides are tested by
-          following them in the desktop app: Modbus against OpenPLC, OPC UA against an OPC UA client (node-opcua),
-          and S7 against a stand-in S7 CPU in this repository. The PLC-server and ADS guides are not tested this way.
+          Step-by-step guides for connecting a real PLC, SCADA or HMI to the simulator, and for making parts of your own.
         </p>
       </section>
     </main>
 
     <section class="section">
       <div class="wrap">
+        <h2>Connecting a PLC, SCADA or HMI</h2>
+        <p>
+          Three of these are tested by following them in the desktop app: Modbus against OpenPLC, OPC UA against an OPC UA
+          client (node-opcua), and S7 against a stand-in S7 CPU in this repository. The PLC-server, SLMP and ADS guides are
+          not tested this way.
+        </p>
         <div class="guide-list">
           <a class="panel guide-card" href="/guides/modbus/">
             <h3>A PLC polls the simulator (Modbus TCP)</h3>
@@ -70,6 +74,10 @@
             <h3>An S7-1200 or S7-1500 (S7 PUT/GET)</h3>
             <p>The simulator reads and writes the CPU's inputs, outputs, memory and data blocks at the scene's own addresses. Covers the setting the CPU needs before it allows PUT/GET.</p>
           </a>
+          <a class="panel guide-card" href="/guides/slmp/">
+            <h3>A MELSEC PLC (SLMP)</h3>
+            <p>The simulator reads and writes the CPU's X, Y, M and D devices at the scene's own addresses, over the 3E frame every Q, L, iQ-R and iQ-F CPU answers.</p>
+          </a>
           <a class="panel guide-card" href="/guides/ads/">
             <h3>A TwinCAT PLC (ADS)</h3>
             <p>The simulator reads and writes the PLC's variables by name through the TwinCAT router on its own PC, with the route a PLC on another computer needs.</p>
@@ -81,6 +89,34 @@
           <a class="panel guide-card" href="/guides/reference/">
             <h3>Reference</h3>
             <p>Defaults, address and register rules, timings, OPC UA types and the I/O list format, in one place.</p>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <h2>Making parts</h2>
+        <p>
+          One example runs through all four, a blade stop, and each starts where the one before ends. They are tested by
+          following them in the desktop app with the example model they use.
+        </p>
+        <div class="guide-list">
+          <a class="panel guide-card" href="/guides/part-model/">
+            <h3>A part from your own model</h3>
+            <p>Import a model from Blender or a CAD program (.glb, STEP or USD), check its size and pieces, name it and mount it in a conveyor. The example is a blade stop.</p>
+          </a>
+          <a class="panel guide-card" href="/guides/part-motion/">
+            <h3>A piece that moves on a PLC command</h3>
+            <p>Split a piece out of the model, give it a joint, and let a program drive it with one BOOL. No code in the part: the Part Editor writes it.</p>
+          </a>
+          <a class="panel guide-card" href="/guides/part-feedback/">
+            <h3>A part's state back to the PLC</h3>
+            <p>Report which end the moving piece is at, as a cylinder's switches do, and let the program catch a stroke that takes too long.</p>
+          </a>
+          <a class="panel guide-card" href="/guides/part-product/">
+            <h3>Stopping product with a moving part</h3>
+            <p>Give the moving piece a collider of its own, then hold each box at the blade with a photo eye and a short program.</p>
           </a>
         </div>
       </div>
@@ -106,7 +142,7 @@
             <ul>
               <li><a href="/guides/opcua/">Guide: connect a SCADA or HMI over OPC UA</a></li>
               <li><a href="/guides/plc-server/">Guide: connect a PLC that serves its I/O</a></li>
-              <li><a href="/guides/">All connection guides</a></li>
+              <li><a href="/guides/">All guides</a></li>
               <li><a href="/guides/reference/">Reference: defaults, address rules, timings</a></li>
               <li><a href="/plc/">PLC language reference</a></li>
               <li><a href="/app/?scene=demo">See a PLC-driven line run</a></li>

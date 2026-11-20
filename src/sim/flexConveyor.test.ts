@@ -4,9 +4,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import initJolt from 'jolt-physics'
 import { afterEach, describe, expect, it } from 'vitest'
-import { flexStations } from '../core/flexPath'
-import { clearPackages } from '../core/partRegistry'
-import { validateScene } from '../core/scene'
+import { flexStations } from '../core/conveyor/flexPath'
+import { clearPackages } from '../core/parts/partRegistry'
+import { validateScene } from '../core/scene/scene'
 import { SCENE_VERSION } from '../core/types'
 import { buildPackage } from './buildPackage'
 import type { PackageManifest } from './buildPackage'
@@ -14,7 +14,7 @@ import { SimWorld } from './world'
 
 // The Flex Conveyor (examples/parts/flex-conveyor): 16 hinged sections fitted along a path through its control points,
 // every deck conveying along its own direction (ctx.setSurfaceSpeed). What it has to get right: the running bed takes
-// the shape core/flexPath.ts says (the behavior carries a mirror of that code, and this is what holds them together),
+// the shape core/conveyor/flexPath.ts says (the behavior carries a mirror of that code, and this is what holds them together),
 // and a case put on the infeed rides every bend of it to the discharge end.
 
 const Jolt = await initJolt()
@@ -135,7 +135,7 @@ describe('Flex Conveyor (SDK part, headless)', () => {
       packages: [buildPackage(flex.manifest, flex.behavior), buildPackage(box.manifest, box.behavior), buildPackage(takeaway.manifest, takeaway.behavior)],
       parts: [
         { id: 'flex', type: 'part', packageId: flex.manifest.id, position: [0, H, 0], rotationY: 0, params: {
-          standHeight: H, points, length, speed: 1, accumulate: true, enableComms: true, releaseTag: 'Rel', fullTag: 'Full', meterGap: 2,
+          standHeight: H, points, length, speed: 1, accumulate: true, releaseTag: 'Rel', fullTag: 'Full', meterGap: 2,
         } },
         // what the line would be: a takeaway past the discharge end (centre-origin, 6 m), so released cases are carried off
         { id: 'away', type: 'part', packageId: takeaway.manifest.id, position: [16.1 + 3, H, 0], rotationY: 0, params: {
@@ -192,7 +192,7 @@ describe('Flex Conveyor (SDK part, headless)', () => {
       packages: [buildPackage(flex.manifest, flex.behavior), buildPackage(box.manifest, box.behavior)],
       parts: [
         { id: 'flex', type: 'part', packageId: flex.manifest.id, position: [0, H, 0], rotationY: 0, params: {
-          standHeight: H, points, length, speed: 1, accumulate: true, enableComms: true, releaseTag: 'Rel',
+          standHeight: H, points, length, speed: 1, accumulate: true, releaseTag: 'Rel',
         } },
         { id: 'flat', type: 'part', packageId: box.manifest.id, position: [0.4, H + 0.03, 0], rotationY: 0, params: { length: 0.4, width: 0.3, height: 0.06 } },
       ],

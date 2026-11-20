@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReactElement, ReactNode } from 'react'
 import { followAppearance } from '../appearance'
-import { DESKTOP_MAC, DESKTOP_SHELL, getOipMenuApi } from '../desktopMenuBridge'
+import { DESKTOP_MAC, DESKTOP_SHELL, getOipMenuApi } from '../desktop/desktopMenuBridge'
 import { registerPopoutWindow } from '../dialogHost'
 import { watchPopoutStrip } from './popoutStrip'
 

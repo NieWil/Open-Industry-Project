@@ -4,9 +4,10 @@
 //   npm run check-layout -- <project-folder | project.json | scene.json> [--strict] [--json]
 //
 // The check itself is src/core/checkLayout.ts (its header says why it reports DISCONNECTION, not collision); this is
-// its CLI. Errors fail the run (exit 1). Warnings are reported and do not, unless --strict: today one kind, a box
-// feed dropping onto a belt the program starts and stops without being held with that belt (boxes stack on the
-// stopped belt). That one needs to know which tags are DRIVEN, so the project's ST program is compiled here the way
+// its CLI. Errors fail the run (exit 1). Warnings are reported and do not, unless --strict: a conveyor end placed
+// against a spur's side (a spur takes end joins only, so its guard stays closed there), and a box feed dropping onto
+// a belt the program starts and stops without being held with that belt (boxes stack on the stopped belt). The feed
+// check needs to know which tags are DRIVEN, so the project's ST program is compiled here the way
 // check-wiring does; a program that does not compile leaves it unchecked, and says so. Exit 2 = usage/IO error.
 
 import { readFileSync, statSync } from 'node:fs'
@@ -45,14 +46,14 @@ const vite = await createServer({
 try {
   // the app's built-in parts: a format-3 project names them by id and keeps no copy (scripts/lib/builtIns.mjs)
   await declareBuiltIns(vite)
-  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/projectFolder.ts')
-  const { validateProject } = await vite.ssrLoadModule('/src/core/project.ts')
-  const { validateScene } = await vite.ssrLoadModule('/src/core/scene.ts')
+  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/project/projectFolder.ts')
+  const { validateProject } = await vite.ssrLoadModule('/src/core/project/project.ts')
+  const { validateScene } = await vite.ssrLoadModule('/src/core/scene/scene.ts')
   const { validatePart, formatPartDiagnostics } = await vite.ssrLoadModule('/src/sim/validatePart.ts')
-  const { registerPackage } = await vite.ssrLoadModule('/src/core/partRegistry.ts')
+  const { registerPackage } = await vite.ssrLoadModule('/src/core/parts/partRegistry.ts')
   const { checkLayout, exerciseProgram, formatLayoutFinding } = await vite.ssrLoadModule('/src/core/checkLayout.ts')
   const { checkWiring, wiredBindings } = await vite.ssrLoadModule('/src/plc/wiring.ts')
-  const { LocalPlcLink } = await vite.ssrLoadModule('/src/plc/plcLink.ts')
+  const { LocalPlcLink } = await vite.ssrLoadModule('/src/plc/link/plcLink.ts')
   const { controllerFor, runnableSource } = await vite.ssrLoadModule('/src/plc/controller.ts')
   const { isKnownDialect } = await vite.ssrLoadModule('/src/core/dialect.ts')
 
@@ -165,7 +166,7 @@ try {
     }
     // Printed because a pass here is easy to over-read: this check answers one question, and a scene
     // can still be wrong in ways nothing checks (see docs: geometry is barely graded).
-    console.log(`\n${errors} error(s), ${warnings} warning(s). This checks SEATING, building COLUMNS and box feeds onto driven belts only - it does not judge spacing, orientation or flow.`)
+    console.log(`\n${errors} error(s), ${warnings} warning(s). This checks SEATING, building COLUMNS, conveyor ends against a spur's side and box feeds onto driven belts only - it does not judge spacing, orientation or flow.`)
   }
   process.exitCode = errors > 0 || (strict && warnings > 0) ? 1 : 0
 } finally {

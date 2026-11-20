@@ -1,5 +1,5 @@
 import { useCallback, useRef, useSyncExternalStore } from 'react'
-import type { EditorState, EditorStore } from './store'
+import type { EditorState, EditorStore } from './store/store'
 
 /**
  * Read a slice of editor state that tracks live transient updates (a gizmo drag, a PLC-driven

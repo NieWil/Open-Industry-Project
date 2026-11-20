@@ -325,7 +325,9 @@ converted (`export.ts` `exportWarnings`).
 
 **`STRING` is bounded, and a store truncates.** `s : STRING[20]` holds 20 characters; unbounded is 80, IEC's
 default. Capacity is not part of the type, so any `STRING` assigns to any other and the store cuts what does not
-fit, as MATIEC does, on variables, struct fields, array elements and function results alike. Literals use IEC's
+fit, as MATIEC does, on variables, struct fields, array elements and function results alike. A `VAR_IN_OUT` is the
+exception: it stands for the caller's own variable, so the variable passed must have exactly the parameter's
+capacity (an unbounded `STRING` counts as 80). Literals use IEC's
 `$` escapes (`$$`, `$'`, `$L`/`$N`/`$P`/`$R`/`$T`, `$0D`). `STRING(20)` is accepted beside `STRING[20]`.
 
 **`STRING` is ordered, not arithmetic.** The comparisons order by character code; `MIN`/`MAX`/`LIMIT` and
@@ -352,14 +354,18 @@ IEC's safe widenings are implicit: up a signed chain, up a bit-string chain, any
 (`write REAL_TO_INT(...)`).
 
 **Standard function blocks.** `TON`, `TOF`, `TP`, `R_TRIG`, `F_TRIG`, `CTU`, `CTD`, `CTUD`, `SR` (set-dominant),
-`RS` (reset-dominant). None is reserved: a user `FUNCTION_BLOCK` of the same name shadows it, as in IEC. Timers:
-[Timers read the controller clock](#timers-read-the-controller-clock).
+`RS` (reset-dominant). None is reserved: a user `FUNCTION_BLOCK` of the same name shadows it, as in IEC. Each keeps
+its inputs between calls, as a user block does: an input a call leaves out has the value the last call gave it
+(`FALSE`, `0` or `T#0s` before any call gave one), so `t(IN := go, PT := T#2s);` then `t(IN := go);` still times
+2 s. Timers: [Timers read the controller clock](#timers-read-the-controller-clock).
 
 **Standard functions.** `ABS`, `MIN`, `MAX`, `LIMIT`, `SEL`, `MUX`, the REAL math set
 (`SQRT`/`LN`/`LOG`/`EXP`/`EXPT`/trig), `TRUNC`, `SHL`/`SHR`/`ROL`/`ROR`, the `<src>_TO_<dst>` family,
 `BCD_TO_INT` / `INT_TO_BCD`, and the functional operators (`ADD`, `SUB`, `MUL`, `DIV`, `MOVE`, and the comparison
 chains `GT`/`GE`/`EQ`/`LE`/`LT`/`NE`, `GT(a, b, c)` meaning `a > b AND b > c`). On a duration or a date they take the
-operators' rules (`ADD(t, 5)` refused like `t + 5`; `DIV` truncates like `/`). A formal call uses IEC's parameter
+operators' rules (`ADD(t, 5)` refused like `t + 5`; `DIV` truncates like `/`). `ADD` and `MUL` with three or more
+inputs work step by step, as `a + b + c` does: an integer result wraps and a `REAL` one rounds after each step. A
+formal call uses IEC's parameter
 names as MATIEC's library declares them (`LIMIT(MN := 0, IN := x, MX := 10)`, `MID(IN := s, L := 3, P := 2)`,
 `IN1`..`INn`, `K` and `IN0`.. for `MUX`), in any order; MATIEC agrees. STruC++ binds standard-function arguments by
 position (`LIMIT(MX := 9, IN := x, MN := 0)` becomes `LIMIT(9, x, 0)`), so export warns about any written out of
@@ -487,7 +493,7 @@ writes the table back as a `CONFIGURATION`.
 wired to a terminal, so the same program runs in the simulator and, exported as written, on a PLC with I/O there.
 
 - **The address is the key on the tag surface.** `%I` is an input and `%Q` an output wherever declared, under its
-  canonical address ([core/iecAddress.ts](../src/core/iecAddress.ts): upper case, bit size written, no leading
+  canonical address ([core/io/iecAddress.ts](../src/core/io/iecAddress.ts): upper case, bit size written, no leading
   zeros, so `%i100.0` and `%IX100.0` are one point). The watch table and code keep the name. An address is never
   qualified by an instance or scoped to a cell.
 - **Where:** a plain `VAR` in a `PROGRAM` (including code outside every POU) and `VAR_GLOBAL`, as IEC's grammar
@@ -616,7 +622,7 @@ portability failure as a divergence, pointed the other way.
    - an enumeration with a base type (`(Idle, Run) UINT`): values are held as INT, so one INT cannot hold is
      refused; export leaves the word out;
 
-   and `canonicalSyntax` ([exportText.ts](../src/plc/exportText.ts)), a lexical pass both exports run first, writes
+   and `canonicalSyntax` ([exportText.ts](../src/plc/exchange/exportText.ts)), a lexical pass both exports run first, writes
    each in the strict form. The corpus group "tolerated input forms" proves it: the oracles render each case through
    that pass, and MATIEC and STruC++ build the result and agree with the goldens.
 
@@ -625,7 +631,7 @@ portability failure as a divergence, pointed the other way.
 
 ## Getting a program out
 
-[src/plc/export.ts](../src/plc/export.ts) has two targets, because there is no universal one:
+[src/plc/exchange/export.ts](../src/plc/exchange/export.ts) has two targets, because there is no universal one:
 
 | Target | What it is | Who takes it |
 |--------|------------|--------------|
@@ -679,7 +685,7 @@ wrote.
 
 ## Getting a program in
 
-[src/plc/importText.ts](../src/plc/importText.ts) (`Import .st` in the ST editor) is the exporter run backwards,
+[src/plc/exchange/importText.ts](../src/plc/exchange/importText.ts) (`Import .st` in the ST editor) is the exporter run backwards,
 sharing its trivia mask so a keyword inside a comment is never mistaken for the real one:
 
 | The file has | What happens |
@@ -696,9 +702,9 @@ Anything the subset cannot hold is reported: a program that quietly means someth
 worse than one that refuses.
 
 **The round trip**: every corpus case is exported and imported again and must come back text for text with no notes
-([importText.test.ts](../src/plc/importText.test.ts)); a file this editor wrote imports as a no-op.
+([importText.test.ts](../src/plc/exchange/importText.test.ts)); a file this editor wrote imports as a no-op.
 
-**PLCopen XML** ([src/plc/importXml.ts](../src/plc/importXml.ts)), the format many IEC tools export: each `<pou>`
+**PLCopen XML** ([src/plc/exchange/importXml.ts](../src/plc/exchange/importXml.ts)), the format many IEC tools export: each `<pou>`
 becomes a block, `<dataType>`s `TYPE` declarations, the configuration's `<globalVars>` a `VAR_GLOBAL` block; a
 single program's task interval becomes the scan time, while a controller's programs keep their names and its tasks
 and `<pouInstance>`s become a `CONFIGURATION`. Blocks are composed by `flattenDocument`

@@ -36,7 +36,7 @@
 .org-comms.on {
   background: var(--ld-on, #3fb950);
 }
-/* a device's tags (components/DeviceTagsDialog.tsx) */
+/* a device's tags (components/plc/DeviceTagsDialog.tsx) */
 .device-tags-dialog {
   width: min(560px, 100%);
 }
@@ -78,6 +78,32 @@
 .device-tags-grid .dir.out {
   background: #e6b800;
 }
+/* with the Force column, while a program can be forced */
+.device-tags-grid.with-force {
+  grid-template-columns: max-content max-content 1fr max-content max-content;
+}
+/* a forced tag (the Force button beside it): the warning colour and a badge, as the Watch dock marks a forced value */
+.device-force-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.device-forced-badge,
+.org-forced {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--warn);
+  color: light-dark(#fff, #1f2023);
+  font: bold 9px ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase;
+}
+.org-forced {
+  margin-left: 6px;
+}
+.device-tags-grid .device-force.on {
+  border-color: var(--warn);
+  color: var(--warn);
+}
 .device-tags-foot {
   display: flex;
   align-items: center;
@@ -100,7 +126,7 @@
   cursor: pointer;
 }
 
-/* cross reference (components/CrossRefDialog.tsx) */
+/* cross reference (components/plc/CrossRefDialog.tsx) */
 .xref-dialog {
   width: min(600px, 100%);
 }

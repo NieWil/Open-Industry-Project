@@ -3,9 +3,9 @@
 import { writeFileSync } from 'node:fs'
 import { Session } from 'node:inspector/promises'
 import { describe, it } from 'vitest'
-import { DEMO_CONTROLLER, DEMO_PROGRAM } from './demoScenes'
+import { DEMO_CONTROLLER, DEMO_PROGRAM } from './demo/demoScenes'
 import { runnableSource } from '../plc/controller'
-import { LocalPlcLink } from '../plc/plcLink'
+import { LocalPlcLink } from '../plc/link/plcLink'
 import { SimController } from '../plc/simController'
 
 describe.runIf(process.env.BENCH)('scan bench', () => {

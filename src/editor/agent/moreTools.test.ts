@@ -1,11 +1,11 @@
 // The agent tools for part definitions, the program by POU, seeing the scene, and the agent's own history
 // (partTools.ts, programTools.ts, viewTools.ts). tools.test.ts covers the original list and the shared rules.
 import { readFileSync } from 'node:fs'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentImageResult, callAgentTool, type AgentController, type AgentToolContext } from './tools'
-import { EditorStore } from '../store'
-import { getPackage, registerPackage, unregisterPackage } from '../../core/partRegistry'
-import { PACKAGE_FORMAT, type PartPackage } from '../../core/partPackage'
+import { EditorStore } from '../store/store'
+import { getPackage, registerPackage, unregisterPackage } from '../../core/parts/partRegistry'
+import { PACKAGE_FORMAT, type PartPackage } from '../../core/parts/partPackage'
 import { CARGO_KIND_BOX } from '../../core/frame'
 import type { BoxFrame } from '../../core/frame'
 import type { SdkPart } from '../../core/types'
@@ -112,17 +112,43 @@ describe('agent tools: part definitions', () => {
     expect(await refused(c, 'edit_part_definition', { id: 'agent.lift' })).toMatch(/give 'behavior', 'manifest' or both/)
   })
 
-  it('import_model measures the model against the footprint, and says when they disagree', async () => {
+  it('import_model fits a part that is just the model, and measures any other against its footprint', async () => {
     // a tracked part asset: 0.5 x 0.136 x 0.5 m, its underside at y -0.105 in its own frame
     const bytes = new Uint8Array(readFileSync(new URL('../../../public/part-assets/929d5eae36c065f460ac5bb80c287977bcf7c7d5596680a56ab2946d483cdb32.glb', import.meta.url)))
     const shell = { readModel: async () => ({ name: 'm.glb', bytes }) }
     const c = { ...ctx(), shell }
-    // the default new part: a 0.6 m box link at y 0.3, so the model floats and the footprint is far bigger
-    const loose = (await ok(c, 'create_part', { name: 'Loose' })) as { id: string }
+    // the default new part: one 0.6 m box node at y 0.3. The model replaces it whole, so the part is fitted to it:
+    // it stands on the floor, with bounds and a collider of its size
+    const single = (await ok(c, 'create_part', { name: 'Single' })) as { id: string }
+    created.push(single.id)
+    const r0 = (await ok(c, 'import_model', { id: single.id, link: 'body', path: 'C:/m.glb' })) as { fitted?: boolean; model: { min: number[] }; boundsHint?: string }
+    expect(r0.fitted).toBe(true)
+    expect(r0.model.min[1]).toBeCloseTo(0, 3)
+    expect(r0.boundsHint).toBeUndefined()
+    const geometry = getPackage(single.id)!.geometry as { links: { name: string; hidden?: boolean }[]; bounds?: { top: number } }
+    expect(geometry.links.map((l) => l.name)).toEqual(['body', 'collider'])
+    expect(geometry.bounds?.top).toBeCloseTo(0.136, 2)
+    // a part with more than the model is the author's arrangement: left as it is, and measured against its footprint
+    const loose = (await ok(c, 'create_part', {
+      name: 'Loose',
+      manifest: {
+        geometry: {
+          kind: 'rig',
+          links: [
+            { name: 'body', shape: { kind: 'box', size: [0.6, 0.6, 0.6] }, offset: [0, 0.3, 0] },
+            { name: 'lamp', parent: 'body', shape: { kind: 'box', size: [0.1, 0.1, 0.1] }, offset: [0, 0.35, 0] },
+          ],
+          joints: [],
+          // declared smaller than the model, which then sticks out of it
+          bounds: { length: 0.2, width: 0.2, top: 0.2 },
+        },
+      },
+    })) as { id: string }
     created.push(loose.id)
-    const r1 = (await ok(c, 'import_model', { id: loose.id, link: 'body', path: 'C:/m.glb' })) as { model: { min: number[]; max: number[] }; boundsHint?: string }
+    const r1 = (await ok(c, 'import_model', { id: loose.id, link: 'body', path: 'C:/m.glb' })) as { fitted?: boolean; model: { min: number[]; max: number[] }; boundsHint?: string }
+    expect(r1.fitted).toBeUndefined()
     expect(r1.model.min[1]).toBeCloseTo(0.195, 2)
-    expect(r1.boundsHint).toMatch(/footprint is .* \(much bigger than the model\)\..*underside is at y 0\.195/)
+    expect(r1.boundsHint).toMatch(/underside is at y 0\.195/)
     // a part whose link and bounds already fit the model gets no hint
     const fitted = (await ok(c, 'create_part', {
       name: 'Fitted',
@@ -139,6 +165,16 @@ describe('agent tools: part definitions', () => {
     const shell = { readModel: async () => ({ error: 'unused' }) }
     expect(await refused({ ...c, shell }, 'import_model', { id: 'agent.lift', link: 'deck', path: 'C:/m.glb' })).toMatch(/no link 'deck' \(it has: body\)/)
     expect(await refused({ ...c, shell }, 'import_model', { id: 'agent.lift', link: 'body', path: 'C:/m.glb' })).toBe('unused')
+  })
+
+  it('import_model refuses a .glb that is not a model, and changes nothing', async () => {
+    const shell = { readModel: async () => ({ name: 'm.glb', bytes: new TextEncoder().encode('a text file renamed to .glb') }) }
+    const c = { ...ctx(), shell }
+    const before = getPackage('agent.lift')
+    const steps = c.store.getEditHistory().events.length
+    expect(await refused(c, 'import_model', { id: 'agent.lift', link: 'body', path: 'C:/m.glb' })).toMatch(/m\.glb is not a model this importer can read/)
+    expect(getPackage('agent.lift')).toBe(before)
+    expect(c.store.getEditHistory().events.length).toBe(steps)
   })
 })
 
@@ -229,13 +265,31 @@ describe('agent tools: seeing the scene', () => {
     expect(await refused(c, 'capture_view')).toMatch(/walking the scene/)
   })
 
-  it('get_cargo lists the last frame’s bodies with their tilt, filtered to a box', async () => {
+  it("capture_view from 'window' takes the whole window and leaves the camera alone", async () => {
+    vi.stubGlobal('window', { innerWidth: 1280, innerHeight: 720 })
+    try {
+      const rects: unknown[] = []
+      // walking owns the camera, but a window picture never touches it
+      const view = { pilotPose: () => ({ position: [0, 0, 0], yaw: 0 }), isVRPresenting: () => false }
+      const shell = { capture: async (rect: unknown) => (rects.push(rect), { data: 'AA==', mimeType: 'image/jpeg' }) }
+      const c = { ...ctx({ view, plcFault: null } as unknown as AgentController), shell }
+      const r = (await ok(c, 'capture_view', { from: 'window' })) as unknown as AgentImageResult
+      expect(rects).toEqual([{ x: 0, y: 0, width: 1280, height: 720 }])
+      expect(r.images).toHaveLength(1)
+      expect(await refused(c, 'capture_view', { from: 'window', parts: ['belt'] })).toMatch(/does not go with/)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('get_cargo lists the last frame’s bodies with their tilt and heading, filtered to a box', async () => {
     const tipped = Math.SQRT1_2 // 90° about X
+    const s = Math.sin(Math.PI / 8) // 45° about Y
     const frame = {
       count: 2,
       ids: new Uint32Array([7, 8]),
       positions: new Float32Array([1, 0.9, 0, 5, 0.1, 0]),
-      quats: new Float32Array([0, 0, 0, 1, tipped, 0, 0, tipped]),
+      quats: new Float32Array([0, s, 0, Math.cos(Math.PI / 8), tipped, 0, 0, tipped]),
       halfExtents: new Float32Array([0.2, 0.15, 0.2, 0.2, 0.15, 0.2]),
       colors: new Float32Array([1, 0, 0, 1, 1, 1]),
       kinds: new Uint8Array([CARGO_KIND_BOX, CARGO_KIND_BOX]),
@@ -247,8 +301,8 @@ describe('agent tools: seeing the scene', () => {
     c.store.setState({ running: true })
     const all = (await ok(c, 'get_cargo')) as { count: number; cargo: Record<string, unknown>[] }
     expect(all.count).toBe(2)
-    expect(all.cargo[0]).toEqual({ id: 7, kind: 'box', position: [1, 0.9, 0], size: [0.4, 0.3, 0.4], color: '#ff0000', tiltDeg: 0 })
-    expect(all.cargo[1]).toMatchObject({ id: 8, tiltDeg: 90, part: 'box_3' })
+    expect(all.cargo[0]).toEqual({ id: 7, kind: 'box', position: [1, 0.9, 0], size: [0.4, 0.3, 0.4], color: '#ff0000', tiltDeg: 0, yawDeg: 45 })
+    expect(all.cargo[1]).toMatchObject({ id: 8, tiltDeg: 90, yawDeg: 0, part: 'box_3' })
     const near = (await ok(c, 'get_cargo', { within: { min: [0, 0, -1], max: [2, 2, 1] } })) as { count: number }
     expect(near.count).toBe(1)
   })

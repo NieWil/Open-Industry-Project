@@ -113,7 +113,68 @@ try {
   check('a refused name opens no document on the server', openAfter === openBefore, `${openBefore} -> ${openAfter}`)
   for (const c of refused) c.provider.destroy()
 
-  // --- 5. healthz
+  // --- 5. live share (server/liveRelay.mjs): a run goes only to its followers, the runner is asked for a snapshot when
+  // someone follows, and a viewer may follow but never stream
+  const heard = []
+  const told = []
+  viewer.provider.on('stateless', ({ payload }) => heard.push(payload))
+  editor.provider.on('stateless', ({ payload }) => told.push(payload))
+  editor.provider.sendStateless('live2|a|run-1|')
+  editor.provider.sendStateless('live2|d|run-1|RDA=')
+  await sleep(400)
+  check('a run nobody follows reaches nobody', heard.length === 0, JSON.stringify(heard))
+  viewer.provider.sendStateless('live2|f|run-1|')
+  await sleep(400)
+  check('following a run asks its runner for a snapshot, and tells it one is watching', told.includes('live2|q|run-1|') && told.includes('live2|w|run-1|1'), JSON.stringify(told))
+  editor.provider.sendStateless('live2|d|run-1|RDE=')
+  editor.provider.sendStateless('live2|s|run-1|U05BUA==')
+  editor.provider.sendStateless('live2|d|run-1|RDI=')
+  await sleep(400)
+  check('the follower starts from the snapshot, then gets each delta', heard.join(' ') === 'live2|s|run-1|U05BUA== live2|d|run-1|RDI=', JSON.stringify(heard))
+  const late = connect(docName, 'view')
+  const lateHeard = []
+  late.provider.on('stateless', ({ payload }) => lateHeard.push(payload))
+  await late.synced
+  late.provider.sendStateless('live2|f|run-1|')
+  await sleep(500)
+  check('a viewer following mid-run is caught up from the kept snapshot', lateHeard.join(' ') === 'live2|s|run-1|U05BUA== live2|d|run-1|RDI=', JSON.stringify(lateHeard))
+  const closed = new Promise((resolve) => late.provider.on('close', () => resolve(true)))
+  late.provider.sendStateless('live1|r|run-1|')
+  check("an old build's live message is ignored, not refused", (await Promise.race([closed, timeout(600, false)])) === false)
+  late.provider.sendStateless('live2|d|run-1|SEFDSw==')
+  const cut = await Promise.race([closed, timeout(3000, false)])
+  await sleep(300)
+  check('a viewer that tries to stream is cut off, and nothing it sent is relayed', cut === true && heard.length === 2, `closed=${cut}, viewer heard ${heard.length}`)
+  late.provider.destroy()
+
+  // --- 6. room owners (server/roomOwners.mjs): the owner's token closes the room; an editor's guess does not
+  const replies = []
+  editor.provider.on('stateless', ({ payload }) => replies.push(payload))
+  editor.provider.sendStateless('room1|claim|o-11111111-2222-3333-4444-555555555555|4242')
+  await sleep(400)
+  check('the first claim makes this browser the owner', replies.includes('room1|claim|ok'), JSON.stringify(replies))
+  check('...and everyone is told who the owner is', heard.includes('live2|o|4242|0'), JSON.stringify(heard.slice(-2)))
+  editor.provider.sendStateless('room1|spotlight|o-99999999-8888-7777-6666-555555555555|1')
+  await sleep(300)
+  check('a spotlight with any other token is refused', replies.includes('room1|spotlight|refused') && !heard.includes('live2|o|4242|1'))
+  editor.provider.sendStateless('room1|spotlight|o-11111111-2222-3333-4444-555555555555|1')
+  await sleep(300)
+  check("the owner's spotlight reaches everyone", heard.includes('live2|o|4242|1'), JSON.stringify(heard.slice(-2)))
+  editor.provider.sendStateless('room1|close|o-99999999-8888-7777-6666-555555555555')
+  await sleep(400)
+  check('a close with any other token is refused, and the room stays open', replies.includes('room1|close|refused') && (await fetch(`http://localhost:${port}/healthz`).then((r) => r.json())).openDocs >= 1)
+  const closedViewer = connect(docName, 'view')
+  await closedViewer.authed
+  editor.provider.sendStateless('room1|close|o-11111111-2222-3333-4444-555555555555')
+  await sleep(800)
+  check("the owner's token closes it", replies.includes('room1|close|ok'))
+  const refusedNow = connect(docName, 'view')
+  const after = await Promise.race([refusedNow.authed.then(() => 'authenticated'), refusedNow.denied.then((r) => `denied:${r}`), timeout(5000, 'timeout')])
+  check('a closed room refuses its links from then on', after === 'denied:room-closed', after)
+  closedViewer.provider.destroy()
+  refusedNow.provider.destroy()
+
+  // --- 7. healthz
   const health = await fetch(`http://localhost:${port}/healthz`).then((r) => r.json())
   check('healthz responds ok', health.ok === true && typeof health.openDocs === 'number', JSON.stringify(health))
 

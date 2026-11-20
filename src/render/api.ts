@@ -2,6 +2,7 @@ import type { Vector3 } from 'three'
 import type { BoxFrame, CargoKindName, CargoShapeRef } from '../core/frame'
 import type { PartInstance, SceneJSON } from '../core/types'
 import type { DisplayUnits } from '../core/units'
+import type { SubPose } from '../core/rig/rigPose'
 
 export interface RenderStats {
   drawCalls: number
@@ -31,11 +32,23 @@ export interface RenderStats {
   cpuTotalMs: number
   frames: number
   /**
-   * EMA of the GPU's render-pass execution time, ms: the part of the frame cost that cpuMs excludes
-   * (shown as a CPU/GPU frame-time pair). Measured with WebGPU timestamp queries (trackTimestamp,
-   * resolved off-frame). null on WebGL, which has no equivalent query on the classic renderer.
+   * EMA of one frame's GPU render-pass time, ms: the part of the frame cost that cpuMs excludes. Measured with
+   * WebGPU timestamp queries, each frame counted once (frameMeter.ts). null on WebGL, on a WebGPU device without
+   * timestamp queries, and until the first frame resolves.
    */
   gpuMs: number | null
+  /**
+   * GPU ms summed over every resolved frame, and how many frames that is: window-diff two reads the way
+   * cpuTotalMs is. gpuTotalMs is null whenever gpuMs is. The frames resolve a frame or two late, so gpuFrames
+   * trails `frames` by that much and a window divides by its own count.
+   */
+  gpuTotalMs: number | null
+  gpuFrames: number
+  /**
+   * The display's refresh interval in ms: 60 Hz, or faster once the frames show it (frameMeter.ts
+   * RefreshEstimate). null only before there is a view.
+   */
+  refreshMs: number | null
   /**
    * Frames whose interval exceeded 1.5x the rolling median of the frames around them, since the
    * view mounted. Catches hitches (pipeline compiles, GC, resize) that the EMAs smooth over;
@@ -73,8 +86,8 @@ export type ProjectionMode = 'perspective' | 'orthographic'
 /**
  * The camera a scene opens at when it has no remembered one: a ~14 m 3/4 of world zero. It suits the
  * default warehouse, where the first part is placed near the origin. A scene may declare its own opening
- * view instead (editor/demoScenes DEMO_OPENING_VIEW). Once a scene has been framed, the pose remembered
- * for it takes precedence over both (editor/storePrefs viewport state).
+ * view instead (editor/demo/demoScenes DEMO_OPENING_VIEW). Once a scene has been framed, the pose remembered
+ * for it takes precedence over both (editor/store/storePrefs viewport state).
  */
 export const DEFAULT_CAMERA_POSE = { px: 9, py: 7, pz: 9, tx: 0, ty: 0, tz: 0 } as const
 
@@ -127,7 +140,7 @@ export interface GizmoState {
    */
   frame?: [number, number, number, number]
   /** move handles to leave out, per local axis [x, y, z] (and every plane pad that uses one): an axis the part
-   *  sets itself, where a drag would be overwritten (core/rigPose.ts linkFieldOwnership) */
+   *  sets itself, where a drag would be overwritten (core/rig/rigPose.ts linkFieldOwnership) */
   lockMove?: [boolean, boolean, boolean]
   /** leave out every rotate handle (rings, view ring, trackball): a rotation the part sets itself (an aim) */
   lockRotate?: boolean
@@ -203,11 +216,11 @@ export interface PilotHandlers {
 }
 
 /**
- * A robot editor-gizmo handle: a per-joint rotation handle `j0`..`j4` (J1-J5), the end-effector handle
+ * A robot editor-gizmo handle: a per-joint rotation handle `j0`, `j1`... (J1, J2...), the end-effector handle
  * `ee` that drags the arm via IK, or a `size:<param>` tool-size handle (a rigSize
  * param handle - the EOAT resize dots) that drags the named number param along a rig link's axis.
  */
-export type RobotHandle = 'j0' | 'j1' | 'j2' | 'j3' | 'j4' | 'j5' | 'ee' | `size:${string}`
+export type RobotHandle = `j${number}` | 'ee' | `size:${string}`
 
 /** one gizmo joint (J1-J5) as the overlay draws it; world space, directions unit length */
 export interface RobotGizmoJoint {
@@ -398,7 +411,7 @@ export interface IRenderView {
    *  actuation preview - e.g. a blade stop shown raised so an author can check placement without
    *  pressing Play). Routes to the same joint/subPose/lamp appliers the running frame uses. No-op
    *  while running (applyBoxFrame owns the rig then) unless the part is hand-posed, or for a part with no rig. */
-  applyIdlePose(partId: string, pose: { joints?: Record<string, number>; subPoses?: Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>; lamps?: Record<string, boolean> }): void
+  applyIdlePose(partId: string, pose: { joints?: Record<string, number>; subPoses?: Record<string, SubPose>; lamps?: Record<string, boolean> }): void
   /** the parts whose rig joints the editor poses (applyIdlePose) even while running, the sim's joint frames for them
    *  ignored: a flex conveyor the walking character is pulling, whose shape is ahead of the sim's */
   setHandPosed(partIds: readonly string[]): void
@@ -543,8 +556,15 @@ export interface IRenderView {
   /** show the ruler measurement line + readout between two world points; null clears it */
   setRuler(a: [number, number, number] | null, b: [number, number, number] | null): void
 
-  /** animate the camera to frame these parts (F key) */
-  focusOn(ids: readonly string[]): void
+  /**
+   * animate the camera to look down `dir` (a unit world axis) at the orbit target, in auto-ortho: the
+   * orbit gizmo's axis-ball click, and Numpad 1 / 3 / 7
+   */
+  snapToAxis(dir: Vector3): void
+
+  /** animate the camera to frame these parts (F key); `instant` places it in this call (capture_view, which may
+   *  run while the window is minimized and frames come about once a second) */
+  focusOn(ids: readonly string[], opts?: { instant?: boolean }): void
 
   /** start follow mode: the camera rig tracks these parts' center as they move (double-F) */
   startFollow(ids: readonly string[]): void
@@ -564,6 +584,11 @@ export interface IRenderView {
 
   /** current camera position + orbit target, for detecting whether the view has moved */
   cameraPose(): { px: number; py: number; pz: number; tx: number; ty: number; tz: number }
+  /**
+   * The camera position + a point it really looks at: the orbit target, or, in pilot mode or a freelook flight (which
+   * turn the camera and leave the target behind), a point straight ahead. What someone following this view is shown.
+   */
+  lookPose(): { px: number; py: number; pz: number; tx: number; ty: number; tz: number }
 
   /**
    * Zoom as if `e` had reached the canvas. For DOM drawn over the scene as part of it (annotation chips):
@@ -606,7 +631,7 @@ export interface IRenderView {
   /**
    * Fires once the camera comes to rest after a move: orbit, dolly, pan, a freelook or pilot flight,
    * an F-focus ease, an orbit-gizmo axis snap. One call per gesture, not per frame, because the editor
-   * persists the pose as per-scene workspace state (editor/storePrefs). Silent while a navigation
+   * persists the pose as per-scene workspace state (editor/store/storePrefs). Silent while a navigation
    * gesture or VR owns the camera, and while follow mode tracks a moving part (it never comes to
    * rest). The write happens when the user lets go.
    */

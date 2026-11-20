@@ -7,7 +7,7 @@
 
 import { useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import type { ProgramArg, ProgramSpec } from '../../../core/partApi'
+import type { ProgramArg, ProgramSpec } from '../../../core/parts/partApi'
 import { ChevronIcon, CopyIcon, FoldIcon, TrashIcon } from '../toolbarIcons'
 import { SpinSlider } from './fields'
 import {

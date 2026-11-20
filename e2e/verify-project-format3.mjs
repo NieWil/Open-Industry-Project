@@ -1,7 +1,7 @@
 // Older project documents in the real app: a format-3 document (a scene naming built-ins by id, no copies) and a
 // format-2 one can still be read, and convert to the current format: a project holds one scene, at the top level of
 // the document, carries no copies in the scene, and keeps its own copy of every part it uses, built-ins
-// included, each stamped with the version it was copied at (core/project.ts keepDefinitionsOnce, docs/part-sources.md).
+// included, each stamped with the version it was copied at (core/project/project.ts keepDefinitionsOnce, docs/part-sources.md).
 // Format-2 project scenes embed a copy of every placed part's package: a snapshot of whatever build saved it, with no
 // record of where it came from, so it can never be told apart from an edit.
 //
@@ -24,12 +24,12 @@ import { startServer } from './_server.mjs'
 import { readFileSync } from 'node:fs'
 
 // The format a save writes today, read from the source so a format bump doesn't break this gate.
-const CURRENT = Number(/export const PROJECT_VERSION = (\d+)/.exec(readFileSync(new globalThis.URL('../src/core/project.ts', import.meta.url), 'utf8'))?.[1])
-if (!(CURRENT >= 6)) throw new Error('could not read PROJECT_VERSION from src/core/project.ts')
+const CURRENT = Number(/export const PROJECT_VERSION = (\d+)/.exec(readFileSync(new globalThis.URL('../src/core/project/project.ts', import.meta.url), 'utf8'))?.[1])
+if (!(CURRENT >= 6)) throw new Error('could not read PROJECT_VERSION from src/core/project/project.ts')
 
 const { port, vite } = await startServer()
 const URL = `http://localhost:${port}/app/`
-const PROJECT_KEY = 'oip-web/project' // src/editor/projectFile.ts
+const PROJECT_KEY = 'oip-web/project' // src/editor/project/projectFile.ts
 const SPAWNER = 'oip.box-spawner'
 let failures = 0
 const check = (n, ok, info = '') => {
@@ -61,7 +61,7 @@ const multi = () => ({
   })),
 })
 
-/** every document in the projects list (IndexedDB 'oip-web': docIndex + docPayload, src/editor/documentStore.ts) */
+/** every document in the projects list (IndexedDB 'oip-web': docIndex + docPayload, src/editor/project/documentStore.ts) */
 const library = () =>
   page.evaluate(
     () =>
@@ -81,7 +81,7 @@ const library = () =>
             db.close()
             resolve(
               index.result.map((meta) => {
-                const doc = payloads.result.find((p) => p.id === meta.id)?.project
+                const doc = ((r) => r && (r.project ?? JSON.parse(r.text)))(payloads.result.find((p) => p.id === meta.id))
                 return {
                   name: meta.name,
                   version: doc?.version,
@@ -129,7 +129,7 @@ const live = () =>
 const editAndRead = async () => {
   await page.evaluate(() => window.__oip.store.rename('sp_1', `Feeder ${Date.now()}`))
   await page.waitForTimeout(500)
-  return page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? 'null'), PROJECT_KEY)
+  return page.evaluate(async () => JSON.parse((await window.__oip.savedProject()) ?? 'null'))
 }
 const oneScene = (doc) => doc?.version === CURRENT && doc.scenes === undefined && doc.activeScene === undefined && Array.isArray(doc.scene?.parts)
 

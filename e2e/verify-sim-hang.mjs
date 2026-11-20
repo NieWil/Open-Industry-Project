@@ -1,6 +1,6 @@
 // A part whose code never returns, in a running simulation (docs/part-sandbox.md, "Hangs in the simulation"). The
 // loop budget stops loops, not deep recursion; the sim client's watchdog (sim/client.ts) sees no frame for 10 s, reads
-// which part the worker was in (core/partScript.ts hang beacon), ends the worker and says so.
+// which part the worker was in (core/parts/partScript.ts hang beacon), ends the worker and says so.
 //
 //   1. the part runs for a second, then its step() starts a recursion that would take hours
 //   2. within the watchdog's window the run is stopped and the alert names the part

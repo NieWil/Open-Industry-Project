@@ -3,10 +3,10 @@
 // the joint table. Both resolve the part's package from the live registry and walk the same forest, so
 // the two views never drift.
 
-import { getPackage } from '../core/partRegistry'
-import type { PartPackageGeometry, RigJoint, RigLink, RigShape } from '../core/partPackage'
+import { getPackage } from '../core/parts/partRegistry'
+import type { PartPackageGeometry, RigJoint, RigLink, RigShape } from '../core/parts/partPackage'
 import type { SdkPart, PartInstance } from '../core/types'
-import { convertUnit, displayUnitFor, type DisplayUnits } from '../core/units'
+import { convertUnit, displayUnitFor, METRIC_DISPLAY, type DisplayUnits } from '../core/units'
 
 /** The rig variant of a part package's geometry (links + joints). */
 export type RigGeometry = Extract<PartPackageGeometry, { kind: 'rig' }>
@@ -39,7 +39,7 @@ export function shapeLabel(shape: RigShape): string {
 }
 
 /** Human-readable command range for a joint: degrees for revolute; for prismatic, metres or inches by `system`. */
-export function jointRange(j: RigJoint, system: DisplayUnits = 'metric'): string {
+export function jointRange(j: RigJoint, system: DisplayUnits = METRIC_DISPLAY): string {
   if (j.type === 'revolute') {
     const lo = ((j.min * 180) / Math.PI).toFixed(0)
     const hi = ((j.max * 180) / Math.PI).toFixed(0)

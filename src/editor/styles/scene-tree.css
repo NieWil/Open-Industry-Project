@@ -310,6 +310,33 @@
 }
 
 /* a rig node row's tags (param / aim / array / script): what is true of the node besides its own fields */
+.tree-forced {
+  flex: none;
+  margin-left: 4px;
+  min-width: 7px;
+  padding: 0 3px;
+  border-radius: 2px;
+  background: var(--warn);
+  color: #1f2023;
+  font: bold 9px/12px ui-monospace, monospace;
+  text-align: center;
+}
+/* the PLC a part's tags are on, when it is not the default one (program/controllerBadges.ts) */
+.tree-controller {
+  /* the name gives way first: a badge cut to "Ce…" says nothing */
+  flex: none;
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 13px;
+  color: var(--text-dim);
+}
 .tree-node-badges {
   flex: none;
   margin-left: 6px;

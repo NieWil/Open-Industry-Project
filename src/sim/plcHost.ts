@@ -3,7 +3,7 @@
 // loop calls interleave() before world.step(): the scan reads the tags behaviors wrote on the
 // previous step (%I), runs however many whole scan periods one step of sim time covers, and
 // applies its outputs (%Q) so the very next step's behaviors read them. That is the same
-// lockstep the headless project-test runner uses (editor/projectTestRunner.ts), so the live sim
+// lockstep the headless project-test runner uses (editor/project/projectTestRunner.ts), so the live sim
 // and the test harness share one interleave semantics.
 //
 // The scan accumulator is driven from the fixed step dt (sim time), not wall clock. So the scan/step
@@ -13,8 +13,11 @@
 // this samples at the sim's own rate, the true information rate of the world. See src/plc/DEVICE-IO.md.
 
 import { LocalPlcLink, SimController, TaskScheduler } from '../plc'
-import type { WiredBindings } from '../plc'
+import type { RecordPatch } from './frameWire'
+import type { Schedulable, TaskInfo, WiredBindings } from '../plc'
 import type { TagValue } from '../plc'
+import type { WatchLayout } from '../core/watchTable'
+import type { WatchPlan } from '../plc/types'
 
 /** The slice of SimWorld the host needs - narrow so tests can drive it with a stub. */
 export interface PlcWorldPort {
@@ -36,7 +39,38 @@ export interface PlcFrameState {
   outputs: Readonly<Record<string, TagValue>>
   scansRun: number
   overruns: number
+  /** how long each task's scans take to execute, for the Watch dock's scan-time line */
+  scanTimes: ScanTime[]
 }
+
+/**
+ * One task's measured execution time: the real time its scans took on this machine, in ms. Its interval is sim time
+ * and holds whatever this is (the scan interleaves with the physics steps), so a long scan slows the whole sim
+ * rather than making the task late. It is the number to read when a program feels heavy.
+ * The browser's clock has a 5 µs grain in a cross-origin isolated page, so a short scan's `lastMs` reads 0 or
+ * 0.005; the average over many scans is finer than that.
+ */
+export interface ScanTime {
+  /** the task's name; '' for a program with no tasks, which scans on the scan-time field */
+  task: string
+  kind: TaskInfo['kind']
+  /** the task's interval in seconds; a continuous task runs once per physics step instead */
+  periodSec: number
+  /** scans timed since the program started, or since the last reset */
+  scans: number
+  lastMs: number
+  avgMs: number
+  maxMs: number
+}
+
+/** Running totals for one task's scans. */
+interface ScanTally {
+  scans: number
+  totalMs: number
+  lastMs: number
+  maxMs: number
+}
+const emptyTally = (): ScanTally => ({ scans: 0, totalMs: 0, lastMs: 0, maxMs: 0 })
 
 /**
  * Drop STRING-valued tags on the way to the world. Scene behaviours are driven by numbers
@@ -45,7 +79,7 @@ export interface PlcFrameState {
  * the one boundary) keeps the simulation side numeric instead of threading `string` through
  * every behaviour that reads a tag.
  */
-function driveable(tags: Record<string, TagValue>): Record<string, number | boolean> {
+function driveable(tags: Readonly<Record<string, TagValue>>): Record<string, number | boolean> {
   // nearly always nothing to drop: then the image itself goes on (a scan's output image is built fresh and never
   // written after, and the world holds what it is handed by reference, read-only), instead of a copy per scan
   let strings = false
@@ -76,12 +110,34 @@ export function shortestHeldIntervalSec(stepHz: number): number {
 export const WATCH_HZ = 10
 
 /** {@link PlcFrameState} as a frame carries it: the variable table only on the frames that bring a new one. */
-export type PlcFrameWire = Omit<PlcFrameState, 'watch'> & { watch?: PlcFrameState['watch'] }
+/** {@link PlcFrameWire} as a frame carries it: `inputs` and `outputs` only as far as they changed since the last
+ *  frame (frameWire.ts RecordEncoder). One of the record, a patch on the last one, or its name in `ioKept`. */
+export type PlcFrameSent = Omit<PlcFrameWire, 'inputs' | 'outputs'> & {
+  inputs?: PlcFrameState['inputs']
+  outputs?: PlcFrameState['outputs']
+  ioKept?: ('inputs' | 'outputs')[]
+  ioPatches?: Partial<Record<'inputs' | 'outputs', RecordPatch>>
+}
+
+export type PlcFrameWire = Omit<PlcFrameState, 'watch'> & {
+  watch?: PlcFrameState['watch']
+  /** in place of `watch`: a copy of the controller's memory, read through the layout its program sent (core/watchTable.ts) */
+  watchBytes?: ArrayBuffer
+  /** where the watch values are in `watchBytes`: sent once per program, with its first copy */
+  watchLayout?: WatchLayout
+  /** which attached program the table is of: the same number means the same keys (core/watchKeys.ts) */
+  watchKeys?: number
+}
 
 export class PlcHost {
   readonly #link: LocalPlcLink
   readonly #ctl: SimController
   readonly #engine: TaskScheduler
+  // one tally per task, or one for a program with no tasks; indexed as the scheduler numbers them
+  #tallies: ScanTally[] = []
+  /** the output image last handed on, and what the world was given of it ({@link driveable}) */
+  #drivenFrom: Readonly<Record<string, TagValue>> | null = null
+  #driven: Record<string, number | boolean> = {}
 
   /** Compile + attach a program. Throws StError on a compile error (the main thread validated
    *  the same source before shipping it, so a throw here is only a defensive backstop). */
@@ -89,13 +145,61 @@ export class PlcHost {
     // the scene's bindings by wiring, computed where the scene is (editor/controller.ts runProgram)
     const link = new LocalPlcLink(source, wired)
     this.#link = link
-    this.#ctl = new SimController(link)
-    this.#engine = new TaskScheduler(this.#ctl, { ...(periodSec !== undefined ? { periodSec } : {}), maxCatchUp: MAX_SCANS_PER_STEP })
+    const ctl = new SimController(link)
+    this.#ctl = ctl
+    // the scheduler drives the controller through this, so each scan is timed where it runs
+    const timed: Schedulable = {
+      get tasks() {
+        return ctl.tasks
+      },
+      tick: (dt) => {
+        const t0 = performance.now()
+        const out = ctl.tick(dt)
+        this.#record(0, performance.now() - t0)
+        return out
+      },
+      tickTask: (index, dt) => {
+        const t0 = performance.now()
+        const out = ctl.tickTask(index, dt)
+        this.#record(index, performance.now() - t0)
+        return out
+      },
+    }
+    this.#engine = new TaskScheduler(timed, { ...(periodSec !== undefined ? { periodSec } : {}), maxCatchUp: MAX_SCANS_PER_STEP })
+  }
+
+  #record(index: number, ms: number): void {
+    const t = (this.#tallies[index] ??= emptyTally())
+    t.scans++
+    t.totalMs += ms
+    t.lastMs = ms
+    if (ms > t.maxMs) t.maxMs = ms
+  }
+
+  /** Start the scan-time averages and maxima over (the Watch dock's Reset). The first scans include the engine
+   *  warming up, so a maximum read after a reset is the steady one. */
+  resetScanTimes(): void {
+    this.#tallies = []
+  }
+
+  /** each task's {@link ScanTime}, in the controller's task order */
+  scanTimes(): ScanTime[] {
+    const tasks = this.#ctl.tasks
+    const rows = tasks.length === 0 ? [{ task: '', kind: 'periodic' as const, periodSec: this.#engine.periodSec }] : tasks.map((t) => ({ task: t.name, kind: t.kind, periodSec: t.periodSec }))
+    return rows.map((r, i) => {
+      const t = this.#tallies[i] ?? emptyTally()
+      return { ...r, scans: t.scans, lastMs: t.lastMs, avgMs: t.scans > 0 ? t.totalMs / t.scans : 0, maxMs: t.maxMs }
+    })
   }
 
   /** Write one variable of the running program (a toggled bit); it shows in the next frame's watch. */
   force(name: string, value: TagValue): void {
     this.#link.force(name, value)
+  }
+
+  /** Hold variables at a value across scans until released (LocalPlcLink.setForces); the whole table each time. */
+  setForces(forces: Readonly<Record<string, TagValue>>): void {
+    this.#link.setForces(forces)
   }
 
   /** retune the cycle time live (the ST editor's scan-ms field); applies from the next step. A
@@ -126,7 +230,7 @@ export class PlcHost {
    * time), and the parts take their first step on no PLC output, as at power-up. The first scan, before the second
    * step, sees what they published, by the same path as every scan after it. Our rule (IEC leaves when field inputs
    * are first valid to the implementation); a program attached to a world already running scans at once.
-   * The project-test runner keeps the same rule (editor/projectTestRunner.ts).
+   * The project-test runner keeps the same rule (editor/project/projectTestRunner.ts).
    *
    * May throw an StError / StFault - a runtime fault (a subscript out of range, a division by zero, a
    * loop the watchdog would have caught) - the caller detaches the program and reports, mirroring a faulted PLC
@@ -148,19 +252,33 @@ export class PlcHost {
     // scan): what a part is commanded by, and all a field device sees of a real PLC. Not the whole variable table,
     // for two reasons. The contract: a scene that read an internal variable here would work against this PLC and
     // break against a real one over the wire, and in project tests, which hand parts the outputs alone
-    // (editor/projectTestRunner.ts). checkWiring calls such a read `undriven`, "stays at its zero value", and here
+    // (editor/project/projectTestRunner.ts). checkWiring calls such a read `undriven`, "stays at its zero value", and here
     // it does. A part that should see a variable is wired to it, which binds it as an output (plc/wiring.ts
     // wiredBindings). And the cost: the table lists every array element and UDT member a program holds (thousands
     // of values for a large one). Rebuilt after every scan, it measured five times the scan's own cost on a large
     // line, and 38% of the demo's IEC program's PLC time. The table is for the watch views, and is built when a
     // frame carries one (snapshot()).
-    world.setBehaviorInputTags(driveable(this.#ctl.processImage.outputs))
+    // The link hands back the same table until an output changes (LocalPlcLink), so what the world is given of it
+    // is worked out once per table. Looking through 675 outputs for a STRING on every step cost as much as
+    // building the table had.
+    const image = this.#ctl.processImage.outputs
+    if (image !== this.#drivenFrom) {
+      this.#drivenFrom = image
+      this.#driven = driveable(image)
+    }
+    world.setBehaviorInputTags(this.#driven)
     p.imageMs += performance.now() - t2
   }
 
   /** cumulative split of interleave()'s cost (ms): latching the parts' tag writes in, the scans themselves, and
    *  handing the resulting image back to the world. Shipped as StepStats.plcSplit; window-diff like the rest. */
   readonly perf = { inputsMs: 0, scanMs: 0, imageMs: 0, scans: 0 }
+
+  /** Where the watch table's values are in the controller's memory, when it is one buffer: a frame then carries a
+   *  copy of the bytes and not the table (core/watchTable.ts). Null on the walker engine. */
+  watchPlan(): WatchPlan | null {
+    return this.#link.watchPlan()
+  }
 
   /**
    * current PLC state for the frame payload (fresh objects - safe to structured-clone).
@@ -174,6 +292,13 @@ export class PlcHost {
   snapshot(opts?: { watch?: true }): PlcFrameState
   snapshot(opts?: { watch?: boolean }): PlcFrameWire {
     const { inputs, outputs } = this.#ctl.processImage
-    return { ...(opts?.watch === false ? {} : { watch: this.#ctl.watch }), inputs, outputs, scansRun: this.#engine.scansRun, overruns: this.#engine.overruns }
+    return {
+      ...(opts?.watch === false ? {} : { watch: this.#ctl.watch }),
+      inputs,
+      outputs,
+      scansRun: this.#engine.scansRun,
+      overruns: this.#engine.overruns,
+      scanTimes: this.scanTimes(),
+    }
   }
 }

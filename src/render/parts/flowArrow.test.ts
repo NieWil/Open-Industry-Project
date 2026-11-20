@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Vector3 } from 'three'
-import { createPart } from '../../core/scene'
-import { clearPackages, registerPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { createPart } from '../../core/scene/scene'
+import { clearPackages, registerPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { SdkPart, PartInstance } from '../../core/types'
 import { buildFlowArrow, flowArrowSignature } from './flowArrow'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 // Every conveyor is an SDK (`custom`) part, and the flow arrow routes through the core recognizers. The SDK
 // block below covers the conveyor families (belt/roller/curved/turntable), including the tail-origin centring +

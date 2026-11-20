@@ -3,7 +3,7 @@
 // (conveyors.ts, sensors.ts, …) import from here; the index.ts barrel re-exports
 // everything so the public import path stays `core/types`.
 
-import type { ProgramSpec } from '../partApi'
+import type { ProgramSpec } from '../parts/partApi'
 import { PALLET_BLOCK_HALF, PALLET_BLOCK_OFFSET, PALLET_DECK_THICKNESS, PALLET_POCKET_HEIGHT, PALLET_SIZE } from '../pallet'
 
 // v4: the generic SDK-part discriminant renamed 'custom' -> 'part' (there are no code built-ins, so an SDK
@@ -14,9 +14,9 @@ export const SCENE_VERSION = 4
 export type PartType =
   | 'building'
   | 'group'
-  // A user-authored part imported from a PartPackage (src/core/partPackage.ts). Unlike the container/shell
+  // A user-authored part imported from a PartPackage (src/core/parts/partPackage.ts). Unlike the container/shell
   // meta types, its params are not static PART_DEFS metadata. They come from the referenced package's baked
-  // schema, resolved at runtime via the package registry (src/core/partRegistry.ts). This is the part type:
+  // schema, resolved at runtime via the package registry (src/core/parts/partRegistry.ts). This is the part type:
   // conveyors, devices, structure and cargo are all such parts. Cargo (box, pallet) is a `part` whose package
   // declares `geometry.kind: 'cargo'` - see core/frame.ts cargoView. Stored as 'custom' before v4.
   | 'part'
@@ -65,6 +65,15 @@ export interface BeltGuardOpeningSpec {
 /** wall variant a rule paints (the four wall variants, the dock door, and a personnel door: Wall_D with a shut exit
  *  door in the middle of its ground-floor cell) */
 export type WallVariant = 'A' | 'B' | 'C' | 'D' | 'dock_door' | 'personnel_door'
+export const WALL_VARIANTS: readonly WallVariant[] = ['A', 'B', 'C', 'D', 'dock_door', 'personnel_door']
+/** each whole-number field of a BuildingWallRule: its range and the value loading gives a missing one */
+export const WALL_RULE_NUMBERS = {
+  run: { min: 1, max: 400, absent: 1 },
+  gap: { min: 0, max: 400, absent: 1 },
+  count: { min: 0, max: 100, absent: 0 },
+  start: { min: 0, max: 400, absent: 0 },
+  doorCount: { min: 1, max: 2, absent: 1 },
+} as const
 
 /**
  * One painted run over the perimeter walls. Rules are
@@ -114,7 +123,7 @@ interface PartBaseInternal {
    * "Soft" parenting: positions stay world-space (the sim/renderer are unaffected),
    * but the editor treats the parent + its descendants as a rigid group - moving or
    * rotating a parent carries its subtree, and deleting/duplicating acts on the whole
-   * subtree. References must resolve and stay acyclic (see core/hierarchy).
+   * subtree. References must resolve and stay acyclic (see core/scene/hierarchy).
    */
   parent?: string
   /** world meters; conveying-surface top sits at origin y for conveyors */
@@ -175,7 +184,7 @@ export interface BooleanParamSpec {
    *  SDK's `ParamSpec.whenAbsent`): a new switch must not change what an existing scene's numbers mean */
   whenAbsent?: boolean
   /** the part's units switch, true = imperial (the SDK's `imperialUnits`): set by the scene's Units (SceneJSON
-   *  `units`, core/sceneUnits.ts) on every part, never a field of its own */
+   *  `units`, core/scene/sceneUnits.ts) on every part, never a field of its own */
   imperialUnits?: boolean
 }
 
@@ -257,12 +266,16 @@ export interface TagRefParamSpec {
    * Which way the signal flows: 'in' = the part reads the tag, 'out' = the part writes it. It is the part's
    * declared direction (the SDK's `ParamSpec.dir`), carried through from the package. The wiring check
    * (plc/wiring.ts) reads it to find tags nothing drives and tags two parts both write. Required of an authored
-   * part (core/partAuthoringChecks.ts); absent only on a stored package saved before `dir` existed, which the check
+   * part (core/parts/partAuthoringChecks.ts); absent only on a stored package saved before `dir` existed, which the check
    * reports as `undeclared` rather than skipping.
    */
   dir?: 'in' | 'out'
   /** the ST scalar the tag carries (the SDK's `ParamSpec.stType`) - pairs with {@link dir} */
   stType?: 'BOOL' | 'INT' | 'DINT' | 'REAL'
+  /** the unit of the value the tag carries (the SDK's `ParamSpec.unit`): `'m/s'`, `'FPM'`, `'m'`. A setpoint tag
+   *  that declares none takes its {@link setpointFor} param's. Shown as declared: the program reads and writes the
+   *  value in it, so the scene's Units never convert it. */
+  unit?: string
   /**
    * This tag is an analog setpoint that replaces the named number param while it's bound (the SDK's
    * `setpointFor`): a conveyor's `speedTag` replaces `speed`. The Inspector shows the live commanded
@@ -270,6 +283,9 @@ export interface TagRefParamSpec {
    * scene isn't using. Same units as the target param by contract.
    */
   setpointFor?: string
+  /** the part reads this tag only while a program drives it, and runs on its own setting otherwise (the SDK's
+   *  `onlyWhenDriven`, or `autoWhenDriven`, which implies it). The wiring check words an undriven warning by it. */
+  onlyWhenDriven?: boolean
   /** what each number a code tag carries means (the SDK's `values`), listed on the field */
   values?: { value: number; label: string }[]
 }
@@ -539,7 +555,7 @@ export const DEFAULT_ROTATE_SNAP_DEG = 15
 // adjustable channel guide rail's range.
 export const GUARD_HEIGHT = 0.15
 export const GUARD_THICKNESS = 0.005
-/** a sensor beam's hole through a side guard (core/guardHoles.ts): 40 mm across, the size a real photo-eye is
+/** a sensor beam's hole through a side guard (core/guards/guardHoles.ts): 40 mm across, the size a real photo-eye is
  *  given through a guide rail */
 export const GUARD_HOLE_RADIUS = 0.02
 /** the length of guard sheet a hole's panel replaces: the hole plus a 30 mm margin each side. The guard is split

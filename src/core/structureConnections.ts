@@ -1,9 +1,9 @@
 import type { PartInstance } from './types'
-import type { SnapEdgeMount } from './partApi'
-import { toLocalXZ, toWorldXZ } from './partGeometry'
-import { getPackage } from './partRegistry'
+import type { SnapEdgeMount } from './parts/partApi'
+import { toLocalXZ, toWorldXZ } from './parts/partGeometry'
+import { getPackage } from './parts/partRegistry'
 import { memoizeByParticipants } from './memoParts'
-import { edgeMountContact } from './snapConnectors'
+import { edgeMountContact } from './snap/snapConnectors'
 
 /**
  * Geometry-derived structure connections between a part that meets a deck edge and the deck's host (the

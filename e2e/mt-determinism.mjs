@@ -32,7 +32,7 @@ async function main() {
 
     await page.evaluate(async () => {
       const { SimWorld } = await import('/src/sim/world.ts')
-      const { registerPackage } = await import('/src/core/partRegistry.ts')
+      const { registerPackage } = await import('/src/core/parts/partRegistry.ts')
       const { SCENE_VERSION } = await import('/src/core/types/index.ts')
       window.__mt = { SimWorld, registerPackage, SCENE_VERSION }
     })

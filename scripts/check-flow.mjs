@@ -1,5 +1,5 @@
 // What physically happens on a project's line: run its scene and its own program headless and list the FLOW FACTS
-// (src/core/flowFacts.ts, docs/project-tests.md "Flow facts") - boxes dropped to the floor or lost off the world,
+// (src/core/flow/flowFacts.ts, docs/project-tests.md "Flow facts") - boxes dropped to the floor or lost off the world,
 // boxes tipped, sensor beams flickering (with the tags that toggled), boxes sitting still on a running conveyor.
 //
 //   npm run check-flow -- <project-folder> [--seconds 30] [--input <tag>=<value>[@<t>]]... [--json]
@@ -65,9 +65,9 @@ const vite = await createServer({
 
 try {
   await declareBuiltIns(vite)
-  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/projectFolder.ts')
-  const { runProjectTest } = await vite.ssrLoadModule('/src/editor/projectTestRunner.ts')
-  const { FLOW_FACT_KINDS, summarizeFlowFacts } = await vite.ssrLoadModule('/src/core/flowFacts.ts')
+  const { folderFilesToProject } = await vite.ssrLoadModule('/src/core/project/projectFolder.ts')
+  const { runProjectTest } = await vite.ssrLoadModule('/src/editor/project/projectTestRunner.ts')
+  const { FLOW_FACT_KINDS, summarizeFlowFacts } = await vite.ssrLoadModule('/src/core/flow/flowFacts.ts')
   const { validatePart, formatPartDiagnostics } = await vite.ssrLoadModule('/src/sim/validatePart.ts')
   const initJolt = (await vite.ssrLoadModule('jolt-physics')).default
   const bakePart = (manifestJson, behaviorJs) => {

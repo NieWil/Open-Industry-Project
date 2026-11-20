@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { evalPartGeometry } from '../../core/geometryEval'
-import { arrayInstanceDeltas, linkHalfExtents, resolvedOffset, restQuatOf, IDENTITY_QUAT } from '../../core/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import { arrayInstanceDeltas, linkHalfExtents, resolvedOffset, restQuatOf, IDENTITY_QUAT } from '../../core/rig/rigPose'
 import { examplePart, type RigGeo } from './examplePart'
 const { geometry: STAIRS_RIG, behavior: STAIRS_BEHAVIOR } = examplePart<RigGeo>('oip.stairs')
 

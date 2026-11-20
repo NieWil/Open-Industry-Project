@@ -31,7 +31,7 @@ export function listedTestPaths(root) {
  * Every test of a loaded project folder. A project whose manifest CARRIES its tests is the source of truth (they
  * arrive validated with the document); a `tests/*.test.json` the manifest does not list runs too, marked `unlisted`
  * (the app runs only the listed ones), and all of them when it lists none. A folder from before a project held one
- * scene splits on read (core/project.ts `splitOff`): each carried test stays with the project it names.
+ * scene splits on read (core/project/project.ts `splitOff`): each carried test stays with the project it names.
  *
  * Each test is named by its FILE where it has one (`sort.test.json`), so two tests whose display names share a word
  * stay apart. Returns `all` ({ name, spec, project, file?, unlisted? }) and `bad` ({ file, lines }: specs that
@@ -40,7 +40,7 @@ export function listedTestPaths(root) {
  * @param {{ project: any, splitOff?: any[] }} loaded  folderFilesToProject's result
  * @param {string[]} listed  listedTestPaths(root)
  * @param {{ name: string, text: string }[]} files  readTestSpecs(root)
- * @param {(data: unknown) => { ok: true, spec: any } | { ok: false, errors: string[] }} validateTestSpec  core/projectTest.ts
+ * @param {(data: unknown) => { ok: true, spec: any } | { ok: false, errors: string[] }} validateTestSpec  core/project/projectTest.ts
  */
 export function collectTests(loaded, listed, files, validateTestSpec) {
   const projects = [loaded.project, ...(loaded.splitOff ?? [])]

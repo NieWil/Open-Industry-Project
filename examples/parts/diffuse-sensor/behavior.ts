@@ -155,7 +155,6 @@ definePart({
     showBeam: { type: 'boolean', default: true, label: 'Show beam', desc: 'Draw the beam line in the viewport. A viewing aid only - hiding it does not change what the sensor detects.' },
     normallyClosed: { type: 'boolean', default: false, label: 'Normally closed (inverts the signal)', desc: 'Invert the output, so the tag reads true when NOTHING is detected. The beam colour still follows the real detection, not the inverted signal.' },
     mark: { type: 'string', suggest: 'marks', default: '', label: 'Only marked targets', desc: 'Count a target only if a machine upstream left this mark on it (wrapped, or a label a labeller wrote). Empty: anything in the beam counts. This is how a program checks a product, not just its presence - a load that was never wrapped reads as clear.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
     tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Presence tag', group: 'Comms', desc: 'Where the photoeye publishes presence for the program to read. Whether true means blocked or clear is set by Normally closed above.' },
   },
   // The housing, drawn: a body with a chamfered lower back and two mounting holes, the lens window on the face,
@@ -187,14 +186,19 @@ definePart({
     }
     return out
   },
-  step(ctx) {
+  react(ctx) {
     // the host casts the beam out to the maxRange param (its rangeParam); the gate below keeps that explicit
     const s = ctx.sense('lens')
     const want = ctx.params.mark
     const present = s.hit && s.distance <= ctx.params.maxRange && (!want || (!!s.marks && !!s.marks[want]))
+    // a PLC that drives this tag is watching a real eye (Watch only): the LED shows what that eye reports
+    if (ctx.params.tag && ctx.tagDriven(ctx.params.tag)) {
+      ctx.lamps.led = ctx.readTag(ctx.params.tag) !== !!ctx.params.normallyClosed
+      return
+    }
     ctx.lamps.led = present // raw presence, not the NC-inverted output
     let out = present
     if (ctx.params.normallyClosed) out = !out // NC: de-energized (no cargo) reads true
-    if (ctx.params.enableComms && ctx.params.tag) ctx.writeTag(ctx.params.tag, out)
+    if (ctx.params.tag) ctx.writeTag(ctx.params.tag, out)
   },
 })

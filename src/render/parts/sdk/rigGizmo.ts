@@ -1,34 +1,46 @@
 import { Quaternion, Vector3 } from 'three'
 import type { Group, Object3D } from 'three'
 import { clamp } from '../../../core/math'
-import type { ParamValue } from '../../../core/partApi'
-import type { PartPackage, RigJoint, Vec3Tuple } from '../../../core/partPackage'
+import { dampedStep } from '../../../core/robot/robotIk'
+import type { ParamValue } from '../../../core/parts/partApi'
+import type { PartPackage, RigJoint, Vec3Tuple } from '../../../core/parts/partPackage'
 import type { RobotGizmoApi, RobotGizmoJoint, RobotGizmoLayout } from '../../api'
 
 // ---- rig editor gizmo (a robot's joint rings + IK handle, generalized to any rig) -------------
 // Reads the joint chain from the rig geometry and poses its own visual (the custom rig has no j1..j6
 // params): a drag updates a held pose map applied via the shared FK (applyJoints), so the arm stays put at
-// idle. Up to 6 joints get rings (J1-J6); the EE handle drags the tip via CCD IK, keeping the tool's
-// orientation unless the drag asks to be free.
+// idle. Up to 8 joints get rings (J1-J8), the tool's chain first; the EE handle drags the tool link (`tool`, else the
+// last posable joint's link) by damped least squares over the joints between the root and that link, keeping the
+// tool's orientation unless the drag asks to be free.
 // It draws nothing itself: `layout()` reports where the rings and handles go in world space, and the view's
 // RigGizmoOverlay draws them in the always-on-top overlay pass at a constant size on screen, the way the
 // transform gizmo and resize dots are drawn. Hung inside the part, they would be in its render bundle, scale
 // with the world (unpickable from a distance) and draw as 1 px lines.
-const GIZMO_MAX = 6
+// a 7-joint arm and its gripper
+const GIZMO_MAX = 8
 
-/** the author-posable joints; cosmetic (self-driven) joints are invisible to the gizmo + the idle `pose` row */
+/** the author-posable joints; cosmetic (self-driven) and mimic (following) joints are invisible to the gizmo + the idle
+ *  `pose` row */
 export function posableJoints(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>): RigJoint[] {
-  return geo.joints.filter((j) => !j.cosmetic)
+  return geo.joints.filter((j) => !j.cosmetic && !j.mimic)
 }
-const IK_ITERATIONS = 16
-const IK_TOLERANCE = 0.01
-const ORIENT_ITERATIONS = 20
+/** damped least squares steps per pointer move */
+const IK_ITERATIONS = 60
+/** done when the tool is this close (m), and turned less than ORIENT_TOLERANCE when its orientation is held */
+const IK_TOLERANCE = 0.001
 const ORIENT_TOLERANCE = 1e-3 // rad
-/** position-then-orientation rounds for an orientation-holding drag */
-const IK_ROUNDS = 4
+/** metres one radian of orientation error weighs against position error: about a tool's reach */
+const ORIENT_WEIGHT = 0.25
+/** the damping (m): a pose near a singularity takes a short, smooth step instead of a huge one */
+const IK_DAMPING = 0.02
+/** the largest change one step makes to a joint (rad, or m for a prismatic joint) */
+const IK_MAX_STEP = 0.2
+/** a chain this long, three of it revolute, can turn the tool to any orientation, so a drag holds it */
+const ORIENT_DOF = 6
 /** a joint pivot this close to the part origin (part-local metres) shares its spot with the transform gizmo */
 const ORIGIN_SHARED = 0.05
 const _q = new Quaternion()
+const _s = new Vector3()
 
 export interface RigGizmo {
   api: RobotGizmoApi
@@ -37,6 +49,9 @@ export interface RigGizmo {
   /** track the rigSize handles + tool outline at the (default-resolved) param values; absent when the
    *  package declares no rigSize handles */
   setSizes?(params: Record<string, ParamValue>): void
+  /** drag the end-effector by this link from now on (a robot's grip point, which follows the tool it carries); a
+   *  link the rig lacks is ignored */
+  setEnd(link: string): void
 }
 
 /** a unit vector perpendicular to `a` (the ring's angle-0 reference in the link's frame) */
@@ -51,6 +66,9 @@ export function buildRigGizmo(
   linkGroups: Map<string, Group>,
   applyJoints: (joints: Record<string, number>) => void,
   paramSpecs: PartPackage['params'],
+  /** the link the end-effector handle drags: a robot's grip point (core robotKinematics `end`). Else the rig's `tool`,
+   *  else the last posable joint's link */
+  end?: string,
 ): RigGizmo | null {
   // opt-in: the in-scene teach-by-pose gizmo shows only for rigs that declare `posable` (manipulators you hand-
   // teach - robot / gantry / AGV lift). A rig whose joints are sim/PLC-driven (safety gate, diverter, blade-stop,
@@ -59,19 +77,20 @@ export function buildRigGizmo(
   // cosmetic joints (self-driven dressing - wheels, ratio pistons) are not author-posable: no ring, never the EE
   const posable = posableJoints(geo)
   if (posable.length === 0) return null
-  const shown = posable.slice(0, GIZMO_MAX)
-  const eeGroup = linkGroups.get(posable[posable.length - 1]!.link)
-  if (!eeGroup) return null
-  // A three-joint revolute wrist at the end of a longer arm (a six-axis robot's J4-J6) lets an end-effector drag keep
-  // the tool's orientation: the joints before it place the wrist centre, the pivot of the wrist's middle joint, and
-  // the wrist turns the tool. Anything else (a gantry, an AGV lift) drags the tool point alone.
-  const wristCentre = (() => {
-    if (posable.length < 6) return null
-    const wrist = posable.slice(-3)
-    const group = linkGroups.get(wrist[1]!.link)
-    if (!group || wrist.some((j) => j.type !== 'revolute')) return null
-    return { arm: posable.slice(0, -3), wrist, group }
-  })()
+  const firstEnd = (end !== undefined ? linkGroups.get(end) : undefined) ?? (geo.tool !== undefined ? linkGroups.get(geo.tool) : undefined) ?? linkGroups.get(posable[posable.length - 1]!.link)
+  if (!firstEnd) return null
+  let eeGroup: Group = firstEnd
+  // The joints the IK moves: those whose link is the tool's or one above it, root first. A gripper's fingers branch
+  // off beside the tool and keep their place. A tool under none of them (a misplaced `tool`) moves them all.
+  const depth = (o: Object3D): number => { let d = 0; for (let p = o.parent; p && p !== root; p = p.parent) d++; return d }
+  const above = new Set<Object3D>()
+  for (let o: Object3D | null = eeGroup; o && o !== root; o = o.parent) above.add(o)
+  const onPath = posable.filter((j) => { const g = linkGroups.get(j.link); return g !== undefined && above.has(g) })
+  const ik = (onPath.length ? onPath : posable).slice().sort((a, b) => depth(linkGroups.get(a.link)!) - depth(linkGroups.get(b.link)!))
+  const shown = [...ik, ...posable.filter((j) => !ik.includes(j))].slice(0, GIZMO_MAX)
+  // An end-effector drag keeps the tool's orientation when the chain can turn it every way: six joints, three of them
+  // revolute (a six-axis robot, a 7-joint arm). Anything less (a gantry, an AGV lift) drags the tool point alone.
+  const holdsOrientation = ik.length >= ORIENT_DOF && ik.filter((j) => j.type === 'revolute').length >= 3
   // Recompose the rig's world matrices from TRS before a read. Posable rigs are matrix-frozen
   // (matrixAutoUpdate=false subtree, viewMatrices.ts syncMatrixFreeze), so a plain updateMatrixWorld(true)
   // would multiply stale local matrices after applyJoints moved a link's TRS; updateMatrix() must
@@ -133,14 +152,13 @@ export function buildRigGizmo(
     applyJoints(pose)
   }
 
-  // The links IK reads: every joint link, the wrist centre and the tool, with their ancestors up to the part, in
-  // parent-first order. An IK step changes one joint and reads only these, so it recomposes these alone (a few
-  // matrices) instead of the whole model (refreshWorld), which matters at a few hundred steps per pointer move.
+  // The links IK reads: every joint link and the tool, with their ancestors up to the part, in parent-first order. An
+  // IK step reads only these, so it recomposes these alone (a few matrices) instead of the whole model (refreshWorld),
+  // which matters at sixty steps per pointer move.
   const chain: Object3D[] = (() => {
     const set = new Set<Object3D>()
-    const ends = [eeGroup, ...shown.map((j) => linkGroups.get(j.link)), wristCentre?.group].filter((g): g is Group => g !== undefined)
+    const ends = [eeGroup, ...shown.map((j) => linkGroups.get(j.link))].filter((g): g is Group => g !== undefined)
     for (const end of ends) for (let o: Object3D | null = end; o && o !== root; o = o.parent) set.add(o)
-    const depth = (o: Object3D): number => { let d = 0; for (let p = o.parent; p && p !== root; p = p.parent) d++; return d }
     return [...set].sort((a, b) => depth(a) - depth(b))
   })()
   const refreshChain = (): void => {
@@ -152,86 +170,80 @@ export function buildRigGizmo(
     }
   }
 
-  // CCD toward a world point: turn each joint, tip to base, so `tip` swings toward `target` about the joint's axis
-  const ccdPosition = (joints: readonly RigJoint[], tip: Object3D, target: Vector3): void => {
-    for (let iter = 0; iter < IK_ITERATIONS; iter++) {
-      refreshChain()
-      if (tip.getWorldPosition(new Vector3()).distanceTo(target) < IK_TOLERANCE) return
-      for (let k = joints.length - 1; k >= 0; k--) {
-        const j = joints[k]!
-        const g = linkGroups.get(j.link)!
-        const pivot = g.getWorldPosition(new Vector3())
-        const axis = worldAxis(g, j.axis)
-        // both arms projected onto the joint's plane (a mutated `tip` re-subtracted here once made the
-        // error scale with the part's distance from the world origin)
-        const toTip = tip.getWorldPosition(new Vector3()).sub(pivot)
-        toTip.addScaledVector(axis, -toTip.dot(axis))
-        const toTgt = target.clone().sub(pivot)
-        toTgt.addScaledVector(axis, -toTgt.dot(axis))
-        if (toTip.lengthSq() < 1e-4 || toTgt.lengthSq() < 1e-4) continue
-        toTip.normalize()
-        toTgt.normalize()
-        let ang = Math.acos(clamp(toTip.dot(toTgt), -1, 1))
-        if (toTip.clone().cross(toTgt).dot(axis) < 0) ang = -ang
-        pose[j.name] = clamp((pose[j.name] ?? 0) + ang, j.min, j.max)
-        applyJoints(pose)
-        refreshChain()
-      }
-    }
-  }
-
-  // CCD toward a world orientation: each joint takes the part of the remaining error rotation that turns about its
-  // own axis (the twist of the error about that axis), tool to base
-  const ccdOrientation = (joints: readonly RigJoint[], want: Quaternion): void => {
-    const err = new Quaternion()
-    for (let iter = 0; iter < ORIENT_ITERATIONS; iter++) {
-      refreshChain()
-      err.copy(want).multiply(eeGroup.getWorldQuaternion(_q).invert())
-      if (err.w < 0) err.set(-err.x, -err.y, -err.z, -err.w)
-      if (2 * Math.acos(Math.min(1, err.w)) < ORIENT_TOLERANCE) return
-      for (let k = joints.length - 1; k >= 0; k--) {
-        const j = joints[k]!
-        const g = linkGroups.get(j.link)!
-        const axis = worldAxis(g, j.axis)
-        err.copy(want).multiply(eeGroup.getWorldQuaternion(_q).invert())
-        if (err.w < 0) err.set(-err.x, -err.y, -err.z, -err.w)
-        const twist = 2 * Math.atan2(err.x * axis.x + err.y * axis.y + err.z * axis.z, err.w)
-        pose[j.name] = clamp((pose[j.name] ?? 0) + twist, j.min, j.max)
-        applyJoints(pose)
-        refreshChain()
-      }
-    }
-  }
-
-  // What an end-effector drag holds, taken when it starts: the tool's orientation, and where the tool sits from the
-  // wrist centre (fixed while that orientation is, on a wrist whose axes meet at one point)
-  let held: { orientation: Quaternion; toolFromWrist: Vector3 } | null = null
+  // The tool orientation an end-effector drag holds, taken when it starts
+  let held: Quaternion | null = null
   const beginIK = (): void => {
     refreshChain()
-    held = wristCentre
-      ? {
-          orientation: eeGroup.getWorldQuaternion(new Quaternion()),
-          toolFromWrist: eeGroup.getWorldPosition(new Vector3()).sub(wristCentre.group.getWorldPosition(new Vector3())),
-        }
-      : null
+    held = holdsOrientation ? eeGroup.getWorldQuaternion(new Quaternion()) : null
   }
 
-  // IK toward a world target for the tool. By default the tool keeps the orientation it had when the drag began:
-  // the arm joints put the wrist centre where the tool needs it, then the wrist joints turn the tool back to that
-  // orientation (a few rounds, since a wrist at its limits can leave the centre short). `free` (or a rig without a
-  // three-joint wrist) moves the tool point alone over every gizmo joint, letting the wrist turn as it likes.
+  // IK toward a world target for the tool, by damped least squares over the chain: each step solves
+  // dq = Jᵀ (J Jᵀ + λ² I)⁻¹ e for the joint change that best closes the error e, with J each joint's effect on the tool
+  // (a revolute joint moves the tool by axis × (tool - pivot) and turns it about the axis; a prismatic one slides it
+  // along the axis). It makes no assumption about the arm's shape, so an offset wrist (a UR arm) or a seventh joint
+  // works as a six-axis arm does. By default the tool keeps the orientation it had when the drag began; `free` (or a
+  // chain that cannot turn the tool every way) moves the tool point alone.
   const solveIK = (target: Vector3, free = false): number[] => {
     dragged = true
-    if (free || !held || !wristCentre) {
-      ccdPosition(shown, eeGroup, target)
-    } else {
-      const wristTarget = target.clone().sub(held.toolFromWrist)
-      for (let round = 0; round < IK_ROUNDS; round++) {
-        ccdPosition(wristCentre.arm, wristCentre.group, wristTarget)
-        ccdOrientation(wristCentre.wrist, held.orientation)
-        refreshChain()
-        if (eeGroup.getWorldPosition(new Vector3()).distanceTo(target) < IK_TOLERANCE) break
+    const hold = !free && held !== null
+    const rows = hold ? 6 : 3
+    const n = ik.length
+    const J = new Float64Array(rows * n)
+    const e = new Float64Array(rows)
+    const tool = new Vector3()
+    const err = new Quaternion()
+    for (let iter = 0; iter < IK_ITERATIONS; iter++) {
+      refreshChain()
+      eeGroup.getWorldPosition(tool)
+      e[0] = target.x - tool.x
+      e[1] = target.y - tool.y
+      e[2] = target.z - tool.z
+      let turn = 0
+      if (hold) {
+        // the rotation still to make, as an axis × angle, weighed in metres
+        err.copy(held!).multiply(eeGroup.getWorldQuaternion(_q).invert())
+        if (err.w < 0) err.set(-err.x, -err.y, -err.z, -err.w)
+        turn = 2 * Math.acos(Math.min(1, err.w))
+        const s = Math.sqrt(Math.max(0, 1 - err.w * err.w))
+        const k = s > 1e-9 ? (turn / s) * ORIENT_WEIGHT : 2 * ORIENT_WEIGHT
+        e[3] = err.x * k
+        e[4] = err.y * k
+        e[5] = err.z * k
       }
+      if (Math.hypot(e[0]!, e[1]!, e[2]!) < IK_TOLERANCE && turn < ORIENT_TOLERANCE) break
+      for (let c = 0; c < n; c++) {
+        const j = ik[c]!
+        const g = linkGroups.get(j.link)!
+        const axis = worldAxis(g, j.axis)
+        if (j.type === 'revolute') {
+          const r = tool.clone().sub(g.getWorldPosition(new Vector3()))
+          const v = axis.clone().cross(r)
+          J[c] = v.x
+          J[n + c] = v.y
+          J[2 * n + c] = v.z
+          if (hold) {
+            J[3 * n + c] = axis.x * ORIENT_WEIGHT
+            J[4 * n + c] = axis.y * ORIENT_WEIGHT
+            J[5 * n + c] = axis.z * ORIENT_WEIGHT
+          }
+        } else {
+          // a slide of d in the joint's units moves the tool d times the part's scale in the world
+          const k = g.getWorldScale(_s).x
+          J[c] = axis.x * k
+          J[n + c] = axis.y * k
+          J[2 * n + c] = axis.z * k
+          if (hold) J[3 * n + c] = J[4 * n + c] = J[5 * n + c] = 0
+        }
+      }
+      const dq = dampedStep(J, e, rows, n, IK_DAMPING)
+      let big = 0
+      for (let c = 0; c < n; c++) big = Math.max(big, Math.abs(dq[c]!))
+      const scale = big > IK_MAX_STEP ? IK_MAX_STEP / big : 1
+      for (let c = 0; c < n; c++) {
+        const j = ik[c]!
+        pose[j.name] = clamp((pose[j.name] ?? 0) + dq[c]! * scale, j.min, j.max)
+      }
+      applyJoints(pose)
     }
     return shown.map((j) => ((pose[j.name] ?? 0) * 180) / Math.PI)
   }
@@ -322,6 +334,12 @@ export function buildRigGizmo(
   return {
     api,
     ...(setSizes ? { setSizes } : {}),
+    // A robot's grip point moves when its tool changes (an arm's own hand or a tool in its place). The IK chain stays
+    // the one found above: both grip points hang from the same arm joints.
+    setEnd: (link: string) => {
+      const g = linkGroups.get(link)
+      if (g) eeGroup = g
+    },
     // Apply the authored idle pose at rest. Until the gizmo is dragged, the pose is the idle pose (so the rig
     // shows e.g. the robot's home configuration, not the zero pose). After a drag, the dragged pose persists
     // and re-applies here until the idle pose itself changes; the running sim overrides it each frame via

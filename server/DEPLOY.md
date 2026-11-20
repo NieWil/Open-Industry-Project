@@ -157,7 +157,7 @@ scp 'azureuser@<ip>:/var/lib/oip-collab/backups/*' ./                # pull them
 (Off-box copies are still your job - pull one periodically or add an azcopy-to-blob line
 to `backup.sh` if the VM ever holds data you can't lose.)
 
-**Before removing an entry from `RETIRED_SHAPE_KINDS`** (`src/core/partPackage.ts`): rooms outlive
+**Before removing an entry from `RETIRED_SHAPE_KINDS`** (`src/core/parts/partUpgrade.ts`): rooms outlive
 the build that wrote them, and once an entry is gone a room still holding that kind fails to load. Pull a fresh
 backup and let the repo judge it (grace period read from git, every stored room AND snapshot decoded):
 ```bash

@@ -65,7 +65,7 @@ try {
   })
   if (!pick) throw new Error('the demo has no placed built-in part')
   const card = page.locator(`.catalog-card:has([data-package-id="${pick.id}"])`)
-  const badge = card.locator('[data-testid="catalog-builtin-updated"]')
+  const badge = card.locator('[data-testid="part-update"][data-source="app"]')
   await page.locator('.catalog-search').fill(pick.name)
 
   // ── an in-app edit makes this project's version, recording where it came from ─────────────────────
@@ -76,19 +76,20 @@ try {
   check('an in-app edit of a built-in applies', errs.length === 0, JSON.stringify(errs))
   const mine = await state(pick.id)
   check("it becomes this project's version, recording which built-in it was made from", mine.inLibrary && !!mine.fromApp, JSON.stringify(mine.fromApp))
-  check('no Updated badge while the built-in is unchanged', (await badge.count()) === 0)
+  check('no Update badge while the built-in is unchanged', (await badge.count()) === 0)
 
   // ── the app ships a changed built-in: the catalog says so, and Keep stops the question ───────────
   await shipUpdate(pick.id, 'app v2')
   await badge.waitFor({ timeout: 10000 })
-  check('the catalog card says Updated', await badge.isVisible())
+  check('the catalog card offers the update', await badge.isVisible())
   check("...and this project still uses its own version", (await state(pick.id)).behavior.includes("this project's change"))
   await page.evaluate((id) => window.__oip.store.select(id), pick.partId)
   const inspector = page.locator('[data-testid="inspector-builtin-updated"]')
   await inspector.waitFor({ timeout: 10000 })
   check('the Inspector asks the same question on a placed copy', (await inspector.innerText()).includes('has been updated'))
   await badge.click()
-  await page.locator('.ctx-item', { hasText: "Keep this project's version" }).click()
+  // the card's badge asks in the change dialog, with the app's second answer beside Update
+  await page.locator('[data-testid="part-change-dialog"] [data-testid="part-change-alternative"]').click()
   await badge.waitFor({ state: 'detached', timeout: 10000 })
   check('Keep: the badge goes', (await badge.count()) === 0)
   check('...the Inspector stops asking', (await inspector.count()) === 0)

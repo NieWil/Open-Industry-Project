@@ -20,8 +20,8 @@ export const PARAM_DESC: Record<string, string> = {
   // built-in rows (apply to every part type; looked up unqualified)
   '_name': 'Display name in the scene tree',
   '_visible': 'Hide the visuals (the part still collides and simulates)',
-  '_position': 'Local position, meters',
-  '_rotation': 'Local rotation (YXZ Euler), degrees',
+  '_position': 'World position. Type "+= 600mm" or "-= 2" to move the selection and its children by that much',
+  '_rotation': 'Rotation (YXZ Euler), degrees. Type "+= 90" in Y to turn the selection about its centre',
 
   // building
   'building.lengthSections': 'Footprint along local X, in 10 m grid sections',

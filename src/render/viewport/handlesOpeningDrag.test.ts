@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PerspectiveCamera, Ray, Vector3 } from 'three'
-import { clearPackages, registerPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { clearPackages, registerPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { SdkPart } from '../../core/types'
 import type { GuardOpeningHandle, ScreenProjector } from '../api'
 import { examplePart, type RigGeo } from '../parts/examplePart'
 import { ResizeHandles } from './handles'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 // The guard-openings gizmo (G) reads the pointer off each guard wall, the line its dots sit on. Grabbing a dot
 // must read back that dot's own row value from any viewpoint. On an inclined straight bed, a drag computed on a
@@ -30,7 +30,7 @@ const rollerPkg = {
   geometry,
 } as unknown as PartPackage
 
-// the belt's path handle is what makes a part belt-like (partGeometry.beltLikeView); the shipped belt declares it so
+// the belt's path handle is what makes a part belt-like (a path bed, conveyorBeds.ts); the shipped belt declares it so
 const belt0 = examplePart('oip.belt-conveyor')
 const beltPkg = {
   format: PACKAGE_FORMAT,

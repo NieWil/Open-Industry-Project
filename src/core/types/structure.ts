@@ -24,7 +24,7 @@ export interface BuildingParams {
   /** stacked full-wall layers; eave = n*FULL_WALL */
   heightSections: number
   /**
-   * Interior column grid pitch, in sections (core/buildingColumns.ts). 0 = clear span, no interior columns.
+   * Interior column grid pitch, in sections (core/building/buildingColumns.ts). 0 = clear span, no interior columns.
    * Optional in the type because documents saved before it existed lack it; loading fills the default.
    */
   columnSpacing?: number

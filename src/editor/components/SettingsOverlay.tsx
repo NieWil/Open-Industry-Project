@@ -1,12 +1,18 @@
-import { Fragment, useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { agentDoorApi, onAgentDoorReveal, takeAgentDoorReveal, type AgentDoorState } from '../agent/desktopAgent'
+import { collabServerPref, defaultCollabUrl, isCollabServerUrl, setCollabServerPref } from '../../collab/collabServer'
 import type { ReactElement } from 'react'
 import {
   activeKeymap,
+  bindingMatches,
   chordFromEvent,
   DEFAULT_KEYMAP,
   formatChord,
   isRebound,
   KEY_GROUPS,
+  keyGroupLabel,
+  keyHintText,
+  keyLabel,
   keymapRev,
   subscribeKeymap,
   type KeyBinding,
@@ -24,7 +30,7 @@ import {
   type RendererPref,
   type ShadowQuality,
 } from '../../render/quality'
-import { blockedRoomCount, forgetBlockedRooms, forgetTrustedRooms, trustedRoomCount } from '../../collab/codeTrust'
+import { forgetTrustedRooms, trustedRoomCount } from '../../collab/codeTrust'
 import { getDisplayName, setDisplayName } from '../../collab/session'
 import { appearancePref, setAppearancePref, type Appearance } from '../appearance'
 import { browserLanguage, languagePref, ownLanguageName, setLanguagePref, translatorSupported, type LanguagePref } from '../autoTranslate'
@@ -40,9 +46,11 @@ import {
   officialLibrariesOff,
   setLibraryUrls,
   setOfficialLibraryOn,
-} from '../partLibraryUrls'
-import type { EditorState, EditorStore } from '../store'
+} from '../parts/partLibraryUrls'
+import type { EditorState, EditorStore } from '../store/store'
 import { CloseIcon } from './toolbarIcons'
+import { getShelfApi } from '../parts/partShelf'
+import { refreshShelf, useShelf } from '../parts/shelfListing'
 import { defineMessages, t, type MessageId } from '../../core/i18n'
 import { tNodes } from '../i18nNodes'
 
@@ -102,34 +110,46 @@ const M = defineMessages('settings', {
   reloadNow: 'Reload now',
   liveEditing: 'Live editing',
   yourName: 'Your name',
-  yourNameHint: 'shown to others in a live session; empty shows an animal',
+  yourNameHint: 'shown to others in a shared project; empty shows an animal',
+  collabServer: 'Collaboration server',
+  collabServerHint: "where the rooms you start are kept, as ws:// or wss://; empty uses the Open Industry Project's server. Links you share name it.",
+  collabServerBad: 'not a ws:// or wss:// address, so the default server stays',
   namePlaceholder: 'shown to collaborators',
-  trustedRooms: 'Rooms allowed to run part code',
+  trustedRooms: 'Shared projects allowed to run part code',
   trustedHint: {
-    one: '{count} room; forgotten rooms ask again when next opened',
-    other: '{count} rooms; forgotten rooms ask again when next opened',
+    one: '{count} shared project; a forgotten one asks again when next opened',
+    other: '{count} shared projects; a forgotten one asks again when next opened',
   },
   forgetAll: 'Forget all',
-  blockedRooms: 'Rooms with part code blocked',
-  blockedHint: {
-    one: '{count} room; unblocked rooms run their code sandboxed again',
-    other: '{count} rooms; unblocked rooms run their code sandboxed again',
-  },
-  unblockAll: 'Unblock all',
   partLibraries: 'Part libraries',
   officialLibraries: 'Official libraries',
   noneYet: 'none published yet',
   officialLibrary: 'official library',
   remove: 'Remove',
   addLibrary: 'Add a library',
-  addLibraryHint: "a team's library or a mirror: the address of its index.json",
+  addLibraryHint: "another publisher's library or a mirror: the address of its index.json",
+  addLibraryHintShelf: "another publisher's library or a mirror: the address of its index.json. A team shares its own parts on the parts shelf, below.",
   reading: 'Reading…',
   add: 'Add',
+  partsShelf: 'Parts shelf',
+  shelfFolder: 'Folder',
+  shelfFolderHint: 'parts kept outside any project, for every project to place and update from. A shared drive or a git repository lets a team work from one set.',
+  shelfNotRead: 'not read yet',
+  showFolder: 'Show folder',
+  changeFolder: 'Change folder…',
+  agentConnections: 'Agent connections',
+  allowAgents: 'Allow AI agents to connect',
+  allowAgentsHint: 'lets an AI agent on this computer edit and run the open project. Any program on this computer can connect while it is on.',
+  agentCouldNotStart: 'Agent connections could not start: {error}',
+  agentUrl: 'Server address',
+  agentUrlHint: 'give this to your agent as an MCP server',
   keysIntro:
     "Tools, snapping and fly/walk movement follow each key's {position}, so the clusters stay put on an AZERTY or QWERTZ keyboard. {ctrl} shortcuts follow the printed letter, the way every other app does it. Click a shortcut to change it.",
   position: 'position',
   alreadyBound: '{chord} is already {label}',
   restoreAll: 'Restore all defaults',
+  searchShortcuts: 'Search shortcuts',
+  noShortcutMatch: 'No shortcut matches “{query}”',
   pressKey: 'Press a key…',
   escapeFixed: 'Escape always means back out; it cannot be rebound',
   clickToChange: 'Click to change',
@@ -369,6 +389,10 @@ function PreferencesSection({ store, state }: { store: EditorStore; state: Edito
 
       <PartLibrariesGroup />
 
+      <PartsShelfGroup />
+
+      <AgentConnectionsGroup />
+
       <section className="settings-group">
         <h3>{t(M.graphics)}</h3>
         {/* First, because this is the instrument you read while turning the two knobs below it, and
@@ -449,11 +473,14 @@ function PreferencesSection({ store, state }: { store: EditorStore; state: Edito
  * The name is also in the Share popover, but that popover is not offered on a view link, so this is where someone
  * watching a room sets a name instead of the default animal. The trust answers ("allow this room's code") are
  * remembered for good, and a security decision needs a way to take it back; this is it. They are shown as counts
- * because a room's stored name is a hash of its secret (codeTrust.ts).
+ * because a room's stored name is a hash of its secret (codeTrust.ts). Only a browser where the part sandbox could
+ * not start stores an answer, so the row shows only when there is one.
  */
 function LiveEditingGroup(): ReactElement {
   const [trusted, setTrusted] = useState(() => trustedRoomCount())
-  const [blocked, setBlocked] = useState(() => blockedRoomCount())
+  // decided once per open, so Forget all greys the button out instead of removing the row under the pointer
+  const [listTrusted] = useState(trusted > 0)
+  const [serverBad, setServerBad] = useState(false)
   return (
     <section className="settings-group">
       <h3>{t(M.liveEditing)}</h3>
@@ -472,34 +499,41 @@ function LiveEditingGroup(): ReactElement {
           }}
         />
       </Row>
-      <Row label={t(M.trustedRooms)} hint={t(M.trustedHint, { count: trusted })}>
-        <button
-          type="button"
-          className="setting-button"
-          data-testid="setting-forget-trusted"
-          disabled={trusted === 0}
-          onClick={() => {
-            forgetTrustedRooms()
-            setTrusted(trustedRoomCount())
+      <Row label={t(M.collabServer)} hint={serverBad ? t(M.collabServerBad) : t(M.collabServerHint)}>
+        <input
+          className="setting-input"
+          data-testid="setting-collab-server"
+          type="text"
+          maxLength={256}
+          placeholder={defaultCollabUrl()}
+          defaultValue={collabServerPref() ?? ''}
+          onChange={(e) => {
+            const v = e.target.value.trim()
+            const ok = v === '' || isCollabServerUrl(v)
+            setServerBad(!ok)
+            if (ok) setCollabServerPref(v === '' ? null : v)
           }}
-        >
-          {t(M.forgetAll)}
-        </button>
-      </Row>
-      <Row label={t(M.blockedRooms)} hint={t(M.blockedHint, { count: blocked })}>
-        <button
-          type="button"
-          className="setting-button"
-          data-testid="setting-forget-blocked"
-          disabled={blocked === 0}
-          onClick={() => {
-            forgetBlockedRooms()
-            setBlocked(blockedRoomCount())
+          onKeyDown={(e) => {
+            if (e.key !== 'Escape') e.stopPropagation()
           }}
-        >
-          {t(M.unblockAll)}
-        </button>
+        />
       </Row>
+      {listTrusted && (
+        <Row label={t(M.trustedRooms)} hint={t(M.trustedHint, { count: trusted })}>
+          <button
+            type="button"
+            className="setting-button"
+            data-testid="setting-forget-trusted"
+            disabled={trusted === 0}
+            onClick={() => {
+              forgetTrustedRooms()
+              setTrusted(trustedRoomCount())
+            }}
+          >
+            {t(M.forgetAll)}
+          </button>
+        </Row>
+      )}
     </section>
   )
 }
@@ -518,7 +552,7 @@ function libraryLabel(url: string): string {
 
 /**
  * The part libraries the Catalog's Libraries tab reads (docs/part-libraries.md): the project's official ones, each of
- * which can be switched off, and the viewer's own (a team's library, a self-hosted mirror). A library is read before
+ * which can be switched off, and the viewer's own (another publisher's library, a self-hosted mirror). A library is read before
  * it is added, so a wrong address or a host without CORS is said here rather than saved.
  */
 function PartLibrariesGroup(): ReactElement {
@@ -535,7 +569,7 @@ function PartLibrariesGroup(): ReactElement {
   const [status, setStatus] = useState<{ busy: boolean; error: string }>({ busy: false, error: '' })
   const add = async (): Promise<void> => {
     setStatus({ busy: true, error: '' })
-    const { addLibrary } = await import('../partLibraries')
+    const { addLibrary } = await import('../parts/partLibraries')
     const refused = await addLibrary(draft)
     if (refused === null) setDraft('')
     setStatus({ busy: false, error: refused ?? '' })
@@ -564,7 +598,7 @@ function PartLibrariesGroup(): ReactElement {
           </button>
         </Row>
       ))}
-      <Row label={t(M.addLibrary)} hint={status.error || t(M.addLibraryHint)}>
+      <Row label={t(M.addLibrary)} hint={status.error || t(getShelfApi() ? M.addLibraryHintShelf : M.addLibraryHint)}>
         <span className="setting-control-pair">
           <input
             className="setting-input"
@@ -586,6 +620,150 @@ function PartLibrariesGroup(): ReactElement {
         </span>
       </Row>
     </section>
+  )
+}
+
+/**
+ * Where the parts shelf is (docs/parts-shelf.md), and the way to change it. Desktop only: the browser has no shelf.
+ * A shelf folder that cannot be read is said above the Catalog's cards, where its parts would be missing.
+ */
+function PartsShelfGroup(): ReactElement | null {
+  const shelf = useShelf()
+  const api = getShelfApi()
+  if (!shelf || !api) return null
+  return (
+    <section className="settings-group" data-testid="settings-parts-shelf">
+      <h3>{t(M.partsShelf)}</h3>
+      <Row label={t(M.shelfFolder)} hint={t(M.shelfFolderHint)}>
+        <span className="setting-control-pair">
+          <span className="setting-path" data-testid="setting-shelf-path" title={shelf.listing?.root ?? ''}>
+            {shelf.listing?.root ?? t(M.shelfNotRead)}
+          </span>
+          <button type="button" className="setting-button" onClick={() => void api.reveal()}>
+            {t(M.showFolder)}
+          </button>
+          <button
+            type="button"
+            className="setting-button"
+            data-testid="setting-shelf-change"
+            onClick={() =>
+              void api
+                .pickFolder()
+                .then((scan) => {
+                  if (scan) void refreshShelf()
+                })
+                .catch((e: unknown) => console.warn('[oip] choosing the shelf folder failed', e))
+            }
+          >
+            {t(M.changeFolder)}
+          </button>
+        </span>
+      </Row>
+    </section>
+  )
+}
+
+/**
+ * Whether an AI agent may drive this editor over MCP (the desktop app's agent door, docs/agent-tools.md), and the
+ * address to give it. Desktop only. Main owns the server and the choice: turning it on asks in a native dialog
+ * first, and the answer is remembered across launches (apps/desktop/agentDoorSetting.cjs). Help > Agent
+ * Connections... opens Settings scrolled to here.
+ */
+function AgentConnectionsGroup(): ReactElement | null {
+  const [api] = useState(agentDoorApi)
+  const [door, setDoor] = useState<AgentDoorState | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const ref = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (!api) return
+    let live = true
+    api
+      .doorState()
+      .then((s) => {
+        if (live) setDoor(s)
+      })
+      .catch((e: unknown) => console.warn('[oip] reading the agent door failed', e))
+    const off = api.onDoorChange((s) => setDoor(s))
+    return () => {
+      live = false
+      off()
+    }
+  }, [api])
+  // a count of requests: read as the dialog opens, and again on each request while it is open; scrolled once the
+  // state has rendered the section at its full height
+  const [reveal, setReveal] = useState(() => (takeAgentDoorReveal() ? 1 : 0))
+  const revealed = useRef(0)
+  useEffect(
+    () =>
+      onAgentDoorReveal(() => {
+        if (takeAgentDoorReveal()) setReveal((n) => n + 1)
+      }),
+    [],
+  )
+  useEffect(() => {
+    if (door && reveal > revealed.current) {
+      revealed.current = reveal
+      ref.current?.scrollIntoView({ block: 'start' })
+    }
+  }, [door, reveal])
+  if (!api || !door) return null
+  const toggle = (on: boolean): void => {
+    setBusy(true)
+    setError('')
+    api
+      .setDoor(on)
+      .then((s) => {
+        setDoor({ enabled: s.enabled, url: s.url })
+        if (s.error) setError(t(M.agentCouldNotStart, { error: s.error }))
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false))
+  }
+  return (
+    <section ref={ref} className="settings-group" data-testid="settings-agent-connections">
+      <h3>{t(M.agentConnections)}</h3>
+      <Row label={t(M.allowAgents)} hint={error || t(M.allowAgentsHint)}>
+        <label className="setting-switch">
+          <input type="checkbox" data-testid="setting-agent-door" checked={door.enabled} disabled={busy} onChange={(e) => toggle(e.target.checked)} />
+          <span>{t(door.enabled ? M.on : M.off)}</span>
+        </label>
+      </Row>
+      {door.enabled && (
+        <>
+          <Row label={t(M.agentUrl)} hint={t(M.agentUrlHint)}>
+            <span className="setting-control-pair">
+              <span className="setting-path" data-testid="setting-agent-url" title={door.url}>
+                {door.url}
+              </span>
+              <CopyButton text={door.url} testId="setting-agent-copy-url" />
+            </span>
+          </Row>
+        </>
+      )}
+    </section>
+  )
+}
+
+function CopyButton({ text, testId }: { text: string; testId: string }): ReactElement {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      className="setting-button"
+      data-testid={testId}
+      onClick={() => {
+        void navigator.clipboard?.writeText(text).then(
+          () => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          },
+          () => {},
+        )
+      }}
+    >
+      {t(copied ? M.copied : M.copy)}
+    </button>
   )
 }
 
@@ -614,6 +792,8 @@ function ShortcutsSection({
   useSyncExternalStore(subscribeKeymap, keymapRev)
   /** why the last attempt was refused, shown on the row that was refused */
   const [refused, setRefused] = useState<{ id: string; message: string } | null>(null)
+  const [query, setQuery] = useState('')
+  const shown = keymap.filter((b) => bindingMatches(b, query, IS_MAC))
 
   // The recorder. Mounted only while a row is capturing, so the app keeps its own keyboard the rest
   // of the time. Capture phase, like the dialog's Esc handler: the editor controller is listening
@@ -628,7 +808,8 @@ function ShortcutsSection({
       if (!chord) return // a bare modifier: keep waiting for the key it modifies
       const clash = rebindAction(capturing, [chord])
       if (clash) {
-        const label = DEFAULT_KEYMAP.find((b) => b.id === clash)?.label ?? clash
+        const other = DEFAULT_KEYMAP.find((b) => b.id === clash)
+        const label = other ? keyLabel(other) : clash
         setRefused({ id: capturing, message: t(M.alreadyBound, { chord: formatChord(chord, IS_MAC), label }) })
       } else {
         setRefused(null)
@@ -653,20 +834,35 @@ function ShortcutsSection({
           ctrl: IS_MAC ? '⌘' : 'Ctrl', // i18n-ok: modifier key name
         })}
       </p>
-      {keymap !== DEFAULT_KEYMAP && (
-        <div className="shortcuts-toolbar">
+      <div className="shortcuts-toolbar">
+        <input
+          className="shortcuts-search"
+          data-testid="shortcuts-search"
+          type="search"
+          placeholder={t(M.searchShortcuts)}
+          aria-label={t(M.searchShortcuts)}
+          spellCheck={false}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          // typing must not drive the editor's shortcuts; Escape still closes the dialog
+          onKeyDown={(e) => {
+            if (e.key !== 'Escape') e.stopPropagation()
+          }}
+        />
+        {keymap !== DEFAULT_KEYMAP && (
           <button type="button" className="shortcuts-reset-all" onClick={() => resetAllActions()}>
             {t(M.restoreAll)}
           </button>
-        </div>
-      )}
+        )}
+      </div>
+      {shown.length === 0 && <p className="shortcuts-empty">{t(M.noShortcutMatch, { query: query.trim() })}</p>}
       <div className="shortcuts-groups">
         {KEY_GROUPS.map((group) => {
-          const rows = keymap.filter((b) => b.group === group)
+          const rows = shown.filter((b) => b.group === group)
           if (rows.length === 0) return null
           return (
             <section className="shortcuts-group" key={group}>
-              <h3>{group}</h3>
+              <h3>{keyGroupLabel(group)}</h3>
               {rows.map((b) => {
                 const recording = capturing === b.id
                 const changed = isRebound(b.id)
@@ -674,8 +870,8 @@ function ShortcutsSection({
                 return (
                   <div className="shortcut-row" key={b.id}>
                     <span className="shortcut-text">
-                      <span className="shortcut-label">{b.label}</span>
-                      {refusal ? <span className="shortcut-refused">{refusal}</span> : b.hint && <span className="shortcut-hint">{b.hint}</span>}
+                      <span className="shortcut-label">{keyLabel(b)}</span>
+                      {refusal ? <span className="shortcut-refused">{refusal}</span> : b.hint && <span className="shortcut-hint">{keyHintText(b)}</span>}
                     </span>
                     <span className="shortcut-keys">
                       {recording ? (
@@ -699,7 +895,7 @@ function ShortcutsSection({
                         <button
                           type="button"
                           className="shortcut-revert"
-                          aria-label={t(M.restoreDefaultFor, { label: b.label })}
+                          aria-label={t(M.restoreDefaultFor, { label: keyLabel(b) })}
                           title={t(M.defaultChords, { chords: defaultChords(b.id).map((c) => formatChord(c, IS_MAC)).join(t(M.orSep)) })}
                           onClick={() => resetAction(b.id)}
                         >
@@ -745,6 +941,8 @@ function BuildStamp(): ReactElement {
 
 export function SettingsOverlay({ store, state, initialTab = 'shortcuts', onClose }: SettingsOverlayProps): ReactElement {
   const [tab, setTab] = useState<SettingsTab>(initialTab)
+  // Help > Agent Connections... while this is open: to the tab its section is on (which takes the request as it mounts)
+  useEffect(() => onAgentDoorReveal(() => setTab('preferences')), [])
   /** the action currently recording a chord - owned here because Esc has to choose between
    *  cancelling the capture and closing the dialog, and only one handler can decide that */
   const [capturing, setCapturing] = useState<string | null>(null)

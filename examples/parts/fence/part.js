@@ -121,5 +121,5 @@ definePart({
     parts.push({ desc: g.merge.apply(g, wires), material: 'meshMetal', colorParam: 'meshColor' })
     return parts
   },
-  step() {},
+  react() {},
 })

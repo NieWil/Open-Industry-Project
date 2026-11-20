@@ -27,6 +27,8 @@ export interface PaletteItem {
   /** the chip on the left: a command's group, or 'Scene' / 'Parts' */
   readonly group: string
   readonly label: string
+  /** the English label when the shown one is translated, so the name in the docs and tutorials still finds the row */
+  readonly alias?: string
   /** right-hand column: a chord for a command, a part type for a scene row */
   readonly detail?: string
   /** greyed and unselectable (a command whose enablement says no) */
@@ -41,6 +43,11 @@ export type PaletteTarget =
   | { readonly kind: 'command'; readonly id: string }
   | { readonly kind: 'part'; readonly id: string }
   | { readonly kind: 'catalog'; readonly type: string; readonly packageId?: string }
+
+/** the English source as a row's alias, only when it differs from what the row shows */
+export function englishAlias(shown: string, english: string | undefined): string | undefined {
+  return english === undefined || english === shown ? undefined : english
+}
 
 /** Bigger is better. Null means no match at all. */
 export function scoreMatch(haystack: string, needle: string): number | null {
@@ -82,7 +89,12 @@ export function rankPaletteItems(items: readonly PaletteItem[], query: string, p
   const scored: { item: PaletteItem; score: number }[] = []
   for (const item of items) {
     // the group is searchable too, so "view problems" finds the View command
-    const score = Math.max(scoreMatch(item.label, q) ?? -1, q === '' ? -1 : (scoreMatch(`${item.group} ${item.label}`, q) ?? -1) - 50)
+    const score = Math.max(
+      scoreMatch(item.label, q) ?? -1,
+      q === '' ? -1 : (scoreMatch(`${item.group} ${item.label}`, q) ?? -1) - 50,
+      // one point under the shown label's tier: an equal hit on the shown text wins the tie
+      q === '' || item.alias === undefined ? -1 : (scoreMatch(item.alias, q) ?? 0) - 1,
+    )
     if (score >= 0) scored.push({ item, score })
   }
   scored.sort((a, b) => {

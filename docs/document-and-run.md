@@ -21,7 +21,7 @@ undo after Stop bringing the run's box back as saved content.
 
 What counts as an edit is decided in one place, not by the write path a gesture happens to call.
 
-- **`documentOf(scene)`** ([storeDocument.ts](../src/editor/storeDocument.ts), which the store's own
+- **`documentOf(scene)`** ([storeDocument.ts](../src/editor/store/storeDocument.ts), which the store's own
   `documentOf` calls with its live-cargo seam and designed poses) is the scene minus what the current run owns,
   the store's one definition of "run-owned". Two things:
   - **Parts the run owns**: the ids in `LiveCargoHost.runScopedIds()` and their subtrees. A box someone clicks,
@@ -35,9 +35,9 @@ What counts as an edit is decided in one place, not by the write path a gesture 
     designed pose follows the ancestor's rigid motion (`carryCargoPose`), so Stop puts it back on the moved
     group. Without designed poses, a drag on a running box would commit "wherever the belt had carried it, plus
     the nudge" as the box's designed start.
-- **`commit()` asks `documentChanged(before, after)`** ([store.ts](../src/editor/store.ts), through the store's
+- **`commit()` asks `documentChanged(before, after)`** ([store.ts](../src/editor/store/store.ts), through the store's
   `RunOwnership`, which holds the run's cargo seam and designed poses; the rule itself is in
-  [storeDocument.ts](../src/editor/storeDocument.ts)) and treats only a document change as an edit.
+  [storeDocument.ts](../src/editor/store/storeDocument.ts)) and treats only a document change as an edit.
   Anything else (a run-owned box moved, deleted or copied; a re-commit of the same scene) is shown and
   stops there. Parts are immutable, so the comparison is by reference and never serializes.
 - **The undo history holds documents**, never run-owned parts. `withRunParts` puts the live ones back when

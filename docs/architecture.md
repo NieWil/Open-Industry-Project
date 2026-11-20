@@ -31,7 +31,7 @@ project content to a renderer object.
 ## The `PartContext` seam
 
 Part behavior never touches an engine API directly. It calls an abstract interface,
-`PartContext` (`src/core/partApi.ts`), with methods such as `setSurfaceVelocity`, `drive`,
+`PartContext` (`src/core/parts/partApi.ts`), with methods such as `setSurfaceVelocity`, `drive`,
 `setJoint`, `setGrip`, `sense`, `readTag`/`writeTag`, `spawn`/`despawn` and `zone`. The sim host
 implements it over Jolt-WASM on both shells. A part never raycasts or queries the scene. What it
 may know arrives through `sense` and the context's other readings. Two things follow:
@@ -81,13 +81,14 @@ The rules:
 
 - **One declaration layer, `src/plc/tags.ts`.** A variable is one declaration in the program
   text. So declare, retype, move and delete exist once, whichever surface asks (the ladder's
-  declaration pane `components/LadderVariables.tsx`, the organizer). So does rename, which follows
+  declaration pane `components/plc/LadderVariables.tsx`, the organizer). So does rename, which follows
   scope and carries the scene's wiring with it.
 - **Never a second copy of an edit.** Two surfaces may differ in what they show and where a
   thing is reached, but the change they make to the program is the same change. Two copies drift
   apart as each gains features the other lacks. So a fork made on purpose states what would have
   to be true to retire it, not only why it exists.
-- **Checker rules for a front end sit beside `checker.ts`, never as branches inside it**
+- **Checker rules for a front end sit beside the checker (`checker.ts` and its `check*.ts`
+  modules), never as branches inside it**
   (ladder's `LD_ROLES` is the pattern).
 - **A saved program may name a dialect this build does not have.** The program document's
   `stDialect` (`src/core/dialect.ts`) is a forward-compatibility marker. Absent means IEC. Any

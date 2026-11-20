@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LocalPlcLink } from './plcLink'
+import { LocalPlcLink } from './link/plcLink'
 import { SimController } from './simController'
 
 // The declarative device bindings (sensor/button/gate inputs, stack-light outputs) are gone with the

@@ -1,12 +1,12 @@
-// Author-time data checks (core/partAuthoringChecks.ts + sim/validatePart.ts): a corpus of parts, each broken
+// Author-time data checks (core/parts/partAuthoringChecks.ts + sim/validatePart.ts): a corpus of parts, each broken
 // in one realistic way that would otherwise load, bake and silently do nothing. Each must fail validation;
 // the unbroken control must pass.
 
 import { describe, expect, it } from 'vitest'
 import { validatePart } from './validatePart'
 import type { PackageManifest } from './buildPackage'
-import { checkGeometryRefs } from '../core/partAuthoringChecks'
-import type { PartPackageGeometry } from '../core/partPackage'
+import { checkGeometryRefs } from '../core/parts/partAuthoringChecks'
+import type { PartPackageGeometry } from '../core/parts/partPackage'
 
 type M = PackageManifest & { geometry: { links: any[]; joints: any[]; inclineParam?: string } } // eslint-disable-line @typescript-eslint/no-explicit-any -- specs build deliberately malformed links and joints
 
@@ -67,7 +67,27 @@ const cases: [string, (m: M) => unknown, string][] = [
   ['declared joint not in rig', (m) => m, `definePart({ params: ${P()}, joints: ['lift', 'tilt'], lamps: ['lamp'], step(ctx) {} })`],
   ['parent -> missing link', (m) => { L(m, 1).parent = 'base' }, beh()],
   ['joint.link -> missing', (m) => { m.geometry.joints[0].link = 'carrier' }, beh()],
+  ['link friction out of range', (m) => { L(m, 0).friction = 3 }, beh()],
+  ['link friction not a number', (m) => { L(m, 0).friction = '0.2' }, beh()],
+  ['link friction on a side guard', (m) => { m.geometry.links.push({ name: 'guard', shape: { kind: 'box', size: [1, 0.1, 0.01] }, offset: [0, 0.3, 0.5], sideGuard: 'right', friction: 0.3 }) }, beh()],
+  ['drawn friction on a rig (render-only)', (m) => m, `definePart({ params: ${P()}, joints: ['lift'], lamps: ['lamp'], geometry(g) { return [{ desc: g.box([1, 1, 1], [0, 0.5, 0]), collision: 'hull', friction: 0.1 }] }, step(ctx) {} })`],
 ]
+
+describe('a solid surface friction', () => {
+  const drawn = (): PackageManifest => ({ id: 'acme.slide', name: 'Slide', geometry: { kind: 'drawn', bounds: { length: 1, width: 1, top: 1 } } }) as PackageManifest
+  const src = (submesh: string): string => `definePart({ geometry(g) { return [{ desc: g.box([1, 0.1, 1], [0, 0.05, 0]), ${submesh} }] }, step() {} })`
+  it('accepts a friction on a link and on a drawn solid', () => {
+    const m = base()
+    L(m, 0).friction = 0.06
+    expect(validatePart(m, beh()).diagnostics).toEqual([])
+    expect(validatePart(drawn(), src("collision: 'hull', friction: 0.06")).diagnostics).toEqual([])
+  })
+  it('refuses a drawn friction out of range, on a submesh with no collision, and on a side guard', () => {
+    expect(validatePart(drawn(), src("collision: 'hull', friction: -1")).ok).toBe(false)
+    expect(validatePart(drawn(), src('friction: 0.1')).ok).toBe(false)
+    expect(validatePart(drawn(), src("collision: 'box', sideGuard: 'left', friction: 0.1")).ok).toBe(false)
+  })
+})
 
 describe('validatePart catches broken part data', () => {
   it('passes the unbroken control', () => {

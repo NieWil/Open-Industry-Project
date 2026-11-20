@@ -30,7 +30,7 @@ Two things the surface does not promise:
 
 ## The surface
 
-Two method families, both deterministic. `src/core/partApi.ts` is the reference (`PartContext` in
+Two method families, both deterministic. `src/core/parts/partApi.ts` is the reference (`PartContext` in
 `packages/part-sdk/index.d.ts` is the copy parts are authored against). This section lists the shape.
 
 ### Query: read-only, no side effects

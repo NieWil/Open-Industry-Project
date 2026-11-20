@@ -121,7 +121,7 @@ try {
   expect(inPanel === true, 'the popped-out PLC panel can take the keyboard focus (it marks itself data-plc-panel)')
   await fireMenuItem(app, 'sim.externalPlc', true)
   await popupPage?.locator('[data-testid="controller-props"]').waitFor({ state: 'visible', timeout: 8000 }).catch(() => {})
-  expect((await popupPage?.locator('[data-testid="controller-props"]').count()) === 1, 'Simulation > External PLC… opens Controller Properties IN the popup')
+  expect((await popupPage?.locator('[data-testid="controller-props"]').count()) === 1, 'Simulation > PLC Controllers… opens Controller Properties IN the popup')
   expect((await page.locator('[data-testid="controller-props"]').count()) === 0, 'and not in the main window')
 
   expect(pageErrors.length === 0, `no page errors (${pageErrors.slice(0, 2).join(' | ')})`)

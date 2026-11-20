@@ -12,7 +12,7 @@
 // carries: a wall-mounted extinguisher under its sign on the hinge side, and a fire-alarm pull station at hand height
 // on the latch side. Module space is the wall modules':
 // x along the cell (0..10), y up from the floor, the cladding's inner face at z = 0 (the room is +z) and its outer face
-// at z = -0.25. The door's centre, x = 5, is PERSONNEL_DOOR_AT in src/core/buildingDocks.ts.
+// at z = -0.25. The door's centre, x = 5, is PERSONNEL_DOOR_AT in src/core/building/buildingDocks.ts.
 //
 // Materials are plain colours, no textures. Exit_Sign and Exit_Text are drawn unlit (building.ts SELF_LIT), the way a
 // lit sign reads; the rest take the baked wall light.
@@ -25,7 +25,7 @@ import { Document, NodeIO } from '@gltf-transform/core'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = join(ROOT, 'assets/building-bake/Personnel_Door.glb')
 
-/** the door's centre along the cell; mirrors PERSONNEL_DOOR_AT (src/core/buildingDocks.ts) */
+/** the door's centre along the cell; mirrors PERSONNEL_DOOR_AT (src/core/building/buildingDocks.ts) */
 const AT = 5
 /** the leaf: a 0.9 x 2.1 m single door, standing 15 mm off the floor (clear of the 12 mm threshold) */
 const LEAF_W = 0.9

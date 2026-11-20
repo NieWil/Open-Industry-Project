@@ -5,7 +5,8 @@
 //   public/textures/DeckSolidNormal.webp   relief for the solid deck (finish 'deck'), under BuildingFloor.webp
 //   public/textures/BuildingFloor.webp     the solid deck's concrete, albedo
 //
-// and the building's floor slab, public/models/building/textures/BuildingPart_Floor_A_BaseColor.webp
+// and the building's floor slab, public/models/building/textures/BuildingPart_Floor_A_BaseColor.webp, with the
+// cloud laid over it, BuildingPart_FloorMacro_BaseColor.webp beside it
 //
 // Run: node scripts/build-deck-textures.mjs [--preview <dir>]
 //
@@ -254,28 +255,36 @@ await write('DeckSolidNormal.webp', solid.normal, solid.size, { lossless: true }
 
 // ---------------------------------------------------------------- concrete: the building floor and the deck
 //
-// One concrete field drawn twice, as the two surfaces always shared one image:
+// One concrete field, drawn with two mixes of its noise layers:
 //
+//   - the 'deck' finish (public/textures/BuildingFloor.webp, render/parts/common.ts): one image per 0.5 m, so 512
+//     square is already ~1 mm a texel. Pale, and tinted by DECK_TINT.
 //   - the warehouse slab (render/parts/building.ts, material `Floor_01`): one image per 10 m cell, so a texel is
 //     ~1 cm. 1024 square: 2048 looked no different from where a scene is edited and cost 4x the GPU memory
 //     (~22 MB with mips, for a surface whose whole spread is a few sRGB steps); 512 reads soft at walking eye
-//     height. Dark and faint (FLOOR_SPREAD): a 10 m repeat shows the moment any feature stands out. The material
-//     tints it (FLOOR_TINT).
-//   - the 'deck' finish (public/textures/BuildingFloor.webp, render/parts/common.ts): one image per 0.5 m, so 512
-//     square is already ~1 mm a texel. Pale, and tinted by DECK_TINT.
+//     height. Mostly fine grain (SLAB_MIX): weighted to the ~25 cm blotches as the deck is, the slab read as felt
+//     or stucco, and anything broad inside the tile repeats every 10 m as a visible grid. The material tints it
+//     (FLOOR_TINT). Its broad clouds come from FloorMacro instead.
 //
 // The field: broad mottling, finer blotches, a grain, sparse light scratches and a few dark pits, normalised so
 // each surface sets only its mean and spread. Generated AFTER the deck textures above: they share the seeded
 // stream, and this order keeps their bytes unchanged.
 const CONCRETE_SIZE = 1024
 const FLOOR_MEAN = [95, 93, 89] // sRGB, faintly warm
-const FLOOR_SPREAD = 4.2 // standard deviation of the luminance, sRGB steps
 const DECK_CONCRETE_SIZE = 512
 const DECK_CONCRETE_MEAN = [230, 224, 214]
 const DECK_CONCRETE_SPREAD = 10
 
-/** The concrete field, CONCRETE_SIZE square, periodic, as standard scores (mean 0, deviation 1). */
-function concreteField() {
+const SLAB_MIX = { broad: 0.1, blotch: 0.3, grain: 0.8 }
+const SLAB_SPREAD = 3.5 // standard deviation of the luminance, sRGB steps
+// FloorMacro: one channel of cloud, periodic, linear. The shader samples it twice at two periods that share no
+// common repeat and multiplies 2x each sample, so 128 is neutral, and so is the loader's #808080 fallback.
+const MACRO_SIZE = 256
+const MACRO_SPREAD = 6 // standard deviation, 8-bit steps around 128
+
+/** The concrete field, CONCRETE_SIZE square, periodic, as standard scores (mean 0, deviation 1). `mix` weighs
+ *  its three noise layers. */
+function concreteField(mix = { broad: 0.3, blotch: 0.75, grain: 0.45 }) {
   const size = CONCRETE_SIZE
   const broad = fbm(4, 3)
   const blotch = fbm(40, 3, 0.65)
@@ -285,7 +294,7 @@ function concreteField() {
     for (let x = 0; x < size; x++) {
       const u = (x + 0.5) / size
       const v = (y + 0.5) / size
-      field[y * size + x] = broad(u, v) * 0.3 + blotch(u, v) * 0.75 + grain(u, v) * 0.45
+      field[y * size + x] = broad(u, v) * mix.broad + blotch(u, v) * mix.blotch + grain(u, v) * mix.grain
     }
   }
   // a mark is laid down as a soft dot every half texel along its path, wrapped across the tile edge
@@ -348,7 +357,26 @@ function concreteAlbedo(field, meanRgb, spread, size = CONCRETE_SIZE) {
   return albedo
 }
 
-const concrete = concreteField()
-await write(join('..', 'models', 'building', 'textures', 'BuildingPart_Floor_A_BaseColor.webp'), concreteAlbedo(concrete, FLOOR_MEAN, FLOOR_SPREAD), CONCRETE_SIZE, { quality: 90 })
 // the 2x2 average trims the finest grain, so the deck's spread lands at ~9.7 rather than exactly 10
-await write('BuildingFloor.webp', concreteAlbedo(concrete, DECK_CONCRETE_MEAN, DECK_CONCRETE_SPREAD, DECK_CONCRETE_SIZE), DECK_CONCRETE_SIZE, { quality: 90 })
+await write('BuildingFloor.webp', concreteAlbedo(concreteField(), DECK_CONCRETE_MEAN, DECK_CONCRETE_SPREAD, DECK_CONCRETE_SIZE), DECK_CONCRETE_SIZE, { quality: 90 })
+await write(join('..', 'models', 'building', 'textures', 'BuildingPart_Floor_A_BaseColor.webp'), concreteAlbedo(concreteField(SLAB_MIX), FLOOR_MEAN, SLAB_SPREAD), CONCRETE_SIZE, { quality: 90 })
+
+/** FloorMacro's cloud as grey 8-bit RGB, normalised to MACRO_SPREAD around 128. */
+function floorMacro() {
+  const size = MACRO_SIZE
+  const cloud = fbm(3, 4, 0.55)
+  const field = new Float32Array(size * size)
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) field[y * size + x] = cloud((x + 0.5) / size, (y + 0.5) / size)
+  let sum = 0
+  let sq = 0
+  for (const f of field) {
+    sum += f
+    sq += f * f
+  }
+  const mean = sum / field.length
+  const sd = Math.sqrt(sq / field.length - mean * mean)
+  const out = Buffer.alloc(size * size * 3)
+  for (let i = 0; i < field.length; i++) out.fill(clamp255(128 + ((field[i] - mean) / sd) * MACRO_SPREAD), i * 3, i * 3 + 3)
+  return out
+}
+await write(join('..', 'models', 'building', 'textures', 'BuildingPart_FloorMacro_BaseColor.webp'), floorMacro(), MACRO_SIZE, { quality: 90 })

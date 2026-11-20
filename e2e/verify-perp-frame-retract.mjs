@@ -73,9 +73,9 @@ async function main() {
     // Host roller (centre-origin, length 4, width 1.524 → bed edge z=0.762, outer wall plane z=0.772)
     // + a perpendicular roller mover (length 3) aimed at its +Z side near x=1; run the real snap engine.
     const out = await page.evaluate(async () => {
-      const sf = await import('/src/core/snapFeatures.ts')
-      const ge = await import('/src/core/guardExtents.ts')
-      const pg = await import('/src/core/partGeometry.ts')
+      const sf = await import('/src/core/snap/snapFeatures.ts')
+      const ge = await import('/src/core/guards/guardExtents.ts')
+      const pg = await import('/src/core/parts/partGeometry.ts')
       const host = {
         id: 'host', type: 'part', packageId: 'oip.roller-conveyor', position: [0, 0.75, 0], rotationY: 0,
         params: { length: 4, width: 1.524, speed: 0.5, standHeight: 0.75, leftGuard: true, rightGuard: true },
@@ -132,7 +132,7 @@ async function main() {
     // host frame intact: no cut-face vertices at the junction mouth edges (a cut host frame would have
     // wall corners at x = 1 ± 0.797 on the wall band). Probed at frame height only (below the deck): the
     // host's guard is cut there on purpose, its top return mitred square-ended at exactly 1 ± 0.797
-    // (core/guardExtents.ts GuardMitre), which an XZ-only probe would mistake for a frame cut.
+    // (core/guards/guardExtents.ts GuardMitre), which an XZ-only probe would mistake for a frame cut.
     const hostCutL = await vertexNear(page, 'host', { x: 1 - 0.797, z: 0.767 }, 0.015, 0.75)
     const hostCutR = await vertexNear(page, 'host', { x: 1 + 0.797, z: 0.767 }, 0.015, 0.75)
     check('host frame is NOT cut at the mouth', hostCutL === false && hostCutR === false, `L=${hostCutL} R=${hostCutR}`)
@@ -161,9 +161,9 @@ async function main() {
     // extents via its guardExtents param fold (geometry-level, gated by beltConveyorRigParity.test.ts);
     // here we assert the derivation + fold are connected in the running app, and shoot the junction.
     const belt = await page.evaluate(async () => {
-      const sf = await import('/src/core/snapFeatures.ts')
-      const ge = await import('/src/core/guardExtents.ts')
-      const pg = await import('/src/core/partGeometry.ts')
+      const sf = await import('/src/core/snap/snapFeatures.ts')
+      const ge = await import('/src/core/guards/guardExtents.ts')
+      const pg = await import('/src/core/parts/partGeometry.ts')
       const host = {
         id: 'host', type: 'part', packageId: 'oip.roller-conveyor', position: [0, 0.75, 0], rotationY: 0,
         params: { length: 4, width: 1.524, speed: 0.5, standHeight: 0.75, leftGuard: true, rightGuard: true },

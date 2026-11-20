@@ -1,7 +1,7 @@
 # Part gizmos: the part's third authoring facet
 
 A param declares a `handle`, and the host renders the dot, runs the drag, and writes the param back. The handle
-kinds are `face`, `path`, `arc`, `flexPath` and `rigSize` ([partGizmos.test.ts](../src/core/partGizmos.test.ts)).
+kinds are `face`, `path`, `arc`, `flexPath` and `rigSize` ([partGizmos.test.ts](../src/core/parts/partGizmos.test.ts)).
 Built-ins are custom parts on the public SDK ([architecture.md](architecture.md)). So viewport editing affordances,
 such as the resize dots and the belt's tail and segment handles, are declared by the part author like everything
 else. They are never keyed on `part.type`.
@@ -79,8 +79,8 @@ already anchors.
 - The `face` handle (on a conveying part's length param) takes `angleFrontParam`/`angleBackParam`, naming the
   sibling params that splay each end face. Declaring either, together with the manifest's
   `conveyor: { bed: 'spur' }`, marks the part a **spur conveyor** (centre-origin parallelogram bed). Validation
-  requires the two to match ([partPackage.ts](../src/core/partPackage.ts)), and `spurConveyorView` in
-  [conveyorBeds.ts](../src/core/conveyorBeds.ts) reads both. The host then derives the angled snap ends, the
+  requires the two to match ([partValidate.ts](../src/core/parts/partValidate.ts)), and the spur bed in
+  [conveyorBeds.ts](../src/core/conveyor/conveyorBeds.ts) reads both. The host then derives the angled snap ends, the
   splay-covering footprint and collision hull, the opening a merge cuts in the host's guard, and the rail and guard
   snap extents it folds into a declared `guardExtents` param. It also derives `sideGap`, the clearance kept off
   the host's bed edge at a side merge (default 2×flange; neither shipped spur overrides it). See the spur examples
@@ -104,7 +104,7 @@ authoring default). See [shape](../examples/parts/shape/behavior.ts), whose whol
 
 ## Where it lives in the stack
 
-`handle` is a field on the SDK `ParamSpec` ([partApi.ts](../src/core/partApi.ts)). It is **baked into
+`handle` is a field on the SDK `ParamSpec` ([partApi.ts](../src/core/parts/partApi.ts)). It is **baked into
 `pkg.params` automatically**. `meta` (a separate export of [embeddedBehavior](../src/sim/embeddedBehavior.ts))
 serializes the whole `def.params`, the same path that carries `min`/`max`/`arity`. So no build-script or
 generated-file change is needed to carry a handle. The author just adds the field.
@@ -116,7 +116,7 @@ Three places read the package's declared handles, not the static `PART_DEFS` tab
   [controller/gizmo.ts](../src/editor/controller/gizmo.ts) (`pushResizeHandles`) uses it.
 - [handles.ts](../src/render/viewport/handles.ts) does a **kind dispatch** over the part's declared handles
   (a `path` handle lays out belt dots).
-- `resizePart` in [partGeometry.ts](../src/core/partGeometry.ts) is a **generic drag→param applier** driven
+- `resizePart` in [partGeometry.ts](../src/core/parts/partGeometry.ts) is a **generic drag→param applier** driven
   by the handle descriptor (which param, which column, which clamp), not an `axis → 'length' | 'width'` map.
 
 **There is no scale gizmo, and R is unbound.** A scale gizmo would be a second, weaker resize path: fixed

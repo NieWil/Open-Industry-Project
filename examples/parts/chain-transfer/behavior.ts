@@ -3,7 +3,7 @@
 // diverts it 90° along −Z (the chains' travel direction, off the side). One `conveys` deck carries cargo; the
 // behavior switches its surface velocity between the two world directions (derived from ctx.forward) and lifts the
 // chains while diverting — the lift slews at a tween rate, not a one-tick jump. Driven by an authored `raised`
-// toggle / a hand Use, or — while a PLC program drives its pop-up tag (comms on + ctx.tagDriven) — the tag. The
+// toggle / a hand Use, or — while a PLC program drives its pop-up tag (ctx.tagDriven) — the tag. The
 // auto-vs-hand handoff follows output ownership, like a real panel.
 //
 // Placement: lane-parity track snap onto a roller bed (snap.track.lanes), host pitch adopted into `distance`, lane
@@ -34,7 +34,7 @@ function speedUnitParams(speedMs) {
 /** The param to stand right AFTER the part's own `speedTag`: the same setpoint, in FPM. */
 function speedFpmTagParam(group) {
   return {
-    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag (FPM)', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },
+    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },
   }
 }
 
@@ -77,8 +77,7 @@ definePart({
     // carrying on for v²/2g. The default throws cargo ~20 mm, which a packed row survives; halving the time
     // quadruples that, and by ~0.07 s a row is thrown ~94 mm and lands with its packing gone.
     raiseTime: { type: 'number', default: 0.15, min: 0.02, max: 2, step: 0.01, label: 'Pop-up time (s)', desc: 'How long the chains take to rise or drop. A program must wait this out before running the transfer, and a quicker pop-up throws the load harder: at the default a packed row moves about 20 mm, and below about 0.07 s it loses its packing.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
-    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands chain speed here, replacing the Speed field above. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0.' },
+    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag', group: 'Comms', desc: 'The program commands chain speed here, replacing the Speed field above. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0.' },
     ...speedFpmTagParam('Comms'),
     // autoWhenDriven: this tag COMMANDS the pop-up (the step's auto gate reads it), so a program driving it
     // owns the device — the pilot prompt shows "In auto - PLC controlled" instead of a dead "Use".
@@ -194,18 +193,18 @@ definePart({
   },
   step(ctx) {
     // Signal handoff, modelled on a real panel: the pop-up tag commands the chains only while a controller actually
-    // drives it (comms on + the tag is an attached program's output — ctx.tagDriven). Any other time — comms off,
+    // drives it (the tag is an attached program's output — ctx.tagDriven). Any other time — no tag named,
     // no program, sim stopped — the manual signal rules: the 'raised' param or a pilot Use/click.
     if (ctx.params.raised !== lastRaised) { raised = ctx.params.raised; lastRaised = ctx.params.raised }
     if (ctx.used()) raised = !raised
     // auto wins by overwriting the hand latch (bumpless transfer): a press while owned is undone the same tick, and
     // when ownership releases (program detach) the chains hold their last commanded state.
-    if (ctx.params.enableComms && ctx.tagDriven(ctx.params.popupTag)) raised = ctx.readTag(ctx.params.popupTag)
+    if (ctx.tagDriven(ctx.params.popupTag)) raised = ctx.readTag(ctx.params.popupTag)
     // the hand latch AFTER the auto gate — what the device is really doing, for the Inspector readout
     ctx.report('raised', raised)
     const fpm = ctx.params.fpmUnits === true
     const setpointTag = fpm ? ctx.params.speedFpmTag : ctx.params.speedTag
-    const setpointMs = (ctx.params.enableComms && setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * (fpm ? FPM_MS : 1)
+    const setpointMs = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * (fpm ? FPM_MS : 1)
     const speed = setpointMs
     ctx.report('speed', speed) // the chains scroll on 'speed' (m/s) whichever unit the Inspector shows
     reportSpeed(ctx, fpm, speed)

@@ -10,7 +10,7 @@ import { whenCoverHidden, whenScenePainted } from '../render/renderReady'
 import { gpuErrorReport } from '../render/gpuErrorWatch'
 import { noteActiveRenderer, renderQuality, shadowMapSize } from '../render/quality'
 import type { PartType } from '../core/types'
-import type { PartPackage } from '../core/partPackage'
+import type { PartPackage } from '../core/parts/partPackage'
 import { sameAsBuiltIn } from '../core/builtInVersion'
 import { resolveKeyAction } from '../core/keymap'
 import type { SimClient } from '../sim/client'
@@ -24,8 +24,9 @@ import { HistoryPanel } from './components/HistoryPanel'
 import { ProblemsPanel } from './components/ProblemsPanel'
 import { Inspector } from './components/Inspector'
 import { PopoutWindow } from './components/PopoutWindow'
-import { inDialogOrMenu, isEditableTarget, useKeydownEverywhere, useKeyupEverywhere } from './dialogHost'
+import { inDialogOrMenu, keyBelongsToTarget, useKeydownEverywhere, useKeyupEverywhere } from './dialogHost'
 import { PresenceOverlay } from './components/PresenceOverlay'
+import { PresentOverlay } from './components/PresentOverlay'
 import { ModelLoadingIndicator } from './components/ModelLoadingIndicator'
 import { ViewportLoadingCover } from './components/ViewportLoadingCover'
 import { PilotHud } from './components/PilotHud'
@@ -33,20 +34,20 @@ import { FollowBadge } from './components/FollowBadge'
 import { ViewportHint } from './components/ViewportHint'
 import { PilotTouchControls } from './components/PilotTouchControls'
 import { PilotFab } from './components/PilotFab'
-import { ResizeGutter } from './components/ResizeGutter'
+import { ResizeCorner, ResizeGutter, type ResizeTrack } from './components/ResizeGutter'
 import { SceneTree } from './components/SceneTree'
-import { PlcPanel } from './components/PlcPanel'
+import { PlcPanel } from './components/plc/PlcPanel'
 import type { SettingsTab } from './components/SettingsOverlay'
 import { ProjectsOverlay } from './components/ProjectsOverlay'
 import { FolderLinkBanner } from './components/FolderLinkBanner'
-import { beginFolderLink, reconnectProjectFolder, restoreFolderLink, saveProjectToFolderHandle, unlinkProjectFolder } from './projectFolderLink'
-import { resolveFolderConflict, restoreFolderSync, syncFolderNow, syncedFolderPath } from './projectFolderSync'
-import { splitFiling } from './projectSplit'
-import { connectDesktopOpenRequests } from './desktopProjectBridge'
-import { connectDesktopFileOpens } from './desktopFileOpen'
-import { importProjectFile } from './importProjectFile'
+import { beginFolderLink, reconnectProjectFolder, restoreFolderLink, saveProjectToFolderHandle, unlinkProjectFolder } from './project/projectFolderLink'
+import { resolveFolderConflict, restoreFolderSync, syncFolderNow, syncedFolderPath } from './project/projectFolderSync'
+import { splitFiling } from './project/projectSplit'
+import { connectDesktopOpenRequests } from './desktop/desktopProjectBridge'
+import { connectDesktopFileOpens } from './desktop/desktopFileOpen'
+import { importProjectFile } from './project/importProjectFile'
 import { TutorialOverlay } from './components/TutorialOverlay'
-import { PHONE_QUERY } from './phoneDemo'
+import { PHONE_QUERY } from './demo/phoneDemo'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { DesktopUpdateToast } from './components/DesktopUpdateToast'
 import { BenchOverlay } from './components/BenchOverlay'
@@ -57,13 +58,14 @@ import { AnnotationOverlay } from './components/AnnotationOverlay'
 import { PartBuildToast } from './components/PartBuildToast'
 import { NoticeToast } from './components/NoticeToast'
 import { TranslateToast } from './components/TranslateToast'
-import { installDemoForkHost } from './demoFork'
+import { installDemoForkHost } from './demo/demoFork'
 import { AutosaveBanner } from './components/AutosaveBanner'
 import { UnopenedProjectBanner } from './components/UnopenedProjectBanner'
 import { OtherTabBanner } from './components/OtherTabBanner'
 import { NewerBuildBanner } from './components/NewerBuildBanner'
 import { RoomCodePrompt } from './components/RoomCodePrompt'
 import { NameDialogHost } from './components/NameDialog'
+import { PartChangeDialogHost } from './components/PartChangeDialog'
 import { ExportProjectDialog } from './components/ExportProjectDialog'
 import { Toolbar } from './components/Toolbar'
 import { ViewportSelectMenu } from './components/ViewportSelectMenu'
@@ -72,11 +74,11 @@ import { GuardOpeningsBanner } from './components/GuardOpeningsBanner'
 import { EditorController } from './controller'
 import { connectDesktopAgent } from './agent/desktopAgent'
 import type { AgentSession } from './agent/agentSession'
-import { discardUnopenedProject, downloadProject, downloadUnopenedProject } from './projectFile'
-import { DEMO_SCENE_NAME } from './demoScenes'
+import { discardUnopenedProject, downloadProject, downloadUnopenedProject, savedWorkingCopyText } from './project/projectFile'
+import { DEMO_SCENE_NAME } from './demo/demoScenes'
 import { assetsBusy } from '../render/gltf'
-import { connectDesktopPackages } from './packageSource'
-import { loadBundledExamples } from './bundledExamples'
+import { connectDesktopPackages } from './parts/packageSource'
+import { loadBundledExamples } from './parts/bundledExamples'
 import {
   activateDockPanel,
   BOTTOM_MAX_SHARE,
@@ -84,13 +86,15 @@ import {
   bottomDockHeight,
   buildDockGrid,
   clearMaximized,
-  clickBottomDockTab,
+  clickDockTab,
   defaultDockLayout,
   DOCK_SIZES_VERSION,
+  dockGridCorners,
   dockSizeVar,
   dockPanelTitle,
   floatDockPanel,
   FLOATABLE_PANELS,
+  isColumnCollapsed,
   isFloating,
   isPoppedOut,
   locate,
@@ -105,6 +109,7 @@ import {
   revealDockPanel,
   revealNeedsDocks,
   saveDockLayout,
+  tabShowsPanel,
   toggleMaximizePanel,
   type BottomHeights,
   type DockLayout,
@@ -113,11 +118,13 @@ import {
   type DockSide,
   type DockSlotId,
 } from './dockLayout'
-import { DESKTOP_MAC, DESKTOP_SHELL, getDesktopUpdate, getOipMenuApi } from './desktopMenuBridge'
+import { DESKTOP_MAC, DESKTOP_SHELL, getDesktopUpdate, getOipMenuApi } from './desktop/desktopMenuBridge'
 import { commandEnabled, desktopMenuModel, menuEnablement, runCommand, runMenuCommand, setCommandCtx, type CommandUi } from './commands'
-import type { EditorStore } from './store'
-import type { ProjectJSON } from '../core/project'
+import type { EditorStore } from './store/store'
+import type { ProjectJSON } from '../core/project/project'
 import { RestoreIcon } from './components/toolbarIcons'
+import { importPartFiles, partFilesOf } from './parts/importPartFiles'
+import { handToPartsDock, readPartDrop } from './parts/partDrop'
 import { defineMessages, t } from '../core/i18n'
 
 // Lazy so Monaco + its TS worker stay OUT of the main bundle and only download when the editor is opened.
@@ -125,8 +132,9 @@ import { defineMessages, t } from '../core/i18n'
 // The import lives in behaviorEditorChunk so the </> / Edit-script triggers can preload it on hover.
 const BehaviorEditor = lazy(importBehaviorEditor)
 // Lazy for the same reason as the panels' own chunks: Controller Properties is a dialog opened on demand (the
-// organizer's Controller node, the toolbar's link status, Simulation > External PLC…), never before the first frame
-const ControllerDialog = lazy(() => import('./components/ControllerDialog').then((m) => ({ default: m.ControllerDialog })))
+// organizer's Controller node, the toolbar's link status, Simulation > PLC Controllers…), never before the first frame
+const ControllerDialog = lazy(() => import('./components/plc/ControllerDialog').then((m) => ({ default: m.ControllerDialog })))
+const AssignControllerDialog = lazy(() => import('./components/plc/AssignControllerDialog').then((m) => ({ default: m.AssignControllerDialog })))
 // Settings and the test results are opened on demand too; lazy, they kept the eager-JS budget (scripts/lib/eager-js.mjs)
 // from a raise when the flow-facts and rig-gizmo work grew the first frame
 const SettingsOverlay = lazy(() => import('./components/SettingsOverlay').then((m) => ({ default: m.SettingsOverlay })))
@@ -134,16 +142,16 @@ const GetPartsWindow = lazy(() => import('./components/GetPartsWindow').then((m)
 const PublishPartDialog = lazy(() => import('./components/PublishPartDialog').then((m) => ({ default: m.PublishPartDialog })))
 const TestResultsOverlay = lazy(() => import('./components/TestResultsOverlay').then((m) => ({ default: m.TestResultsOverlay })))
 // desktop only, and loaded at an agent's first call, so it stays off the first frame
+// LAZY: the watch dock is a background tab until a program is being debugged, and it brings the declaration reader
+const WatchPanel = lazy(() => import('./components/plc/WatchPanel').then((m) => ({ default: m.WatchPanel })))
 const AgentActivity = lazy(() => import('./components/AgentActivity').then((m) => ({ default: m.AgentActivity })))
 
 const M = defineMessages('app', {
   tabScene: 'Scene',
   tabParts: 'Parts',
   tabInspect: 'Inspect',
-  tabLogic: 'Logic',
+  tabPlc: 'PLC',
   rendererUnavailable: 'Renderer unavailable: {error}',
-  previewTitle: 'Your simulation runs only in your browser. Collaborators keep seeing the shared design, not your boxes.',
-  preview: 'Previewing (only you)',
   restoreTitle: 'Restore {panel} (Esc)',
   restorePanel: 'Restore panel',
   popoutFailed: 'Could not open a separate window: {reason}.\n\nAllow pop-ups for this site and try again.',
@@ -158,6 +166,8 @@ const M = defineMessages('app', {
 const APP_TITLE = 'Open Industry Project'
 
 const noSubscribe = (): (() => void) => () => {}
+/** a file the user picked that failed to import, said as the importers say their own failures */
+const alertFailure = (e: unknown): void => alert(e instanceof Error ? e.message : String(e))
 
 const DOCK_SIZE_KEY = 'oip-web/dock-sizes'
 // left/right (+ left2/right2 for the secondary/inner columns) = side column widths;
@@ -276,8 +286,8 @@ function InspectTabIcon() {
   )
 }
 
-/** The PLC logic tab: a chip with two legs, the "there's a controller in here" glyph */
-function LogicTabIcon() {
+/** The PLC tab: a chip with two legs, the "there's a controller in here" glyph */
+function PlcTabIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
       <rect x="5.5" y="5.5" width="9" height="9" rx="1.5" />
@@ -291,12 +301,12 @@ interface MobileTabBarProps {
   onToggle: (panel: MobilePanel) => void
   /** the Parts catalog tab - hidden on phones, which don't author parts */
   showCatalog: boolean
-  /** the PLC Logic tab - hidden when the panel is in a window of its own (see App) */
-  showLogic: boolean
+  /** the PLC tab - hidden when the panel is in a window of its own (see App) */
+  showPlc: boolean
 }
 
 /** Mobile nav: one tap toggles each panel's drawer open/closed */
-function MobileTabBar({ panel, onToggle, showCatalog, showLogic }: MobileTabBarProps) {
+function MobileTabBar({ panel, onToggle, showCatalog, showPlc }: MobileTabBarProps) {
   const tab = (id: MobilePanel, label: string, Icon: () => ReactElement) => (
     <button
       className={`mobile-tab${panel === id ? ' active' : ''}`}
@@ -312,7 +322,7 @@ function MobileTabBar({ panel, onToggle, showCatalog, showLogic }: MobileTabBarP
       {tab('tree', t(M.tabScene), TreeTabIcon)}
       {showCatalog && tab('catalog', t(M.tabParts), PartsTabIcon)}
       {tab('inspector', t(M.tabInspect), InspectTabIcon)}
-      {showLogic && tab('st', t(M.tabLogic), LogicTabIcon)}
+      {showPlc && tab('st', t(M.tabPlc), PlcTabIcon)}
     </nav>
   )
 }
@@ -399,12 +409,14 @@ function nullView(): IRenderView {
     resizeDragPoint: () => null,
     endResizeDrag() {},
     setRuler() {},
+    snapToAxis() {},
     focusOn() {},
     startFollow() {},
     stopFollow() {},
     isFollowing: () => false,
     isNavigating: () => false,
     cameraPose: () => ({ px: 0, py: 0, pz: 0, tx: 0, ty: 0, tz: 0 }),
+    lookPose: () => ({ px: 0, py: 0, pz: 0, tx: 0, ty: 0, tz: 0 }),
     zoomWheel() {},
     pointerDownThrough() {},
     setCameraPose() {},
@@ -434,7 +446,7 @@ function nullView(): IRenderView {
     setPilotAimLive() {},
     setPilotAvatars() {},
     showRotationFeedback() {},
-    getStats: () => ({ drawCalls: 0, drawPath: null, triangles: 0, cpuMs: 0, cpuTotalMs: 0, frames: 0, gpuMs: null, missedFrames: 0, backend: 'WebGL', matrixLiveParts: 0, textures: 0, geometries: 0 }),
+    getStats: () => ({ drawCalls: 0, drawPath: null, triangles: 0, cpuMs: 0, cpuTotalMs: 0, frames: 0, gpuMs: null, gpuTotalMs: null, gpuFrames: 0, refreshMs: null, missedFrames: 0, backend: 'WebGL', matrixLiveParts: 0, textures: 0, geometries: 0 }),
     dispose() {},
   }
 }
@@ -506,6 +518,7 @@ export function App({ store, sim }: AppProps) {
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [controllerPropsOpen, setControllerPropsOpen] = useState(false)
+  const [assignControllerOpen, setAssignControllerOpen] = useState(false)
   // The project a test run is grading. Cloned at open (see commandUi) so the run is judged against the
   // document as it was when the user asked, not as it drifts while the specs step.
   const [testProject, setTestProject] = useState<ProjectJSON | null>(null)
@@ -587,6 +600,7 @@ export function App({ store, sim }: AppProps) {
       showPublishPart: (packageId) => setPublishPartId(packageId),
       showCommandPalette: () => setPaletteOpen(true),
       showControllerProperties: () => setControllerPropsOpen(true),
+      showAssignController: () => setAssignControllerOpen(true),
       showProjects: () => setProjectsOpen(true),
       // snapshotProject returns the store's own held document ("serialize it immediately, don't hold
       // or mutate it"), and a run outlives this call - so clone before handing it to the overlay
@@ -634,7 +648,7 @@ export function App({ store, sim }: AppProps) {
   // Listens in every window the app has open (dialogHost.ts), so it works from a popped-out panel too.
   useKeydownEverywhere((e) => {
     if (resolveKeyAction(e, 'editor') !== 'ui.commands') return
-    if (isEditableTarget(e.target)) return
+    if (keyBelongsToTarget(e)) return
     e.preventDefault()
     setPaletteOpen((v) => !v)
   }, true)
@@ -654,7 +668,8 @@ export function App({ store, sim }: AppProps) {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
-  // The transport's keys (keymap sim.playPause / sim.stop): Space plays or pauses, Shift+Space stops. These are
+  // The transport's keys (keymap sim.playPause / sim.stop / sim.step): Space plays or pauses, Shift+Space stops,
+  // Shift+Period steps a paused run. These are
   // for the browser, where F5 (the desktop menu's key) reloads the page. They are ignored where Space already means
   // something: text (the ST code, a name field), a dialog or menu (Space confirms or picks there), and free fly,
   // whose boost is Space. Everywhere else Space toggles the run, even on a focused button, as in a video player.
@@ -662,10 +677,10 @@ export function App({ store, sim }: AppProps) {
   // button. Enter still presses a focused button. The browser clicks a button on Space's keyup, so that is
   // suppressed too. Listens in every window, so the keys also work from a popped-out ladder.
   const transportSpace = useRef(false)
-  const transportAction = (e: KeyboardEvent): 'sim.playPause' | 'sim.stop' | null => {
+  const transportAction = (e: KeyboardEvent): 'sim.playPause' | 'sim.stop' | 'sim.step' | null => {
     const action = resolveKeyAction(e, 'editor')
-    if (action !== 'sim.playPause' && action !== 'sim.stop') return null
-    if (isEditableTarget(e.target) || inDialogOrMenu(e.target)) return null
+    if (action !== 'sim.playPause' && action !== 'sim.stop' && action !== 'sim.step') return null
+    if (keyBelongsToTarget(e, { spaceOnButton: false }) || inDialogOrMenu(e.target)) return null
     // free fly, not walk mode: in walk mode Space is free, so it pauses the run and the user can look at the line
     if (controller?.view.isNavigating() && state.mode !== 'pilot') return null
     return action
@@ -674,6 +689,11 @@ export function App({ store, sim }: AppProps) {
     const action = transportAction(e)
     if (!action) return
     e.preventDefault() // no page scroll, no button press
+    if (action === 'sim.step') {
+      // a held Step repeats on purpose: each auto-repeat is one more step
+      if (commandEnabled('sim.step')) runCommand('sim.step')
+      return
+    }
     transportSpace.current = true
     if (e.repeat) return // held down, it must not flicker between paused and running
     if (action === 'sim.stop') runCommand('sim.stop')
@@ -698,9 +718,16 @@ export function App({ store, sim }: AppProps) {
     (panel: DockPanelId) => setDockLayout((l) => activateDockPanel(l, panel)),
     [],
   )
-  // left-click on a bottom dock tab: the roll-up toggle (see clickBottomDockTab).
-  // Wired only to the bottom slot - side tabs keep plain activate-on-click.
-  const clickBottomTab = useCallback((panel: DockPanelId) => setDockLayout((l) => clickBottomDockTab(l, panel)), [])
+  // left-click on a dock tab: the fold toggle (clickDockTab rolls up the bottom dock or folds a side column to a rail).
+  // A left-click that leaves the PLC panel open also puts the keyboard in its code, so the click that brings it up is
+  // the one that starts typing. Judged on the current layout, like onRevealPanel below.
+  const clickTab = useCallback(
+    (panel: DockPanelId) => {
+      setDockLayout((l) => clickDockTab(l, panel))
+      if (panel === 'st' && tabShowsPanel(clickDockTab(dockLayout, panel), panel)) store.focusStCode()
+    },
+    [store, dockLayout],
+  )
   const floatDock = useCallback((panel: DockPanelId) => setDockLayout((l) => floatDockPanel(l, panel)), [])
   const canFloat = useCallback((panel: DockPanelId) => FLOATABLE_PANELS.includes(panel), [])
   // Where a popped-out panel came from, so closing its window puts it back there rather than at
@@ -734,19 +761,14 @@ export function App({ store, sim }: AppProps) {
   // Esc restores. Deliberately its own capture-phase listener rather than the controller's
   // keydown, which bails the moment focus is in a text field - and a maximized PLC editor is
   // exactly that, so routing it there would make the key work everywhere except where it's
-  // needed. The same guard is applied here, so Esc still means "escape" inside CodeMirror /
-  // an input and only restores when you're not typing.
+  // needed. It asks keyBelongsToTarget first, so Esc still means "escape" inside CodeMirror, its
+  // find panel, the ladder find bar or an input, and only restores when nothing there uses it.
   useEffect(() => {
     if (!maxPanel) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
-      const t = e.target
-      if (
-        t instanceof HTMLElement &&
-        (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
-      ) {
-        return
-      }
+      // the find bars own Escape (it closes them), on their buttons too; this listener runs first, in capture
+      if (keyBelongsToTarget(e)) return
       e.preventDefault()
       e.stopPropagation()
       restoreDock()
@@ -759,7 +781,7 @@ export function App({ store, sim }: AppProps) {
   // the dialog is App state, and the controller bails while a drag or a text field owns the keys —
   // "what are the shortcuts?" should answer from anywhere except mid-typing.
   useKeydownEverywhere((e) => {
-    if (isEditableTarget(e.target)) return
+    if (keyBelongsToTarget(e)) return
     if (resolveKeyAction(e, 'editor') !== 'ui.shortcuts') return
     e.preventDefault()
     // toggles, and always on the keyboard tab: ? is a question about the keys
@@ -817,7 +839,7 @@ export function App({ store, sim }: AppProps) {
       const start = (): void => { if (!cancelled) setThumbsReady(true) }
       if (typeof requestIdleCallback === 'function') requestIdleCallback(start, { timeout: 1500 })
       else setTimeout(start, 300)
-    })
+    }).catch((e: unknown) => console.warn('[oip] catalog thumbnail start failed', e))
     return () => { cancelled = true }
   }, [])
 
@@ -834,7 +856,7 @@ export function App({ store, sim }: AppProps) {
       const run = (): void => { if (!cancelled) void controller.warmCatalog(() => cancelled) }
       if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 8000 })
       else setTimeout(run, 3000)
-    })
+    }).catch((e: unknown) => console.warn('[oip] catalog warm start failed', e))
     return () => { cancelled = true }
   }, [controller])
 
@@ -931,7 +953,9 @@ export function App({ store, sim }: AppProps) {
       // this one before the folders existed (projectSplit.ts)
       // ...and not on the demo's page: the demo is a project of its own, not the one whose folder this is (an edit
       // that forks it gives it a folder of its own, demoFork.ts)
-      void splitFiling().then(() => (store.getState().demoSession ? undefined : restoreFolderSync(store, ctrl)))
+      void splitFiling()
+        .then(() => (store.getState().demoSession ? undefined : restoreFolderSync(store, ctrl)))
+        .catch((e: unknown) => console.warn('[oip] restoring the folder link failed', e))
       // Desktop only: File > Open Recent, and a folder named on the command line or by a second launch.
       // An edit that makes the demo yours files this project and opens the demo as a project of its own (demoFork.ts)
       const stopDemoFork = installDemoForkHost(store, ctrl)
@@ -941,7 +965,7 @@ export function App({ store, sim }: AppProps) {
       // Electron only: stream a desktop parts folder into the catalog (no-op in the browser). Surface
       // each build result so a part that fails to compile on save raises a toast + catalog badge instead
       // of silently keeping its last-good version.
-      const pkgSource = connectDesktopPackages(store, (statuses) => store.applyPackageStatuses(statuses))
+      const pkgSource = connectDesktopPackages(store)
       // Desktop only: serve the agent tools to the shell's MCP server (agent/desktopAgent.ts, docs/agent-tools.md)
       const stopAgent = connectDesktopAgent(store, ctrl, setAgentSession)
       if (import.meta.env.DEV || new URLSearchParams(location.search).has('hook')) {
@@ -962,6 +986,8 @@ export function App({ store, sim }: AppProps) {
           // so proving a link survives a reload needs the boot half reachable on its own
           restoreFolder: () => restoreFolderLink(store, ctrl),
           unlinkFolder: () => unlinkProjectFolder(store),
+          // the working copy as a reload would open it, once its writes have landed (projectFile.savedWorkingCopyText)
+          savedProject: savedWorkingCopyText,
           // Save Project to Folder without its picker (a native dialog a test browser cannot drive)
           saveFolder: (dir: unknown) => saveProjectToFolderHandle(dir as Parameters<typeof saveProjectToFolderHandle>[0], store, ctrl),
           // the desktop's two-way folder sync, for the Electron gates: run a round now, settle a conflict
@@ -1053,7 +1079,7 @@ export function App({ store, sim }: AppProps) {
           canvas?.addEventListener('webglcontextrestored', () => run.noteContextRestored())
           benchRef.current = run
           setBenchRun(run)
-        })
+        }).catch((e: unknown) => console.warn('[oip] bench run failed to start', e))
       }
 
       teardown = () => {
@@ -1107,6 +1133,26 @@ export function App({ store, sim }: AppProps) {
   // the bottom dock stands at the height of the panel in front (dockLayout's BottomHeights), so switching tabs moves it
   const bottomFront = dockLayout.active.bottom
   const dockTrack = bottomDockHeight(bottomFront, bottomHeights)
+  // the bottom dock's height drag, shared by its gutter and the corners where a left column's gutter crosses it
+  const bottomResize: ResizeTrack = {
+    axis: 'y',
+    sign: -1,
+    value: bottomDockOnScreen,
+    cssVar: dockSizeVar('dock'),
+    // the height is the front panel's own: dragging with the PLC in front leaves Parts where it was
+    onResize: (h) => bottomFront && setBottomHeights((b) => ({ ...b, [bottomFront]: Math.round(h) })),
+    min: BOTTOM_MIN,
+    max: bottomDockMax,
+  }
+  const widthResize = (widthKey: 'left' | 'right' | 'left2' | 'right2', sign: 1 | -1): ResizeTrack => ({
+    axis: 'x',
+    sign,
+    value: sizes[widthKey],
+    cssVar: dockSizeVar(widthKey),
+    onResize: (v) => setSizes((s) => ({ ...s, [widthKey]: v })),
+    min: 160,
+    max: 560,
+  })
   const sizeVars = useMemo(
     () => ({
       ...Object.fromEntries(Object.entries(sizes).map(([key, px]) => [dockSizeVar(key), `${px}px`])),
@@ -1114,6 +1160,7 @@ export function App({ store, sim }: AppProps) {
     }),
     [sizes, dockTrack],
   )
+  const presenting = state.presenting // only the scene (components/PresentOverlay.tsx; its grid is in toolbar.css)
   const appStyle: CSSProperties = {
     ...(isMobile
       ? {
@@ -1133,7 +1180,7 @@ export function App({ store, sim }: AppProps) {
 
   // desktop docks render in the grid; on mobile they move into the drawer below.
   // A maximized panel owns the whole shell, so the docks stand down for it too.
-  const showDocks = !isMobile && !df && !maxPanel
+  const showDocks = !isMobile && !df && !maxPanel && !presenting
 
   // render a movable panel's content for whichever dock slot currently holds it
   const renderDockPanel = (panel: DockPanelId) => {
@@ -1141,7 +1188,9 @@ export function App({ store, sim }: AppProps) {
       case 'tree':
         return (
           <div className="left-panel">
-            <SceneTree store={store} state={state} controller={controller} />
+            {/* keyed on scene loads: opening a project or the demo swaps the scene in place, and the tree's filter,
+                collapsed groups and rename belong to the scene they were made in (part ids repeat across scenes) */}
+            <SceneTree key={store.sceneLoads} store={store} state={state} controller={controller} />
           </div>
         )
       case 'inspector':
@@ -1164,6 +1213,12 @@ export function App({ store, sim }: AppProps) {
         return <HistoryPanel store={store} state={state} />
       case 'problems':
         return <ProblemsPanel store={store} state={state} controller={controller} />
+      case 'watch':
+        return (
+          <Suspense fallback={null}>
+            <WatchPanel store={store} state={state} controller={controller} />
+          </Suspense>
+        )
     }
   }
 
@@ -1195,6 +1250,7 @@ export function App({ store, sim }: AppProps) {
         sizeVar={dockSizeVar(spec.splitKey)}
         onResizeSplit={(v) => setSizes((s) => ({ ...s, [spec.splitKey]: v }))}
         onActivate={activateDock}
+        onTabClick={clickTab}
         onMaximize={maximizeDock}
         canMaximize={canMaximize}
         onMove={moveDock}
@@ -1210,26 +1266,21 @@ export function App({ store, sim }: AppProps) {
         key={`${spec.gridArea}-gut`}
         className="gutter"
         style={{ gridArea: spec.gutterArea, cursor: 'col-resize' }}
-        axis="x"
-        sign={sign}
-        value={sizes[spec.widthKey]}
-        cssVar={dockSizeVar(spec.widthKey)}
-        onResize={(v) => setSizes((s) => ({ ...s, [spec.widthKey]: v }))}
-        min={160}
-        max={560}
+        {...widthResize(spec.widthKey, sign)}
       />
     )
+    if (isColumnCollapsed(dockLayout, spec.widthKey)) return column // a rail: no width to drag, and no gutter area
     return sign === 1 ? [column, gutter] : [gutter, column]
   }
 
   // pilot mode owns the screen - hide the mobile chrome while walking around
-  const showMobileChrome = isMobile && state.mode !== 'pilot'
+  const showMobileChrome = isMobile && state.mode !== 'pilot' && !presenting
 
-  // The Logic sheet, unless the ST panel is in an OS window of its own. A phone can't reach that state,
+  // The PLC sheet, unless the ST panel is in an OS window of its own. A phone can't reach that state,
   // but a desktop window narrowed past the mobile breakpoint with a popout already open can. Mounting the
   // sheet then would put two live CodeMirrors on one buffer (the same hazard the floating panel's maxPanel
   // gate prevents), so the sheet is not offered.
-  const showMobileLogic = !!controller && !isPoppedOut(dockLayout, 'st')
+  const showMobilePlc = !!controller && !isPoppedOut(dockLayout, 'st')
 
   // `phone` is the CSS twin of isPhone: the tightest tier, where chrome a tablet still has
   // room for (sim speed, the Share label) has to come out of the toolbar.
@@ -1237,10 +1288,10 @@ export function App({ store, sim }: AppProps) {
   // bar hidden, the toolbar is the title bar (drag region + room for the window buttons).
   return (
     <div
-      className={`app${isMobile ? ' mobile' : ''}${isPhone ? ' phone' : ''}${DESKTOP_SHELL ? ' desktop-shell' : ''}${DESKTOP_MAC ? ' desktop-mac' : ''}`}
+      className={`app${isMobile ? ' mobile' : ''}${isPhone ? ' phone' : ''}${DESKTOP_SHELL ? ' desktop-shell' : ''}${DESKTOP_MAC ? ' desktop-mac' : ''}${presenting ? ' presenting' : ''}`}
       style={appStyle}
     >
-      <Toolbar store={store} state={state} controller={controller} />
+      {!presenting && <Toolbar store={store} state={state} controller={controller} />}
       {renderDockColumn({
         side: 'left',
         topId: 'leftTop',
@@ -1264,10 +1315,28 @@ export function App({ store, sim }: AppProps) {
           sized to something real and keeps the live WebGL/WebGPU context (and the render
           bundles holding baked resource handles) intact across the toggle. It also stops the
           canvas taking pointer events from underneath the panel. */}
-      <div className="viewport" ref={viewportRef} style={maxPanel ? { visibility: 'hidden' } : undefined}>
+      <div
+        className="viewport"
+        ref={viewportRef}
+        style={maxPanel ? { visibility: 'hidden' } : undefined}
+        // A part file dropped here is imported and placed where it landed; a model or a robot goes to the Parts dock. Any
+        // file drag is taken (names aren't readable until the drop), so the browser never opens a dropped file.
+        onDragOver={(e) => {
+          if (!state.readOnly && e.dataTransfer.types.includes('Files')) e.preventDefault()
+        }}
+        onDrop={(e) => {
+          if (state.readOnly || !e.dataTransfer.types.includes('Files')) return
+          e.preventDefault()
+          const drop = readPartDrop(e)
+          const files = partFilesOf(drop.files)
+          if (handToPartsDock(drop)) store.revealPanel('catalog')
+          else if (controller && files.length > 0) void importPartFiles(controller, files, drop.at)
+        }}
+      >
         {viewError && <div className="viewport-fallback">{t(M.rendererUnavailable, { error: viewError })}</div>}
-        {state.mode !== 'pilot' && !isPhone && <ViewportToolbar store={store} state={state} controller={controller} />}
-        {state.showStats && (
+        {state.mode !== 'pilot' && !isPhone && !presenting && <ViewportToolbar store={store} state={state} controller={controller} />}
+        {presenting && <PresentOverlay store={store} state={state} controller={controller} />}
+        {state.showStats && !presenting && (
           <StatsOverlay frameStats={frameStats} controller={controller} view={view} running={state.running} simHz={state.simHz} timeScale={state.timeScale} />
         )}
         {benchEnabled && <BenchOverlay run={benchRun} recovered={benchRecovered} />}
@@ -1275,35 +1344,26 @@ export function App({ store, sim }: AppProps) {
             labels is half of what they are for */}
         <AnnotationOverlay store={store} view={view} controller={controller} show={state.showNotes} />
         <ViewportSelectMenu store={store} state={state} />
-        {state.mode !== 'pilot' && <FollowBadge following={state.following} controller={controller} />}
-        <GuardOpeningsBanner store={store} state={state} />
-        {state.viewportHint && <ViewportHint hint={state.viewportHint} store={store} pilot={state.mode === 'pilot'} />}
+        {state.mode !== 'pilot' && !presenting && <FollowBadge following={state.following} controller={controller} />}
+        {!presenting && <GuardOpeningsBanner store={store} state={state} />}
+        {state.viewportHint && !presenting && <ViewportHint hint={state.viewportHint} store={store} pilot={state.mode === 'pilot'} />}
         {state.mode === 'pilot' && <PilotHud prompt={state.pilotPrompt} />}
         {state.mode === 'pilot' && isTouch && view && (
           <PilotTouchControls view={view} store={store} prompt={state.pilotPrompt} />
         )}
         {/* the toolbar's pilot button is hidden on the mobile layout; give touch users this FAB
             instead. Large touch tablets keep the toolbar button (room to spare), so no FAB there. */}
-        {state.mode !== 'pilot' && isMobile && isTouch && <PilotFab store={store} />}
+        {state.mode !== 'pilot' && !presenting && isMobile && isTouch && <PilotFab store={store} />}
         <ModelLoadingIndicator />
         {/* an agent's call in flight, and the review of its edits (docs/agent-tools.md, "Working beside a person"):
             in the viewport's corner, never over a dock it would cover */}
-        {agentSession && agentCalled && (
+        {agentSession && agentCalled && !presenting && (
           <Suspense fallback={null}>
             <AgentActivity session={agentSession} store={store} state={state} controller={controller} />
           </Suspense>
         )}
         {!viewError && <ViewportLoadingCover />}
-        {view && getCollabContext() && <PresenceOverlay view={view} />}
-        {getCollabContext() && state.running && (
-          <div
-            className="preview-badge"
-            title={t(M.previewTitle)}
-          >
-            <span className="preview-dot" aria-hidden="true" />
-            {t(M.preview)}
-          </div>
-        )}
+        {view && getCollabContext() && !presenting && <PresenceOverlay view={view} />}
       </div>
       {/* The maximized panel: same grid cell as the viewport, painted over it (see the CSS).
           Rendered here - after the viewport, before the right columns - so DOM order alone
@@ -1347,26 +1407,23 @@ export function App({ store, sim }: AppProps) {
       {showDocks && dockLayout.bottom.length > 0 && (
         <>
           {/* collapsed = no height to drag, and buildDockGrid drops the `gutd` row it lives in */}
-          {!dockLayout.bottomCollapsed && (
-            <ResizeGutter
-              className="gutter gutter-dock"
-              axis="y"
-              sign={-1}
-              value={bottomDockOnScreen}
-              cssVar={dockSizeVar('dock')}
-              // the height is the front panel's own: dragging with the PLC in front leaves Parts where it was
-              onResize={(h) => bottomFront && setBottomHeights((b) => ({ ...b, [bottomFront]: Math.round(h) }))}
-              min={BOTTOM_MIN}
-              max={bottomDockMax}
+          {!dockLayout.bottomCollapsed && <ResizeGutter className="gutter gutter-dock" {...bottomResize} />}
+          {/* where a column's width gutter meets the height gutter: one drag sets both */}
+          {dockGridCorners(dockLayout).map((c) => (
+            <ResizeCorner
+              key={c.widthKey}
+              className={`gutter gutter-corner gutter-corner-${c.side}`}
+              style={{ gridRow: c.row, gridColumn: c.column }}
+              tracks={[widthResize(c.widthKey, c.side === 'left' ? 1 : -1), bottomResize]}
             />
-          )}
+          ))}
           <DockSlot
             slot="bottom"
             panels={dockLayout.bottom}
             active={dockLayout.active.bottom}
             collapsed={dockLayout.bottomCollapsed}
             onActivate={activateDock}
-            onTabClick={clickBottomTab}
+            onTabClick={clickTab}
             onMaximize={maximizeDock}
             canMaximize={canMaximize}
             onMove={moveDock}
@@ -1388,7 +1445,7 @@ export function App({ store, sim }: AppProps) {
           {mobilePanel === 'tree' && (
             <div className="mobile-drawer left">
               <div className="left-panel">
-                <SceneTree store={store} state={state} controller={controller} />
+                <SceneTree key={store.sceneLoads} store={store} state={state} controller={controller} />
               </div>
             </div>
           )}
@@ -1416,7 +1473,7 @@ export function App({ store, sim }: AppProps) {
               parts sheet it is non-modal: the point is to watch the code and the scene at once.
               Editing stays desktop-only (StEditor's `viewOnly`), which is the same line the phone
               already draws for part authoring. */}
-          {mobilePanel === 'st' && controller && showMobileLogic && (
+          {mobilePanel === 'st' && controller && showMobilePlc && (
             <div className="mobile-drawer st">
               {/* the tasks it runs on are in the panel's organizer, drawn over the code on a phone */}
               <PlcPanel store={store} state={state} controller={controller} docked viewOnly />
@@ -1426,7 +1483,7 @@ export function App({ store, sim }: AppProps) {
             panel={mobilePanel}
             onToggle={(p) => setMobilePanel((cur) => (cur === p ? null : p))}
             showCatalog={!isPhone}
-            showLogic={showMobileLogic}
+            showPlc={showMobilePlc}
           />
         </>
       )}
@@ -1525,12 +1582,11 @@ export function App({ store, sim }: AppProps) {
       )}
       {/* every command, searchable - and the only path to the ones with no button (Ctrl+Shift+P) */}
       {paletteOpen && <CommandPalette store={store} state={state} controller={controller} onClose={() => setPaletteOpen(false)} />}
-      {/* where the program runs: here, or on an external PLC (Simulation > External PLC…, the organizer's Controller) */}
-      {controllerPropsOpen && controller && (
-        <Suspense fallback={null}>
-          <ControllerDialog store={store} state={state} controller={controller} onClose={() => setControllerPropsOpen(false)} />
-        </Suspense>
-      )}
+      {/* where the program and the PLCs run (Simulation > PLC Controllers…), and which one parts' tags go to (Assign to Controller…) */}
+      <Suspense fallback={null}>
+        {controllerPropsOpen && controller && <ControllerDialog store={store} state={state} controller={controller} onClose={() => setControllerPropsOpen(false)} />}
+        {assignControllerOpen && <AssignControllerDialog store={store} state={state} onClose={() => setAssignControllerOpen(false)} />}
+      </Suspense>
       {/* active onboarding tour - desktop only (it drives the catalog + PLC panel, absent on mobile) */}
       {!isMobile && controller && <TutorialOverlay store={store} state={state} controller={controller} view={view} />}
       {/* in-browser behavior-script editor (Monaco) - one shared mount, opened from anywhere via the store */}
@@ -1561,6 +1617,7 @@ export function App({ store, sim }: AppProps) {
       <TranslateToast />
       {/* answers askName() (nameDialog.ts): the app's own prompt, since window.prompt throws in Electron */}
       <NameDialogHost />
+      <PartChangeDialogHost />
       {exportChoices && <ExportProjectDialog store={store} project={exportChoices} onClose={() => setExportChoices(null)} />}
       {/* in a room: asks before other people's part code runs here (the gate already holds it back) */}
       <RoomCodePrompt parts={state.scene.parts} />
@@ -1617,7 +1674,7 @@ export function App({ store, sim }: AppProps) {
           const file = e.target.files?.[0]
           e.target.value = '' // so choosing the same file twice fires again
           // lazy, like the exports (commands.ts): the readers load when a file does
-          if (file) void import('./stFileTransfer').then((m) => m.importStFile(store, file))
+          if (file) void import('./program/stFileTransfer').then((m) => m.importStFile(store, file)).catch(alertFailure)
         }}
       />
       {/* every surface's "Import Project…" lands here: file.importProject → CommandUi.openProjectFilePicker → this
@@ -1634,7 +1691,7 @@ export function App({ store, sim }: AppProps) {
           const file = e.target.files?.[0]
           e.target.value = '' // so choosing the same file twice fires again
           if (!file) return
-          void file.arrayBuffer().then((buf) => importProjectFile(store, controller, new Uint8Array(buf), file.name))
+          void file.arrayBuffer().then((buf) => importProjectFile(store, controller, new Uint8Array(buf), file.name)).catch(alertFailure)
         }}
       />
     </div>

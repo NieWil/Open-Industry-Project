@@ -4,7 +4,7 @@
 import { CapsuleGeometry, Color, Group, Mesh, MeshStandardMaterial, Sphere } from 'three'
 import type { InstancedMesh, Intersection, Material, Object3D, Vector3 } from 'three'
 import { isCargoPart } from '../../core/frame'
-import { conveyorSurfaceVelocity } from '../../core/conveyorSurface'
+import { conveyorSurfaceVelocity } from '../../core/conveyor/conveyorSurface'
 import { FLOOR_SURFACE_Y } from '../../core/types'
 import type { BoxPick, PilotHandlers } from '../api'
 import { PILOT_EYE_HEIGHT } from './pilot'

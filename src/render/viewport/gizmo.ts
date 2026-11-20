@@ -7,10 +7,11 @@ import {
   DoubleSide,
   Euler,
   Group,
+  Line,
   LineBasicMaterial,
   LineSegments,
   Mesh,
-  LineLoop,
+  Matrix4,
   MeshBasicMaterial,
   PlaneGeometry,
   Quaternion,
@@ -110,9 +111,17 @@ const SECTOR_SEG_ANGLE = 0.05
 const CIRCLE_SEGS = 64
 // radians of free trackball rotation per pixel of pointer drag
 const TRACKBALL_SENSITIVITY = 0.005
+// a translate drag travels at most this many camera-to-gizmo distances: near the horizon a pixel of cursor is
+// hundreds of metres of plane
+const MAX_TRAVEL_PER_CAMERA_DISTANCE = 20
 // a ring whose axis lies within ~5° of the camera-facing plane (cos 85°) is
 // edge-on -> switch from angular to a linear drag (the angular reading would jump)
 const ORTHO_THRESHOLD = Math.cos((85 * Math.PI) / 180)
+// a ring tilted less than ~75° from face-on (|axis·view| >= cos 75.5°) reads the cursor where it meets the ring's own
+// plane, so the swept wedge, the cursor and the part agree. Read on a camera-facing plane instead, a tilted ring's
+// squashed ellipse made the wedge lag the cursor across one quarter and leap up to ~40° per step across the next. Closer
+// to edge-on the ring-plane hit runs off toward the horizon, so those rings keep the camera-facing reading.
+const RING_PLANE_MIN = 0.25
 const RING_RADIUS = 1 // axis-ring radius in gizmo-local units (the TorusGeometry radius)
 // matches halfRing's shader discard (vFaceOn >= 0.92 draws the ring full): a ring
 // this close to face-on shows as a full circle, so its whole proxy stays pickable.
@@ -130,6 +139,9 @@ const Y_UP = new Vector3(0, 1, 0)
 const X_AXIS = new Vector3(1, 0, 0)
 // default camera normal for the unit tests' top-down rays (view.ts passes the real one)
 const DEFAULT_CAM_NORMAL = new Vector3(0, -1, 0)
+// scratch for the view ring's per-frame facing (updateScale)
+const _faceM = new Matrix4()
+const _faceQ = new Quaternion()
 
 /** Per-ring root-local rotation axis; the in-plane drag frame is derived per drag. */
 const RING_AXIS: Record<'rotX' | 'rotY' | 'rotZ', Vector3> = {
@@ -160,11 +172,17 @@ function cameraRightUp(camNormal: Vector3): { right: Vector3; up: Vector3 } {
   return { right, up }
 }
 
-/** intersection of the ray origin+t*dir with the plane (normal, through point); null when parallel */
-function rayPlaneHit(origin: Vector3, dir: Vector3, normal: Vector3, point: Vector3): Vector3 | null {
+/**
+ * intersection of the ray origin+t*dir with the plane (normal, through point); null when parallel, and in perspective
+ * when the plane lies behind the ray's origin: a cursor just above the horizon of a floor-plane drag hits the plane
+ * behind the camera, which once put the part a kilometre back. An orthographic ray starts on the camera plane and has
+ * no horizon, so a hit behind its origin is still the point under the cursor.
+ */
+function rayPlaneHit(origin: Vector3, dir: Vector3, normal: Vector3, point: Vector3, orthographic: boolean): Vector3 | null {
   const denom = normal.dot(dir)
   if (Math.abs(denom) < 1e-6) return null
   const t = normal.dot(tmpW.subVectors(point, origin)) / denom
+  if (t <= 0 && !orthographic) return null
   return new Vector3().copy(dir).multiplyScalar(t).add(origin)
 }
 
@@ -257,10 +275,10 @@ type DragState =
       last: [number, number, number]
     }
   // a rotation ring (X/Y/Z/view): rotate about axisWorld.
-  // The drag angle is read on a camera-facing plane and accumulated via signed_angle
-  // about axisWorld; an edge-on ring (axis ~in that plane) switches to a linear drag.
-  // initialClickVec (on the ring's own plane) anchors the feedback arc; cursorHit is
-  // the latest camera-facing-plane intersection (the rotation line points at it).
+  // The drag angle is read where the cursor meets the ring's own plane (`planar`, prevRingVec), or on a
+  // camera-facing plane for a ring near edge-on (prevVec), and accumulated via signed_angle about axisWorld; an
+  // edge-on ring (axis ~in the view plane) switches to a linear drag. initialClickVec (on the ring's own plane)
+  // anchors the feedback arc; cursorHit is the latest reading's intersection (the rotation line points at it).
   | {
       kind: 'ring'
       center: Vector3
@@ -277,6 +295,8 @@ type DragState =
       local: boolean
       initialClickVec: Vector3
       prevVec: Vector3
+      planar: boolean
+      prevRingVec: Vector3
       accum: number
       rotation: number
       showLine: boolean
@@ -355,6 +375,8 @@ export class TransformGizmo {
   })
   private state: GizmoState | null = null
   private drag: DragState | null = null
+  // the camera projection the live drag started in (an orthographic ray may hit a plane behind its origin)
+  private orthographic = false
 
   constructor() {
     this.root.visible = false
@@ -455,9 +477,10 @@ export class TransformGizmo {
     const sector = new Mesh(this.sectorGeo, this.sectorMaterial)
     sector.renderOrder = 998
     sector.frustumCulled = false
-    // full reference circle in the rotation plane (drawn behind the swept arc)
-    this.circleGeo.setAttribute('position', new BufferAttribute(new Float32Array(CIRCLE_SEGS * 3), 3))
-    const circle = new LineLoop(this.circleGeo, this.tickMaterial)
+    // full reference circle in the rotation plane (drawn behind the swept arc). A Line whose last point repeats
+    // the first: the WebGPU renderer draws no LineLoop.
+    this.circleGeo.setAttribute('position', new BufferAttribute(new Float32Array((CIRCLE_SEGS + 1) * 3), 3))
+    const circle = new Line(this.circleGeo, this.tickMaterial)
     circle.renderOrder = 998
     circle.frustumCulled = false
     // 3 line segments: the two arc edges (center->start, center->end) + the cursor line
@@ -506,7 +529,18 @@ export class TransformGizmo {
    * (setState fires each frame), so it honours the drag's keyboard lock (constrain), not the space toggle - and a
    * part's local translate is yaw-only, while a frame is used whole.
    */
+  private planeHit(origin: Vector3, dir: Vector3, normal: Vector3, point: Vector3): Vector3 | null {
+    return rayPlaneHit(origin, dir, normal, point, this.orthographic)
+  }
+
   private orientRoot(): void {
+    this.orientRootOnly()
+    // the rotation feedback is built in world orientation: undo the root's turn, so a local-space gizmo turning with
+    // the part does not carry the wedge (it ran a frame's turn ahead of the cursor)
+    this.feedbackGroup.quaternion.copy(this.root.quaternion).invert()
+  }
+
+  private orientRootOnly(): void {
     const state = this.state
     if (!state) return
     const translate = this.drag?.kind === 'translate' ? this.drag : null
@@ -592,12 +626,18 @@ export class TransformGizmo {
     this.applyHighlight(handle)
   }
 
-  beginDrag(handle: GizmoHandle, ray: Ray, camNormal: Vector3 = DEFAULT_CAM_NORMAL, screen?: { x: number; y: number }): void {
+  beginDrag(handle: GizmoHandle, ray: Ray, camNormal: Vector3 = DEFAULT_CAM_NORMAL, screen?: { x: number; y: number }, orthographic = false): void {
     if (!this.state) return
+    this.orthographic = orthographic
     this.applyHighlight(handle === 'view' ? null : handle)
     const center = new Vector3(this.state.center[0], this.state.center[1], this.state.center[2])
     if (handle === 'rotX' || handle === 'rotY' || handle === 'rotZ' || handle === 'rotView') {
-      this.beginRing(handle, ray, center, camNormal)
+      // In perspective the ring sits off the screen centre wherever the part is not, so "towards the viewer" is the
+      // line of sight to it, not the camera's forward: the view ring turns about that line and its angle is read on
+      // the plane facing it. A perspective ray starts at the camera, so the sight line is centre minus ray origin. An
+      // orthographic ray starts on the near plane and every sight line is the camera normal.
+      const sight = orthographic ? camNormal.clone() : center.clone().sub(ray.origin)
+      this.beginRing(handle, ray, center, sight.lengthSq() > 1e-12 ? sight.normalize() : camNormal)
     } else if (handle === 'rotTrackball') {
       // seed the screen-space frame + grab pixel; dragDelta integrates the offset
       const { right, up } = cameraRightUp(camNormal)
@@ -643,6 +683,8 @@ export class TransformGizmo {
       local,
       initialClickVec: seed.initialClickVec,
       prevVec: seed.prevVec,
+      planar: seed.planar,
+      prevRingVec: seed.prevRingVec,
       accum: 0,
       rotation: 0,
       showLine: false,
@@ -669,14 +711,16 @@ export class TransformGizmo {
     axisWorld: Vector3,
     origin: Vector3,
     dir: Vector3,
-  ): { initialClickVec: Vector3; prevVec: Vector3; cursorHit: Vector3 | null } {
-    const ringHit = rayPlaneHit(origin, dir, axisWorld, center)
+  ): { initialClickVec: Vector3; prevVec: Vector3; planar: boolean; prevRingVec: Vector3; cursorHit: Vector3 | null } {
+    const ringHit = this.planeHit(origin, dir, axisWorld, center)
     const camFacing = tmpA.subVectors(center, origin).normalize()
-    const camHit = rayPlaneHit(origin, dir, camFacing, center)
+    const planar = ringHit !== null && ringHit.distanceToSquared(center) > 1e-12 && Math.abs(camFacing.dot(axisWorld)) >= RING_PLANE_MIN
+    const camHit = this.planeHit(origin, dir, camFacing, center)
     const refHit = ringHit ?? camHit
     const initialClickVec = refHit ? new Vector3().subVectors(refHit, center).normalize() : axisWorld.clone()
     const prevVec = camHit ? new Vector3().subVectors(camHit, center).normalize() : initialClickVec.clone()
-    return { initialClickVec, prevVec, cursorHit: camHit ? camHit.clone() : null }
+    const cursor = planar ? ringHit : camHit
+    return { initialClickVec, prevVec, planar, prevRingVec: initialClickVec.clone(), cursorHit: cursor ? cursor.clone() : null }
   }
 
   /** re-constrain an active translate OR rotate drag (keyboard X/Y/Z, Shift+X/Y/Z) */
@@ -709,6 +753,9 @@ export class TransformGizmo {
    */
   private constrainRing(drag: Extract<DragState, { kind: 'ring' }>, target: GizmoConstraint): void {
     if (target !== 'x' && target !== 'y' && target !== 'z') return
+    // a yaw-only part (a conveyor) has only its yaw ring: re-aiming to X, Z or the view axis would show a turn the
+    // controller never applies and freeze the part at its last yaw
+    if (this.state?.rotateYawOnly === true) return
     if (drag.axisKey !== target) {
       drag.axisKey = target
       drag.local = false
@@ -723,6 +770,8 @@ export class TransformGizmo {
     const seed = this.seedRing(drag.center, drag.axisWorld, drag.clickOrigin, drag.clickDir)
     drag.initialClickVec = seed.initialClickVec
     drag.prevVec = seed.prevVec
+    drag.planar = seed.planar
+    drag.prevRingVec = seed.prevRingVec
     drag.accum = 0
     drag.cursorHit = seed.cursorHit
     const handle = drag.axisKey === 'view' ? 'rotView' : drag.axisKey === 'x' ? 'rotX' : drag.axisKey === 'y' ? 'rotY' : 'rotZ'
@@ -757,14 +806,36 @@ export class TransformGizmo {
     const tStep = snap?.translate ?? null
     if (drag.kind === 'translate') {
       const m = this.translateMotion(drag, ray)
-      // snap each component of the travelled motion, so a constrained drag steps in increments
-      if (m) drag.last = [quantize(m.x, tStep), quantize(m.y, tStep), quantize(m.z, tStep)]
+      if (m) {
+        // snap the motion along the gizmo's own axes, so a constrained drag steps in increments: snapping world
+        // components would push a local-axis drag of a yawed part off its axis
+        const axes = this.localAxes(drag.local)
+        const s = new Vector3()
+        for (const a of [axes.x, axes.y, axes.z]) s.addScaledVector(a, quantize(m.dot(a), tStep))
+        drag.last = [s.x, s.y, s.z]
+      }
       return { translation: drag.last }
     }
-    // rotation ring: read the cursor on a camera-facing plane (perspective: facing the
-    // camera position) and accumulate the signed angle swept about the world axis.
+    // rotation ring: read the cursor where it meets the ring's own plane and accumulate the signed angle swept about
+    // the world axis. A cursor past the tilted ring's horizon meets no plane: the rotation holds.
+    if (drag.planar) {
+      const ringHit = this.planeHit(ray.origin, ray.direction, drag.axisWorld, drag.center)
+      if (ringHit && ringHit.distanceToSquared(drag.center) > 1e-12) {
+        const current = tmpB.subVectors(ringHit, drag.center).normalize()
+        drag.accum += signedAngle(drag.prevRingVec, current, drag.axisWorld)
+        drag.prevRingVec.copy(current)
+        drag.cursorHit = ringHit
+        drag.showLine = true
+        drag.rotation = drag.accum
+      }
+      return {
+        rotationDelta: quantize(drag.rotation, snap?.rotate ?? null),
+        rotationAxis: [drag.axisWorld.x, drag.axisWorld.y, drag.axisWorld.z],
+      }
+    }
+    // a ring near edge-on: read the cursor on a camera-facing plane (perspective: facing the camera position)
     const camFacing = tmpA.subVectors(drag.center, ray.origin).normalize()
-    const hit = rayPlaneHit(ray.origin, ray.direction, camFacing, drag.center)
+    const hit = this.planeHit(ray.origin, ray.direction, camFacing, drag.center)
     if (hit) {
       const current = tmpB.subVectors(hit, drag.center).normalize()
       drag.accum += signedAngle(drag.prevVec, current, drag.axisWorld)
@@ -776,7 +847,7 @@ export class TransformGizmo {
         // gizmo-radius of travel = 90° (orthogonal-rotation fallback)
         drag.showLine = false
         const projAxis = tmpC.crossVectors(camFacing, drag.axisWorld)
-        const click = rayPlaneHit(drag.clickOrigin, drag.clickDir, camFacing, drag.center)
+        const click = this.planeHit(drag.clickOrigin, drag.clickDir, camFacing, drag.center)
         if (click) {
           const projection = tmpD.subVectors(hit, click).dot(projAxis)
           drag.rotation = (projection * (Math.PI / 2)) / ((this.root.scale.x || 1) * drag.radius)
@@ -807,8 +878,8 @@ export class TransformGizmo {
    * Rotation overlay: a reference circle in the rotation plane, a filled swept
    * arc from the initial click to the applied angle, the two arc-edge radii, and (for
    * an angular drag) a line from the gizmo center toward the cursor. Drawn under root
-   * in root-local space, so the world axis/click vectors are pulled back through the
-   * gizmo's orientation; radius is in local units (root's screen-scale sizes it).
+   * in world orientation (orientRoot counter-rotates feedbackGroup by the root's turn), so the world axis/click
+   * vectors are used as they are; radius is in local units (root's screen-scale sizes it).
    */
   setRotationFeedback(angleRad: number | null): void {
     const drag = this.drag
@@ -816,10 +887,9 @@ export class TransformGizmo {
       this.feedbackGroup.visible = false
       return
     }
-    const inv = tmpQuat.copy(this.root.quaternion).invert()
-    const up = tmpA.copy(drag.axisWorld).applyQuaternion(inv).normalize()
+    const up = tmpA.copy(drag.axisWorld).normalize()
     // right = the click vector projected into the rotation plane (arc starts here)
-    const right = tmpB.copy(drag.initialClickVec).applyQuaternion(inv)
+    const right = tmpB.copy(drag.initialClickVec)
     right.addScaledVector(up, -up.dot(right))
     // click was along the axis (degenerate): pick any perpendicular for the arc anchor
     if (right.lengthSq() < 1e-9) right.crossVectors(Math.abs(up.x) < 0.9 ? X_AXIS : Y_UP, up)
@@ -828,7 +898,7 @@ export class TransformGizmo {
     const r = drag.radius
 
     const circle = this.circleGeo.getAttribute('position') as BufferAttribute
-    for (let i = 0; i < CIRCLE_SEGS; i++) {
+    for (let i = 0; i <= CIRCLE_SEGS; i++) {
       const a = (i / CIRCLE_SEGS) * Math.PI * 2
       const c = Math.cos(a) * r
       const s = Math.sin(a) * r
@@ -874,7 +944,7 @@ export class TransformGizmo {
     let lineVisible = false
     if (drag.showLine && drag.cursorHit) {
       const s = this.root.scale.x || 1
-      const end = tmpD.subVectors(drag.cursorHit, drag.center).applyQuaternion(inv).multiplyScalar(1 / s)
+      const end = tmpD.subVectors(drag.cursorHit, drag.center).multiplyScalar(1 / s)
       edge.array.set([end.x, end.y, end.z], 15)
       lineVisible = true
     }
@@ -889,9 +959,12 @@ export class TransformGizmo {
     const d = camera.position.distanceTo(this.root.position)
     const worldPerPx = worldPerPixel(camera, d, viewportHeight)
     this.root.scale.setScalar(Math.max(worldPerPx * GIZMO_PX, 1e-4))
-    // the view ring faces the camera in world space (undo the root's full orientation)
+    // the view ring faces the viewer in world space (undo the root's full orientation): along the line of sight to the
+    // gizmo in perspective, the axis a view-ring drag turns about (beginDrag), and along the camera in orthographic
     if (this.rotateGroup.visible) {
-      this.viewRingGroup.quaternion.copy(this.root.quaternion).invert().multiply(camera.quaternion)
+      const ortho = (camera as PerspectiveCamera & { orthographic?: boolean }).orthographic === true
+      const facing = ortho ? camera.quaternion : _faceQ.setFromRotationMatrix(_faceM.lookAt(camera.position, this.root.position, camera.up))
+      this.viewRingGroup.quaternion.copy(this.root.quaternion).invert().multiply(facing)
     }
     if (this.moveGroup.visible) this.updatePadQuadrants(camera)
   }
@@ -1023,8 +1096,8 @@ export class TransformGizmo {
         normal = axes.z
         break
     }
-    const hit = rayPlaneHit(ray.origin, ray.direction, normal, drag.center)
-    const click = rayPlaneHit(drag.clickOrigin, drag.clickDir, normal, drag.center)
+    const hit = this.planeHit(ray.origin, ray.direction, normal, drag.center)
+    const click = this.planeHit(drag.clickOrigin, drag.clickDir, normal, drag.center)
     if (!hit || !click) return null
     const motion = hit.sub(click)
     // axis lock: project the planar motion onto the single axis
@@ -1032,6 +1105,8 @@ export class TransformGizmo {
       const along = mask.dot(motion)
       motion.copy(mask).multiplyScalar(along)
     }
+    const maxTravel = MAX_TRAVEL_PER_CAMERA_DISTANCE * drag.clickOrigin.distanceTo(drag.center)
+    if (motion.length() > maxTravel) motion.setLength(maxTravel)
     return motion
   }
 }

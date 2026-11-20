@@ -1,12 +1,16 @@
-// Color Sensor — a photoeye that classifies the colour of cargo crossing its beam. Demonstrates the colour
-// output of sensing: the host hands ctx.sense().color the detected tint; the behavior reduces it to a colour
-// code an ST program reads as an INT (1=red, 2=green, 3=blue, 0=none/ambiguous).
+// Color Sensor — a photoeye that tells which of a list of colours the cargo crossing its beam is. Demonstrates the
+// colour output of sensing: the host hands ctx.sense().color the detected tint; the behavior matches it against the
+// `colors` param and publishes a code an ST program reads as an INT: 1 for the first colour in the list, 2 for the
+// second, and so on, 0 for nothing in range or no listed colour within the tolerance.
 //
 // It shares the Photo Eye's housing (_shared/sensorPhotoeye.js), in its own colours (teal body, red lens).
 //
 // This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the
 // _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the
 // rig compiled from rig()).
+
+// The `colors` param ('#rrggbb' joined by commas) as sRGB 0..255 triples, the same space ctx.sense().color is in.
+// Parsed again only when the param changes.
 
 // ---- from examples/parts/_shared/sensorOutlines.js ----
 // a rounded-corner rectangle, for windows and panels
@@ -139,12 +143,29 @@ function photoeyeHousing(g) {
   ]
 }
 
-function classify(c) {
-  const max = Math.max(c[0], c[1], c[2])
-  if (max < 0.25) return 0 // too dark to call a colour
-  const mid = c[0] + c[1] + c[2] - max - Math.min(c[0], c[1], c[2]) // the middle channel
-  if (mid > max * 0.6) return 0 // washed-out / secondary (yellow/white/grey) → no primary
-  return max === c[0] ? 1 : max === c[1] ? 2 : 3
+let listText
+let list = []
+function colorList(csv) {
+  if (csv === listText) return list
+  listText = csv
+  list = (csv || '').split(',').map((c) => c.trim().replace(/^#/, '')).filter((c) => /^[0-9a-f]{6}$/i.test(c)).map((h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)))
+  return list
+}
+
+// The code of the listed colour nearest the tint: each channel within `tolerance` steps of 255, the closest by its
+// worst channel, the earlier entry on a tie. 0 when none is close enough.
+function classify(c, colors, tolerance) {
+  let code = 0
+  let best = Infinity
+  for (let i = 0; i < colors.length; i++) {
+    const k = colors[i]
+    const d = Math.max(Math.abs(c[0] * 255 - k[0]), Math.abs(c[1] * 255 - k[1]), Math.abs(c[2] * 255 - k[2]))
+    if (d <= tolerance && d < best) {
+      best = d
+      code = i + 1
+    }
+  }
+  return code
 }
 
 definePart({
@@ -152,18 +173,19 @@ definePart({
   params: {
     maxRange: { type: 'number', default: 2, min: 0.1, max: 10, step: 0.05, label: 'Max range (m)', desc: 'How far down the beam a target is still read. The beam is cast along local +Z, so aim the sensor by rotating it.' },
     showBeam: { type: 'boolean', default: true, label: 'Show beam', desc: 'Draw the beam line in the viewport. A viewing aid only - hiding it does not change what the sensor reads.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
-    colorTag: { type: 'tag', values: [{ value: 0, label: 'none' }, { value: 1, label: 'red' }, { value: 2, label: 'green' }, { value: 3, label: 'blue' }], dir: 'out', stType: 'INT', default: '', label: 'Color code tag', group: 'Comms', desc: 'Where the detected colour code is published. It reads 0 both when nothing is in range and when the colour is too ambiguous to call, so pair it with a presence sensor if the difference matters.' },
+    colors: { type: 'color', list: true, default: '#ff0000,#00ff00,#0000ff', label: 'Colors', desc: 'The colours this sensor tells apart. The colour code is the position in this list: 1 for the first, 2 for the second, and so on.' },
+    tolerance: { type: 'number', default: 80, min: 0, max: 255, step: 1, label: 'Match tolerance', desc: 'How far a tint may be from a listed colour and still match, in steps of 0 to 255 on each of red, green and blue. 0 matches only the exact colour. When two listed colours are within range, the closer one wins.' },
+    colorTag: { type: 'tag', values: [{ value: 0, label: 'none' }], dir: 'out', stType: 'INT', default: '', label: 'Color code tag', group: 'Comms', desc: 'Where the detected colour code is published: the position of the matched colour in Colors (1 = the first), or 0. It reads 0 both when nothing is in range and when no listed colour matches, so pair it with a presence sensor if the difference matters.' },
   },
   // The Photo Eye's housing, drawn: body, lens window, top cap + pot, M8 plug, and the mounting bracket.
   geometry(g) {
     return photoeyeHousing(g)
   },
-  step(ctx) {
+  react(ctx) {
     const s = ctx.sense('lens')
     const present = s.hit && s.distance <= ctx.params.maxRange
-    const code = present ? classify(s.color) : 0
+    const code = present ? classify(s.color, colorList(ctx.params.colors), ctx.params.tolerance) : 0
     ctx.lamps.led = present
-    if (ctx.params.enableComms && ctx.params.colorTag) ctx.writeNumber(ctx.params.colorTag, code)
+    if (ctx.params.colorTag) ctx.writeNumber(ctx.params.colorTag, code)
   },
 })

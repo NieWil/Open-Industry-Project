@@ -12,7 +12,7 @@
 
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
-import { messageCatalog, setLocale } from '../core/i18n'
+import { messageCatalog, messageSource, setLocale } from '../core/i18n'
 import { COMMANDS, desktopMenuModel, groupLabel } from './commands'
 
 const source = readFileSync(new URL('./commands.ts', import.meta.url), 'utf8')
@@ -29,6 +29,13 @@ describe('command labels go through the seam', () => {
     for (const cmd of COMMANDS) {
       expect(catalog.has(`command.${cmd.id}.label`), `${cmd.id} has no registered label message`).toBe(true)
     }
+  })
+
+  it('keeps each English label reachable under a locale (the palette searches it too)', () => {
+    setLocale('xx', markAll())
+    const undo = COMMANDS.find((c) => c.id === 'edit.undo')!
+    expect(undo.label).toBe('[xx]Undo')
+    expect(messageSource('command.edit.undo.label')).toBe('Undo')
   })
 
   it('English is unchanged with no locale installed', () => {

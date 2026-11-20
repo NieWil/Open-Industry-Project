@@ -15,14 +15,16 @@
 import { activeBinding, type KeyActionId } from '../core/keymap'
 import { isKnownDialect } from '../core/dialect'
 import { defineMessage, t, type MessageId } from '../core/i18n'
-import { openDemoScene } from './sceneFile'
-import { clearParkedSplitOff, downloadProject, downloadProjectDocument, exportChoicesFor, readParkedSplitOff } from './projectFile'
-import { saveProject } from './saveProject'
-import { copyRoomToProjects } from './roomCopy'
+import { openDemoScene } from './project/sceneFile'
+import { clearParkedSplitOff, downloadProject, downloadProjectDocument, exportChoicesFor, readParkedSplitOff } from './project/projectFile'
+import { saveProject } from './project/saveProject'
+import { copyRoomToProjects } from './project/roomCopy'
+import { ownSharedProject, renameSharedProject, setSpotlight, stopSharing } from './project/sharedProject'
+import { getCollabSnapshot } from '../collab/session'
 import { requestTutorial } from './tutorial/session'
-import { getOipProjectApi, openProjectFromFolder, saveProjectToFolder } from './desktopProjectBridge'
-import { supportsFolderSync } from './projectFolderSync'
-import { canCreateProject, createNewProject, UNTITLED_PROJECT } from './newProject'
+import { getOipProjectApi, openProjectFromFolder, saveProjectToFolder } from './desktop/desktopProjectBridge'
+import { supportsFolderSync } from './project/projectFolderSync'
+import { canCreateProject, createNewProject, UNTITLED_PROJECT } from './project/newProject'
 import {
   hasPausedFolder,
   linkProjectFolder,
@@ -30,20 +32,26 @@ import {
   saveAndLinkProjectFolder,
   supportsFolderLink,
   unlinkProjectFolder,
-} from './projectFolderLink'
+} from './project/projectFolderLink'
 import type { EditorController } from './controller'
-import { guardOpeningsTarget } from './store'
-import type { EditorState, EditorStore } from './store'
+import type { AxisViewId } from './controller/camera'
+import { guardOpeningsTarget } from './store/store'
+import { canPasteProperties, copyProperties, pasteProperties, propertiesSource } from './store/storeProperties'
+import { hasTags } from './program/assignController'
+import type { EditorState, EditorStore } from './store/store'
 // Lazy: the PLC file doors carry the PLCopen writer and readers, which nothing needs until a file actually moves, and the
 // build budgets what loads before the first frame (optimize-assets.mjs, eager JS)
-const stFileTransfer = (): Promise<typeof import('./stFileTransfer')> => import('./stFileTransfer')
+const stFileTransfer = (): Promise<typeof import('./program/stFileTransfer')> => import('./program/stFileTransfer')
 import { askName } from './nameDialog'
 import { acceleratorHint, primaryKey } from './keyHint'
-import { DESKTOP_SHELL } from './desktopMenuBridge'
-import { manageAgentDoor } from './agent/desktopAgent'
-import { DESKTOP_DOWNLOAD_URL, openInDesktopApp } from './desktopLink'
-import { canOpenExternal, openExternal, partFolderOf } from './externalEditor'
-import { getOipPartsApi } from './desktopPartsBridge'
+import { DESKTOP_SHELL } from './desktop/desktopMenuBridge'
+import { requestAgentDoorReveal } from './agent/desktopAgent'
+import { DESKTOP_DOWNLOAD_URL, openInDesktopApp } from './desktop/desktopLink'
+import { canOpenExternal, openExternal, partFolderOf } from './parts/externalEditor'
+import { getOipPartsApi } from './desktop/desktopPartsBridge'
+import { getShelfApi } from './parts/partShelf'
+import { sameAsBuiltIn } from '../core/builtInVersion'
+import type { PartPackage } from '../core/parts/partPackage'
 import type { SdkPart } from '../core/types'
 
 /** The UI-only affordances a command needs and the store can't provide (pickers, overlays, layout). */
@@ -72,6 +80,8 @@ export interface CommandUi {
   runTests(): void
   /** Controller Properties: where the program runs, here or on an external PLC, and how the link reaches it */
   showControllerProperties(): void
+  /** Assign to Controller: which PLC the selected parts' tags go to (components/plc/AssignControllerDialog.tsx) */
+  showAssignController(): void
 }
 
 export interface CommandCtx {
@@ -159,10 +169,6 @@ const SPEED_NOTE: Partial<Record<SimSpeed, string>> = { 0.5: ' (Slow Motion)', 1
 
 const MSG_NEW_PROJECT_PROMPT = defineMessage('command.file.newProject.prompt', 'New project')
 const MSG_NEW_PROJECT_CONFIRM = defineMessage('command.file.newProject.confirm', 'Create')
-const MSG_NEW_PROJECT_ROOM = defineMessage(
-  'command.file.newProject.room',
-  'A live room has no projects list. Make a copy of this room to keep it as a project of your own.',
-)
 const MSG_RENAME_PROMPT = defineMessage('command.file.renameProject.prompt', 'Rename project')
 const MSG_SAVE_VIEW_ONLY = defineMessage(
   'command.file.save.viewOnly',
@@ -173,21 +179,29 @@ const MSG_EXTERNAL_DESKTOP_ONLY = defineMessage(
   'command.part.openExternal.desktopOnly',
   "Open the desktop app to edit this part's script in your own editor.",
 )
+const MSG_STEP_PAUSE_FIRST = defineMessage('command.sim.step.pauseFirst', 'Pause the simulation to step it one physics step at a time')
 const MSG_OPEN_SCRIPT_FAILED = defineMessage('command.part.openExternal.failed', "Couldn't open the script: {error}")
 const MSG_SAVED_AS_NEW = defineMessage('command.part.saveAsNew.done', 'Saved as “{name}” in the Parts catalog. Placed parts are unchanged.')
 const MSG_GUARD_OPENINGS_NO_TARGET = defineMessage('command.edit.guardOpenings.noTarget', 'Select one conveyor with side guards first.')
+const MSG_COPY_PROPERTIES_ONE = defineMessage('command.edit.copyProperties.one', 'Select one part to copy its properties.')
+const MSG_PASTE_PROPERTIES_EMPTY = defineMessage('command.edit.pasteProperties.empty', 'Copy Properties from a part first.')
+const MSG_PASTE_PROPERTIES_KIND = defineMessage(
+  'command.edit.pasteProperties.kind',
+  'The properties are from a {kind}. Select parts of that type to paste them onto.',
+)
 // Kept verbatim from projectFile's ROOM_OWNS_DOCUMENT, the string that already said this, so the import
 // refuses a room in the same words wherever the refusal is shown.
-const MSG_IMPORT_PROJECT_ROOM = defineMessage(
-  'command.file.importProject.room',
-  'A live collab room owns its document. Leave the room to import a project.',
-)
 const MSG_COPY_ROOM_CONFIRM = defineMessage(
   'command.file.copyRoom.confirm',
-  'Copy this room into a new project of your own and open it? The room is not changed, and its link still opens it.',
+  'Copy this shared project into a new project of your own and open it? The shared project is not changed, and its link still opens it.',
 )
-const MSG_COPY_ROOM_FAILED = defineMessage('command.file.copyRoom.failed', "Couldn't copy the room:\n{error}")
-const MSG_COPY_ROOM_SOLO = defineMessage('command.file.copyRoom.solo', 'For a live room: it copies the room into a project of your own.')
+const MSG_COPY_ROOM_FAILED = defineMessage('command.file.copyRoom.failed', "Couldn't make the copy:\n{error}")
+const MSG_COPY_ROOM_SOLO = defineMessage('command.file.copyRoom.solo', "For a shared project someone gave you a link to: it copies it into a project of your own.")
+const MSG_STOP_SHARING_NONE = defineMessage('command.file.stopSharing.none', 'For a project of yours that is shared: it makes the project yours alone again.')
+const MSG_SPOTLIGHT_OWNER = defineMessage('command.sim.spotlight.owner', 'For the person who shared the project: it asks everyone in it to watch their run.')
+/** this tab is the owner of the shared project it is in, as the server vouches for it */
+const isRoomOwner = (c = getCollabSnapshot()): boolean => c.owner !== null && c.owner === c.selfId
+const MSG_STOP_SHARING_FAILED = defineMessage('command.file.stopSharing.failed', "Couldn't stop sharing:\n{error}")
 const MSG_SAVE_FAILED = defineMessage('command.file.saveProject.failed', "Couldn't save the project folder:\n{error}")
 const MSG_LINK_FAILED = defineMessage('command.file.linkFolder.failed', "Couldn't link the project folder:\n{error}")
 const MSG_RECONNECT_FAILED = defineMessage('command.file.reconnectFolder.failed', "Couldn't follow the project folder again:\n{error}")
@@ -210,7 +224,7 @@ const MSG_RELOAD_PART_SCENE = defineMessage(
   "The Part Editor runs its part's own behavior, not the PLC program.",
 )
 const MSG_RELOAD_CURRENT = defineMessage('command.sim.reloadProgram.current', 'The running program is up to date.')
-// the text on screen failed to attach, and reloading the same text would fail the same way (editor/programReload.ts)
+// the text on screen failed to attach, and reloading the same text would fail the same way (editor/program/programReload.ts)
 const MSG_RELOAD_FAILED_PREVIOUS = defineMessage(
   'command.sim.reloadProgram.failedPrevious',
   'The program has an error, so the PLC is still running the previous one. Fix it first.',
@@ -234,7 +248,10 @@ const ioDisabledReason = (ctx: CommandCtx): string | null =>
 // Assign I/O, Import / Export I/O List: loaded when one runs, not with the app. Imported statically it held the I/O
 // planner (plc/ioAssign.ts) in the first frame for three commands (per eager-census); enablement stays here,
 // synchronous, so a menu never waits on it
-const ioAssign = (): Promise<typeof import('./ioAssign')> => import('./ioAssign')
+const ioAssign = (): Promise<typeof import('./program/ioAssign')> => import('./program/ioAssign')
+// A rejected command promise reports as the command's own failures do (an alert, a hint), or else in the console
+const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+const warnFailed = (id: string) => (e: unknown): void => console.warn(`[oip] ${id} failed`, e)
 
 const hasSelection = (ctx: CommandCtx): boolean => ctx.state.selectedIds.length > 0
 
@@ -261,6 +278,23 @@ const partScriptDir = (ctx: CommandCtx): string | null => {
   return pkg ? partFolderOf(ctx.state, pkg) : null
 }
 
+/** the target part as this project made or changed it, which is what can go on the shelf; undefined for a stock built-in */
+const shelvablePart = (ctx: CommandCtx): PartPackage | undefined => {
+  const id = targetPackage(ctx)
+  const copy = id === null ? undefined : ctx.state.userPackages.find((p) => p.id === id)
+  return copy && !sameAsBuiltIn(copy, ctx.state.bundledPackages.find((b) => b.id === copy.id)) ? copy : undefined
+}
+
+/** an axis view's command, under its keymap action's id and chord */
+const axisView = (id: AxisViewId, label: string): Command => ({
+  id,
+  label,
+  group: 'View',
+  keys: id,
+  enabled: (ctx) => !!ctx.controller,
+  run: ({ controller }) => controller?.viewAlongAxis(id),
+})
+
 const COMMAND_DEFS: readonly Command[] = [
   // ── File ────────────────────────────────────────────────────────────────────────────────────────
   {
@@ -273,16 +307,10 @@ const COMMAND_DEFS: readonly Command[] = [
     accelerator: 'CmdOrCtrl+N',
     // a room and a view link have no projects list to add to, nor a browser with no library (newProject.ts)
     enabled: (ctx) => canCreateProject(ctx.store),
-    disabledReason: (ctx) => (ctx.state.collab ? t(MSG_NEW_PROJECT_ROOM) : null),
     run: ({ store }) =>
-      void askName({ title: t(MSG_NEW_PROJECT_PROMPT), initial: UNTITLED_PROJECT, confirmLabel: t(MSG_NEW_PROJECT_CONFIRM) }).then(
-        (name) => {
-          if (name === null) return
-          void createNewProject(store, name).then((error) => {
-            if (error !== null) alert(error)
-          })
-        },
-      ),
+      void askName({ title: t(MSG_NEW_PROJECT_PROMPT), initial: UNTITLED_PROJECT, confirmLabel: t(MSG_NEW_PROJECT_CONFIRM) })
+        .then((name) => name !== null && createNewProject(store, name).then((error) => error !== null && alert(error)))
+        .catch((e: unknown) => alert(errorText(e))),
   },
   {
     // An older project's other scenes, in a browser that keeps one project (projectSplit.ts): each split off as a
@@ -311,7 +339,7 @@ const COMMAND_DEFS: readonly Command[] = [
   {
     // Save, on every surface: the project already saves itself as you go, so this writes anything pending
     // and says where the work is - its folder on the desktop, this browser's storage (with "Download a
-    // copy") on the web (editor/saveProject.ts). `keys`, not `accelerator`: the app binds Ctrl+S (App.tsx),
+    // copy") on the web (editor/project/saveProject.ts). `keys`, not `accelerator`: the app binds Ctrl+S (App.tsx),
     // because the browser has no menu to, and the desktop menu then only displays the chord.
     id: 'file.save',
     label: 'Save',
@@ -359,18 +387,17 @@ const COMMAND_DEFS: readonly Command[] = [
     // reloads into another document); a room owns its document, which importProjectData refuses anyway, so
     // greying it says so before a file picker opens rather than after; and a view-only link has nothing to
     // import into.
-    enabled: (ctx) => !ctx.state.running && !ctx.state.collab && !ctx.state.readOnly,
+    enabled: (ctx) => !ctx.state.running && !ctx.state.readOnly,
     // Only the room is spoken here. Running and view-only are the global blocks a surface already explains
     // (Toolbar.fileBlockedReason fills that half in), and the convention is that a command must not double
     // them up - see the folder commands' two specs in commands.test.ts.
-    disabledReason: (ctx) => (ctx.state.collab ? t(MSG_IMPORT_PROJECT_ROOM) : null),
     run: ({ ui }) => ui.openProjectFilePicker(),
   },
   {
     // A room's document as a new project of your own (roomCopy.ts): what the export-leave-import round trip
     // did, without its two traps. Allowed on a view-only link too: wanting your own copy is exactly a viewer's case.
     id: 'file.copyRoom',
-    label: 'Make a Copy of This Room',
+    label: 'Make a Copy',
     group: 'File',
     enabled: (ctx) => ctx.state.collab && !ctx.state.running,
     // Running is the global block the toolbar explains; outside a room, say what the command is for.
@@ -379,7 +406,23 @@ const COMMAND_DEFS: readonly Command[] = [
       if (!confirm(t(MSG_COPY_ROOM_CONFIRM))) return
       void copyRoomToProjects(store).then((error) => {
         if (error !== null) alert(t(MSG_COPY_ROOM_FAILED, { error }))
-      })
+      }).catch((e: unknown) => alert(t(MSG_COPY_ROOM_FAILED, { error: errorText(e) })))
+    },
+  },
+  {
+    // A project of the user's own, shared, becomes theirs alone again (project/sharedProject.ts). The Share popover
+    // offers it too.
+    id: 'file.stopSharing',
+    label: 'Stop Sharing This Project',
+    group: 'File',
+    enabled: (ctx) => ctx.state.collab && !ctx.state.running && ownSharedProject() !== null,
+    disabledReason: (ctx) => (ctx.state.collab && ownSharedProject() !== null ? null : t(MSG_STOP_SHARING_NONE)),
+    run: ({ store }) => {
+      const shared = ownSharedProject()
+      if (!shared) return
+      void stopSharing(store, shared).then((error) => {
+        if (error !== null) alert(t(MSG_STOP_SHARING_FAILED, { error }))
+      }).catch((e: unknown) => alert(t(MSG_STOP_SHARING_FAILED, { error: errorText(e) })))
     },
   },
   {
@@ -399,7 +442,7 @@ const COMMAND_DEFS: readonly Command[] = [
     group: 'File',
     enabled: (ctx) => editable(ctx) && readsProgram(ctx) && !byName(ctx),
     disabledReason: ioDisabledReason,
-    run: ({ store }) => void ioAssign().then((m) => m.pickAndImportIoList(store)),
+    run: ({ store }) => void ioAssign().then((m) => m.pickAndImportIoList(store)).catch(warnFailed('file.importIoList')),
   },
   {
     // The other half of the I/O list door: what this scene serves, as the CSV a panel builder works from.
@@ -408,20 +451,20 @@ const COMMAND_DEFS: readonly Command[] = [
     label: 'Export I/O List (.csv)',
     group: 'File',
     enabled: (ctx) => ctx.state.scene.parts.length > 0,
-    run: ({ store }) => void ioAssign().then((m) => m.exportIoList(store)),
+    run: ({ store }) => void ioAssign().then((m) => m.exportIoList(store)).catch(warnFailed('file.exportIoList')),
   },
   {
     // pure exports, like Export Project: available while running and on a view-only link
     id: 'file.exportPlcSt',
     label: 'Export PLC Program (.st)',
     group: 'File',
-    run: ({ store }) => void stFileTransfer().then((m) => m.exportStProgram(store, 'iec-text')),
+    run: ({ store }) => void stFileTransfer().then((m) => m.exportStProgram(store, 'iec-text')).catch(warnFailed('file.exportPlcSt')),
   },
   {
     id: 'file.exportPlcXml',
     label: 'Export PLC Program (PLCopen XML)',
     group: 'File',
-    run: ({ store }) => void stFileTransfer().then((m) => m.exportStProgram(store, 'plcopen-xml')),
+    run: ({ store }) => void stFileTransfer().then((m) => m.exportStProgram(store, 'plcopen-xml')).catch(warnFailed('file.exportPlcXml')),
   },
   {
     // The projects list. A command and not a start screen: /app/ opens onto the working copy and
@@ -431,9 +474,9 @@ const COMMAND_DEFS: readonly Command[] = [
     id: 'file.projects',
     label: 'Projects…',
     group: 'File',
-    // A room owns its document (the collab doc, not a local one), and a view-only link owns nothing.
+    // A view-only link owns nothing. A shared project is left for the one opened, as any open project is.
     // Running is fine: the projects list is only a list, and the actions inside it stop the session anyway.
-    enabled: (ctx) => !ctx.state.collab && !ctx.state.readOnly,
+    enabled: (ctx) => !ctx.state.readOnly,
     run: ({ ui }) => ui.showProjects(),
   },
   {
@@ -445,14 +488,18 @@ const COMMAND_DEFS: readonly Command[] = [
     // Not `editable`: a relabel touches no scene, so a running sim is no reason to refuse
     // it. The two that are real are the demo preview (a rename must not fork it into a scene) and a room
     // (the name would not persist) - store.renameProject enforces the same two, this only greys them.
-    enabled: (ctx) => !ctx.state.readOnly && !ctx.state.demoSession && !ctx.state.collab,
+    // A shared project of the user's own is still theirs to rename (project/sharedProject.ts).
+    enabled: (ctx) => !ctx.state.readOnly && !ctx.state.demoSession && (!ctx.state.collab || (ownSharedProject() !== null && !ownSharedProject()!.demo)),
     // askName rather than window.prompt, which throws in the Electron shell - where this is a native menu item
     run: ({ store, state }) =>
-      void askName({ title: t(MSG_RENAME_PROMPT), initial: state.projectName, confirmLabel: t(MSG_RENAME_CONFIRM) }).then(
-        (name) => {
-          if (name !== null) store.renameProject(name)
-        },
-      ),
+      void askName({ title: t(MSG_RENAME_PROMPT), initial: ownSharedProject()?.project ?? state.projectName, confirmLabel: t(MSG_RENAME_CONFIRM) })
+        .then((name) => {
+          if (name === null) return
+          const shared = state.collab ? ownSharedProject() : null
+          if (shared) renameSharedProject(store, shared.docId, name)
+          else store.renameProject(name)
+        })
+        .catch((e: unknown) => alert(errorText(e))),
   },
   {
     id: 'file.openProject',
@@ -475,7 +522,7 @@ const COMMAND_DEFS: readonly Command[] = [
       if (getOipProjectApi() !== null) return void saveProjectToFolder(store, controller)
       void saveAndLinkProjectFolder(store, controller).then((error) => {
         if (error !== null) alert(t(MSG_SAVE_FAILED, { error }))
-      })
+      }).catch((e: unknown) => alert(t(MSG_SAVE_FAILED, { error: errorText(e) })))
     },
   },
   {
@@ -495,7 +542,7 @@ const COMMAND_DEFS: readonly Command[] = [
         // the picker is a user gesture, so an alert is the right weight here; failures from the
         // background sync go to the sticky banner instead (nobody is watching for a dialog then)
         if (error !== null) alert(t(MSG_LINK_FAILED, { error }))
-      }),
+      }).catch((e: unknown) => alert(t(MSG_LINK_FAILED, { error: errorText(e) }))),
   },
   {
     // Only reachable in the one state that needs it: a folder this document is remembered as following
@@ -511,7 +558,7 @@ const COMMAND_DEFS: readonly Command[] = [
       void reconnectProjectFolder(store, controller).then((error) => {
         // a click, so an alert is the right weight - the same split linkFolder makes
         if (error !== null) alert(t(MSG_RECONNECT_FAILED, { error }))
-      }),
+      }).catch((e: unknown) => alert(t(MSG_RECONNECT_FAILED, { error: errorText(e) }))),
   },
   {
     id: 'file.unlinkFolder',
@@ -584,6 +631,37 @@ const COMMAND_DEFS: readonly Command[] = [
     keys: 'edit.duplicate',
     enabled: (ctx) => !ctx.state.readOnly && hasSelection(ctx),
     run: ({ store }) => store.duplicateSelection(),
+  },
+  {
+    // every property of one part onto the selected parts of its type (store/storeProperties.ts); the Inspector's
+    // row menu copies one property at a time. Name, transform and tags stay each part's own.
+    id: 'edit.copyProperties',
+    label: 'Copy Properties',
+    group: 'Edit',
+    enabled: (ctx) => propertiesSource(ctx.state) !== null,
+    disabledReason: () => t(MSG_COPY_PROPERTIES_ONE),
+    run: ({ store }) => copyProperties(store),
+  },
+  {
+    id: 'edit.pasteProperties',
+    label: 'Paste Properties',
+    group: 'Edit',
+    enabled: (ctx) => !ctx.state.readOnly && canPasteProperties(ctx.state),
+    disabledReason: (ctx) => {
+      if (ctx.state.readOnly) return null
+      const clip = ctx.state.propertyClipboard
+      return clip ? t(MSG_PASTE_PROPERTIES_KIND, { kind: clip.kindLabel }) : t(MSG_PASTE_PROPERTIES_EMPTY)
+    },
+    run: ({ store }) => pasteProperties(store),
+  },
+  {
+    // A part's tag names the PLC it goes to (`Cell2::%IX0.0`, core/io/controllerTag.ts). This rewrites that name on
+    // every tag of the selection at once, so a copied cell goes to a second PLC in one step and one undo.
+    id: 'edit.assignController',
+    label: 'Assign to Controller…',
+    group: 'Edit',
+    enabled: (ctx) => editable(ctx) && ctx.state.packageEdit === null && hasTags(ctx.state.scene, ctx.state.selectedIds),
+    run: ({ ui }) => ui.showAssignController(),
   },
   {
     id: 'edit.delete',
@@ -678,6 +756,19 @@ const COMMAND_DEFS: readonly Command[] = [
     },
   },
   {
+    // a part this project made or changed, onto the parts shelf for other projects to place (docs/parts-shelf.md). A stock
+    // built-in is in every project already. Asks first, and over a different shelf version lists what changes there.
+    id: 'part.putOnShelf',
+    label: 'Put on Shelf…',
+    group: 'Edit',
+    shellOnly: true,
+    enabled: (ctx) => !ctx.state.readOnly && getShelfApi() !== null && shelvablePart(ctx) !== undefined,
+    run: (ctx) => {
+      const part = shelvablePart(ctx)
+      if (part) void import('./parts/shelfActions').then((a) => a.putPartOnShelf(ctx.store, part)).catch(warnFailed('part.putOnShelf'))
+    },
+  },
+  {
     id: 'part.openExternal',
     label: 'Open in External Editor',
     group: 'Edit',
@@ -692,7 +783,7 @@ const COMMAND_DEFS: readonly Command[] = [
       // nowhere on every surface to print beside, so a failure (no editor, an unwritable folder) flashes over the viewport
       void openExternal(pkg, ctx.store).then((err) => {
         if (err) ctx.store.flashViewportHint(t(MSG_OPEN_SCRIPT_FAILED, { error: err }))
-      })
+      }).catch((e: unknown) => ctx.store.flashViewportHint(t(MSG_OPEN_SCRIPT_FAILED, { error: errorText(e) })))
     },
   },
   {
@@ -708,7 +799,7 @@ const COMMAND_DEFS: readonly Command[] = [
       if (!dir || !reveal) return
       void reveal(dir).then((err) => {
         if (err) ctx.store.flashViewportHint(t(MSG_OPEN_SCRIPT_FAILED, { error: err }))
-      })
+      }).catch((e: unknown) => ctx.store.flashViewportHint(t(MSG_OPEN_SCRIPT_FAILED, { error: errorText(e) })))
     },
   },
 
@@ -732,6 +823,19 @@ const COMMAND_DEFS: readonly Command[] = [
     run: ({ controller }) => controller?.togglePause(),
   },
   {
+    // One fixed physics step, with the PLC scans due in it, so a sensor edge or a one-scan pulse can be watched
+    // happen. Paused only: running, the loop is already stepping.
+    id: 'sim.step',
+    label: 'Step',
+    group: 'Simulation',
+    accelerator: 'F7',
+    webKeys: 'sim.step',
+    enabled: (ctx) => !!ctx.controller && ctx.state.running && ctx.state.paused,
+    // stopped needs no reason of its own: the toolbar already says the run is stopped
+    disabledReason: (ctx) => (ctx.state.running && !ctx.state.paused ? t(MSG_STEP_PAUSE_FIRST) : null),
+    run: ({ controller }) => controller?.step(),
+  },
+  {
     id: 'sim.stop',
     label: 'Stop',
     group: 'Simulation',
@@ -743,7 +847,7 @@ const COMMAND_DEFS: readonly Command[] = [
   {
     // Loads the program as it is now into the running sim without resetting the world. It restarts the program
     // (its variables, timers and steps start over; there is no online change), so it runs only when asked, not on
-    // every keystroke. Enabled only when the running program is out of date (editor/programReload.ts), so the PLC
+    // every keystroke. Enabled only when the running program is out of date (editor/program/programReload.ts), so the PLC
     // dock's button lights up exactly when the text on screen is not what runs. No chord: Ctrl/Cmd-Enter in the code editor reaches it (StEditor).
     id: 'sim.reloadProgram',
     label: 'Reload PLC Program',
@@ -761,6 +865,16 @@ const COMMAND_DEFS: readonly Command[] = [
       return t(MSG_RELOAD_CURRENT)
     },
     run: ({ controller }) => controller?.reloadProgram(),
+  },
+  {
+    // The way out of a commissioning session in one move: every forced variable is the program's again from its
+    // next scan. The palette and the toolbar's forced count (ForcesStatus.tsx) run it. Not in the native menu:
+    // forces change without the app re-rendering, so a native menu item's enablement would go stale.
+    id: 'sim.releaseForces',
+    label: 'Release All Forces',
+    group: 'Simulation',
+    enabled: (ctx) => Object.keys(ctx.controller?.plcForces ?? {}).length > 0,
+    run: ({ controller }) => controller?.releasePlcForces(),
   },
   {
     // No chord: this is a deliberate, occasional action, and a command with neither
@@ -781,14 +895,14 @@ const COMMAND_DEFS: readonly Command[] = [
     group: 'Simulation',
     enabled: (ctx) => editable(ctx) && readsProgram(ctx) && !byName(ctx) && ctx.state.scene.parts.length > 0,
     disabledReason: ioDisabledReason,
-    run: ({ store }) => void ioAssign().then((m) => m.runIoAssignment(store)),
+    run: ({ store }) => void ioAssign().then((m) => m.runIoAssignment(store)).catch(warnFailed('sim.assignIo')),
   },
   {
     // Where the program runs: here, or on a real PLC that Play hands the scene's I/O to (Modbus TCP either way round,
     // or OPC UA). The organizer's Controller node and the toolbar's link status open the same dialog; this is the way
-    // in for someone who searches the palette for "PLC", "Modbus" or "OPC".
+    // in for someone who searches the palette for "PLC", "Modbus" or "OPC", and the name says it lists every controller.
     id: 'sim.externalPlc',
-    label: 'External PLC…',
+    label: 'PLC Controllers…',
     group: 'Simulation',
     run: ({ ui }) => ui.showControllerProperties(),
   },
@@ -811,6 +925,22 @@ const COMMAND_DEFS: readonly Command[] = [
     keys: 'pilot.enter',
     run: ({ store, state }) => (state.mode === 'pilot' ? store.exitPilot() : store.enterPilot()),
   },
+  {
+    // The owner asks everyone in the shared project to watch its run (docs/live-share.md); also on the chip and the people list
+    id: 'sim.spotlight',
+    label: 'Spotlight Me',
+    group: 'Simulation',
+    enabled: () => isRoomOwner() && !getCollabSnapshot().spotlight,
+    disabledReason: () => t(MSG_SPOTLIGHT_OWNER),
+    run: () => setSpotlight(true),
+  },
+  {
+    id: 'sim.stopSpotlight',
+    label: 'Stop Spotlight',
+    group: 'Simulation',
+    enabled: () => isRoomOwner() && getCollabSnapshot().spotlight,
+    run: () => setSpotlight(false),
+  },
   // One per rung rather than one "cycle" command: see SIM_SPEEDS. No chords - the ladder is five
   // deep and the toolbar button already owns the quick walk through it (click / Shift+click).
   ...SIM_SPEEDS.map(
@@ -824,6 +954,16 @@ const COMMAND_DEFS: readonly Command[] = [
   ),
 
   // ── View ────────────────────────────────────────────────────────────────────────────────────────
+  {
+    // Only the scene, for a projector (components/PresentOverlay.tsx), fullscreen, which only a click can ask for
+    id: 'view.present',
+    label: 'Present',
+    group: 'View',
+    run: ({ store }) => {
+      store.setState({ presenting: true })
+      void document.documentElement.requestFullscreen?.()?.catch(() => {})
+    },
+  },
   {
     id: 'view.distractionFree',
     label: 'Distraction Free Mode',
@@ -848,8 +988,28 @@ const COMMAND_DEFS: readonly Command[] = [
     enabled: (ctx) => ctx.state.scene.parts.some((p) => p.type === 'annotation'),
     run: ({ store }) => store.toggleShowNotes(),
   },
+  // The viewport toolbar's display toggles and the Settings read-out, here so a palette search finds them
   {
-    // The camera is remembered per scene (editor/storePrefs viewport state), so this is Reset Panel
+    id: 'view.grid',
+    label: 'Show Grid',
+    group: 'View',
+    run: ({ store }) => store.toggleGrid(),
+  },
+  {
+    id: 'view.flowArrows',
+    label: 'Show Flow Arrows',
+    group: 'View',
+    keys: 'view.flowArrows',
+    run: ({ store }) => store.toggleFlowArrows(),
+  },
+  {
+    id: 'view.stats',
+    label: 'Show Performance Read-out',
+    group: 'View',
+    run: ({ store }) => store.toggleShowStats(),
+  },
+  {
+    // The camera is remembered per scene (editor/store/storePrefs viewport state), so this is Reset Panel
     // Layout's counterpart: the way back from a view left somewhere useless, without hunting for a
     // framing by hand. Forgets the remembered pose too, so the scene reopens on its opening view.
     id: 'view.resetCamera',
@@ -868,6 +1028,13 @@ const COMMAND_DEFS: readonly Command[] = [
     keys: 'view.projection',
     run: ({ store }) => store.toggleProjection(),
   },
+  // The orbit gizmo's axis balls, for whoever has no numpad (a laptop) or wants the view by name
+  axisView('view.front', 'Front View'),
+  axisView('view.rear', 'Rear View'),
+  axisView('view.right', 'Right View'),
+  axisView('view.left', 'Left View'),
+  axisView('view.top', 'Top View'),
+  axisView('view.bottom', 'Bottom View'),
   {
     id: 'view.commandPalette',
     label: 'Command Palette…',
@@ -890,6 +1057,12 @@ const COMMAND_DEFS: readonly Command[] = [
     label: 'Problems',
     group: 'View',
     run: ({ store }) => store.revealPanel('problems'),
+  },
+  {
+    id: 'view.watch',
+    label: 'Watch',
+    group: 'View',
+    run: ({ store }) => store.revealPanel('watch'),
   },
   {
     // The preferences half of the same dialog the ? chord opens on its keyboard tab. No chord of its
@@ -919,12 +1092,15 @@ const COMMAND_DEFS: readonly Command[] = [
   },
   {
     // Whether an AI agent may drive this editor over MCP (the shell's agent door, docs/agent-tools.md). The
-    // shell owns the server and the choice, and asks with its own dialog; an installed app starts with it shut.
+    // switch lives in Settings > Agent connections, where people look for an on/off choice; this opens it there.
     id: 'help.agentConnections',
     label: 'Agent Connections…',
     group: 'Help',
     shellOnly: true,
-    run: () => manageAgentDoor(),
+    run: ({ ui }) => {
+      requestAgentDoorReveal()
+      ui.showSettings()
+    },
   },
   {
     // The tour had exactly one way in: a toolbar icon, hidden on the mobile layout and easy to miss on
@@ -1127,7 +1303,7 @@ export type MenuNode =
   | { command: string }
   | { separator: true }
   | { role: string; label?: string; accelerator?: string }
-  | { shell: 'partsFolder' | 'recent' | 'quit' | 'docs' | 'github' | 'issues' | 'updates' | 'licenses' | 'about' }
+  | { shell: 'recent' | 'quit' | 'docs' | 'github' | 'issues' | 'updates' | 'licenses' | 'about' }
 
 export interface MenuSection {
   label: string
@@ -1167,7 +1343,6 @@ export const DESKTOP_MENU: readonly MenuSection[] = [
       { command: 'file.showProjectFolder' },
       { separator: true },
       { command: 'file.getParts' },
-      { shell: 'partsFolder' },
       { separator: true },
       { shell: 'quit' },
     ],
@@ -1182,6 +1357,8 @@ export const DESKTOP_MENU: readonly MenuSection[] = [
       { command: 'edit.copy' },
       { command: 'edit.paste' },
       { command: 'edit.duplicate' },
+      { command: 'edit.copyProperties' },
+      { command: 'edit.pasteProperties' },
       { command: 'edit.delete' },
       { separator: true },
       { command: 'edit.selectAll' },
@@ -1193,6 +1370,7 @@ export const DESKTOP_MENU: readonly MenuSection[] = [
     items: [
       { command: 'sim.run' },
       { command: 'sim.pause' },
+      { command: 'sim.step' },
       { command: 'sim.stop' },
       { command: 'sim.reloadProgram' },
       { command: 'sim.externalPlc' },
@@ -1212,6 +1390,7 @@ export const DESKTOP_MENU: readonly MenuSection[] = [
       { command: 'view.commandPalette' },
       { command: 'view.plc' },
       { command: 'view.problems' },
+      { command: 'view.watch' },
       { command: 'view.settings' },
       { command: 'view.distractionFree' },
       { command: 'view.resetLayout' },

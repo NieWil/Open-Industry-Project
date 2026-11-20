@@ -1,5 +1,5 @@
 // End-to-end proof that the desktop app opens project and part files from outside it (apps/desktop/fileOpen.cjs,
-// src/editor/desktopFileOpen.ts): what a double-click on a .oip / .oippart does once the installer has registered
+// src/editor/desktop/desktopFileOpen.ts): what a double-click on a .oip / .oippart does once the installer has registered
 // them (apps/desktop/package.json build.fileAssociations). The OS hands the app the file's path on its command
 // line, so the gate does the same, through the REAL dev shell on a throwaway profile:
 //
@@ -63,8 +63,8 @@ try {
   let page = await app.firstWindow()
   await page.waitForSelector('.toolbar', { timeout: 120000 })
   const files = await page.evaluate(async () => {
-    const { projectToOipBytes } = await import('/src/core/projectArchive.ts')
-    const { partToOippartBytes } = await import('/src/core/partArchive.ts')
+    const { projectToOipBytes } = await import('/src/core/project/projectArchive.ts')
+    const { partToOippartBytes } = await import('/src/core/parts/partArchive.ts')
     const project = { version: 6, name: 'Opened By File', scene: { version: 4, parts: [] }, stProgram: 'PROGRAM ByFile\nEND_PROGRAM\n' }
     const part = {
       format: 6,

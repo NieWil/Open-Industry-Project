@@ -6,6 +6,11 @@
 // repeatable pose. A pilot "Use" toggles the feed (a runtime latch, so it resets on stop/reload). Optionally gated by
 // a conveyor interlock (conveyorId → ctx.conveyorRunning) or a PLC run tag.
 //
+// A mixed stream: `mixAttribute` names a product attribute and `mixValues` the values handed out one per item, in
+// order (or at random with Random order). They start as the item's marks (ctx.spawn `marks`), the way a label printed
+// upstream does, so a scanner reads them and a program routes by them. The value list and the colour list advance
+// together: item n takes value n and colour n, so a code can be seen by its colour.
+//
 // Release says what reopening the gate does.
 // - Steady interval: a hopper, PACED. What the author sets is the INTERVAL BETWEEN items, so that is what a hold
 //   preserves. The countdown keeps running while the gate is shut but floors at zero: a hold neither costs a period
@@ -33,7 +38,7 @@ let spawned = 0
 // by the host but still counted here.
 function publish(ctx) {
   ctx.display('spawned', spawned)
-  if (ctx.params.enableComms && ctx.params.countTag) ctx.writeNumber(ctx.params.countTag, spawned)
+  if (ctx.params.countTag) ctx.writeNumber(ctx.params.countTag, spawned)
 }
 
 // parse "#rrggbb" → [r, g, b] in 0..1
@@ -56,6 +61,14 @@ function settingsOf(json) {
 function palette(csv) {
   return (csv || '').split(',').map((c) => c.trim()).filter((c) => c.length >= 6).map(hexRgb)
 }
+// parse a comma-separated value list: numbers as numbers, true / false as booleans, anything else as text
+function valueList(csv) {
+  return (csv || '').split(',').map((c) => c.trim()).filter((c) => c !== '').map((c) => {
+    if (c === 'true' || c === 'false') return c === 'true'
+    const n = Number(c)
+    return Number.isFinite(n) ? n : c
+  })
+}
 
 definePart({
   interactive: true, // a pilot "Use" toggles the feed
@@ -66,7 +79,9 @@ definePart({
     productSettings: { type: 'string', hidden: true, default: '', label: 'Product settings', desc: 'Settings of the chosen product, as JSON. Edited under Product.' },
     boxColor: { type: 'color', default: '#ffffff', label: 'Box color', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Tint for every spawned box. Ignored once the cycle list below is non-empty.' },
     boxColors: { type: 'color', list: true, default: '', label: 'Colors (cycle)', desc: 'Colors handed out one per item, in order, overriding the colour of the product (or the Box color). Useful for telling sorted lanes apart at a glance. Leave empty to use the single colour.' },
-    randomColors: { type: 'boolean', default: false, label: 'Random color order', desc: 'Draw each colour at random from the cycle list instead of walking the list in order.' },
+    mixAttribute: { type: 'string', default: '', label: 'Vary attribute', desc: 'A product attribute each item starts with, from the values below: a label code, a destination. A scanner reads it, and a program routes by it. Empty for none.' },
+    mixValues: { type: 'string', default: '', label: 'Values (cycle)', desc: 'The values handed out one per item, comma-separated, in order: "1, 2, 2, 3". Numbers stay numbers, true and false are booleans, anything else is text. They advance with the colour cycle, so item n takes value n and colour n.' },
+    randomColors: { type: 'boolean', default: false, label: 'Random order', desc: 'Give each item a colour and a value drawn at random from the cycle lists instead of walking them in order.' },
     length: { type: 'number', default: 0.6, min: 0.1, step: 0.05, label: 'Box length (m)', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Extent along local X of each spawned box. Ignored while Random size is on.' },
     width: { type: 'number', default: 0.4, min: 0.1, step: 0.05, label: 'Box width (m)', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Extent along local Z of each spawned box. Ignored while Random size is on.' },
     height: { type: 'number', default: 0.4, min: 0.1, step: 0.05, label: 'Box height (m)', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Extent along local Y of each spawned box. Ignored while Random size is on.' },
@@ -80,8 +95,7 @@ definePart({
     },
     keepSpacing: { type: 'boolean', default: false, visibleWhen: { param: 'release', is: 'interval' }, label: 'Keep spacing while held', desc: 'Hold the interval while the feed is held instead of letting it run down, so boxes dropped onto a conveyor that stops with this spawner (give both the same run tag) stay one pitch apart however often the pair stops.' },
     conveyorId: { type: 'partRef', default: '', label: 'Pause when conveyor stopped', desc: 'Interlock: while the named conveyor is stopped, this spawner holds. Wire that conveyor to the PLC and the feed gates itself, with no tag of its own.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
-    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Run tag (spawn only while true)', group: 'Comms', desc: 'Gate the feed from the program. Note this only takes over once a program actually DRIVES the tag - until then the spawner keeps running, so a merely-declared tag is not a stopped feed.' },
+    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (spawn only while true)', group: 'Comms', desc: 'Gate the feed from the program. Note this only takes over once a program actually DRIVES the tag - until then the spawner keeps running, so a merely-declared tag is not a stopped feed.' },
     countTag: { type: 'tag', dir: 'out', stType: 'DINT', default: '', label: 'Spawned count tag', group: 'Comms', desc: 'Running total of boxes this spawner has dispensed. Subtract the despawner counts to get the work in progress.' },
   },
   step(ctx) {
@@ -90,7 +104,7 @@ definePart({
     // hold while a linked conveyor is stopped, or while a controller DRIVES the run tag de-energized
     // (ctx.tagDriven = output ownership; gating on the tag NAME alone would stop the spawner the moment one
     // was typed).
-    const stopped = !ctx.conveyorRunning(p.conveyorId) || (p.enableComms && ctx.tagDriven(p.runTag) ? !ctx.readTag(p.runTag) : false)
+    const stopped = !ctx.conveyorRunning(p.conveyorId) || (ctx.tagDriven(p.runTag) && !ctx.readTag(p.runTag))
     const onEnable = p.release === 'enable'
     if (p.disable || usedOff || stopped || p.boxesPerMinute <= 0) {
       // on each enable: held off = disarmed, so the next open is a fresh command
@@ -111,24 +125,35 @@ definePart({
     } else if (!started) { started = true; countdown = 0 }
     countdown -= ctx.dt
     const pal = palette(p.boxColors)
+    const values = p.mixAttribute ? valueList(p.mixValues) : []
     let n = 0
     while (countdown <= 0 && n < 8) {
       countdown += p.fixedRate ? period : Math.max(ctx.dt, period * (0.5 + ctx.rng()))
       n++
-      let color
-      if (pal.length > 0) {
-        color = p.randomColors ? pal[Math.floor(ctx.rng() * pal.length)] : pal[colorIndex % pal.length]
-        colorIndex++
-      } else {
-        color = p.product === 'oip.box' ? hexRgb(p.boxColor) : undefined
+      // one step or one draw per item for both lists, so item n takes colour n and value n (a stream with no values
+      // draws exactly as it did before values existed)
+      let ci = 0
+      let vi = 0
+      if (pal.length > 0 || values.length > 0) {
+        if (p.randomColors) {
+          const r = ctx.rng()
+          ci = Math.floor(r * pal.length)
+          vi = Math.floor(r * values.length)
+        } else {
+          ci = colorIndex % Math.max(1, pal.length)
+          vi = colorIndex % Math.max(1, values.length)
+          colorIndex++
+        }
       }
+      const color = pal.length > 0 ? pal[ci] : p.product === 'oip.box' ? hexRgb(p.boxColor) : undefined
+      const marks = values.length > 0 ? { [p.mixAttribute]: values[vi] } : undefined
       if (p.product === 'oip.box') {
         const rnd = (i) => SIZE_MIN[i] + ctx.rng() * (SIZE_MAX[i] - SIZE_MIN[i])
         const size = p.randomSize ? [rnd(0), rnd(1), rnd(2)] : [p.length, p.height, p.width]
-        ctx.spawn({ part: 'oip.box', params: { length: size[0], height: size[1], width: size[2] }, color: color, mass: p.mass, offset: [0, -0.2, 0] })
+        ctx.spawn({ part: 'oip.box', params: { length: size[0], height: size[1], width: size[2] }, color: color, mass: p.mass, offset: [0, -0.2, 0], ...(marks ? { marks } : {}) })
       } else if (p.product) {
         // any other product drops as itself, with its settings from the Inspector; a colour only from the cycle list
-        ctx.spawn({ part: p.product, params: settingsOf(p.productSettings), ...(color ? { color } : {}), offset: [0, -0.2, 0] })
+        ctx.spawn({ part: p.product, params: settingsOf(p.productSettings), ...(color ? { color } : {}), offset: [0, -0.2, 0], ...(marks ? { marks } : {}) })
       } else {
         continue // no product: the feed paces on and drops nothing
       }

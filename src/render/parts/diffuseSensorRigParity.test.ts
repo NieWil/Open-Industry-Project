@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { rigWorldPoses } from '../../core/rigPose'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { rigWorldPoses } from '../../core/rig/rigPose'
 import { rayObb } from '../../core/beamCast'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
 import { SENSOR_EMIT_Y, SENSOR_EMIT_Z, SENSOR_HEIGHT } from '../../core/types'
 import { examplePart, type RigGeo } from './examplePart'
 const { assets: DIFFUSE_SENSOR_ASSETS, behavior: DIFFUSE_SENSOR_BEHAVIOR, materials: DIFFUSE_SENSOR_MATERIALS, geometry: DIFFUSE_SENSOR_RIG, head: DIFFUSE_SENSOR_HEAD } = examplePart<RigGeo>('oip.diffuse-sensor')
 
-// The Diffuse Sensor as a custom part (examples/parts/diffuse-sensor) must emit its beam the way the built-in
-// does (render/sensorBeam.ts): from the lens face along local +Z. It exercises C-sensing (the beam), C-emissive
+// The Diffuse Sensor as a custom part (examples/parts/diffuse-sensor) must emit its beam from the lens face along
+// local +Z. It exercises C-sensing (the beam), C-emissive
 // (the detection LED), and a PLC presence tag. This pins the beam geometry + a functional ray-cast against a box
 // placed ahead of the lens.
 

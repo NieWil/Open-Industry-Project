@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { crossReference, duplicateDestructive, type LadderRef } from './crossRef'
-import { readLadder } from './ladderRungs'
-import { IEC_REFS } from './ladderLeaves'
+import { readLadder } from './ladder/ladderRungs'
+import { IEC_REFS } from './ladder/ladderLeaves'
 
 const SRC = `VAR Go, Belt1, Late, Held : BOOL; T1 : TON; n, m : INT; END_VAR
 LADDER

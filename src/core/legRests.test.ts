@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { computeSceneLegRests, legRestDyAt, legRestsKey, withLegRests } from './legRests'
-import { clearPackages, registerPackage } from './partRegistry'
-import type { PartPackage } from './partPackage'
-import type { ParamValue } from './partApi'
+import { clearPackages, registerPackage } from './parts/partRegistry'
+import type { PartPackage } from './parts/partPackage'
+import type { ParamValue } from './parts/partApi'
 import type { PartInstance } from './types'
-import { PACKAGE_FORMAT } from './partPackage'
+import { PACKAGE_FORMAT } from './parts/partPackage'
 
 // fixture packages: a function-geometry belt declaring the host-fed `legRests` param (+ the
 // rest:'surfaceBelow' stand), a rig roller with a kind:'leg' link, and the SDK platform (deck surface)

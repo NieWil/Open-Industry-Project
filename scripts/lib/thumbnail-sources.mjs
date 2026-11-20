@@ -13,7 +13,7 @@ import { join } from 'node:path'
 /** the record of what each committed picture was rendered from, relative to the repo root */
 export const RECORD_FILE = 'src/editor/thumbnailSources.json'
 
-/** Filename-safe form of a package id. MUST match packageThumbFile() in src/core/partPackage.ts. */
+/** Filename-safe form of a package id. MUST match packageThumbFile() in src/core/parts/partPackage.ts. */
 export const pkgThumbFile = (id) => id.replace(/[^a-z0-9._-]/gi, '_')
 
 const lf = (s) => s.replace(/\r\n/g, '\n')

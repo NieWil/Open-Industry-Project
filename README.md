@@ -44,7 +44,7 @@ or tell us on [Discord](https://discord.gg/ACRPr6sBpH).
 - Built-in PLC (a subset of IEC 61131-3 Structured Text and Ladder Diagram)
 - Program import/export: ST, PLCopen XML (ladder included)
 - Connect to external PLCs over Modbus TCP, OPC UA, EtherNet/IP (Logix), S7 PUT/GET
-  (S7-1200/1500) or ADS (TwinCAT) (desktop app; see the
+  (S7-1200/1500), SLMP (MELSEC) or ADS (TwinCAT) (desktop app; see the
   [connection guides](https://www.openindustryproject.org/guides/))
 - OPC UA server, so a SCADA or HMI can read the simulation (desktop app)
 - Custom parts via the [part SDK](packages/part-sdk/)

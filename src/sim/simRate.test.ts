@@ -1,9 +1,9 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 // The physics step rate as a project setting: what must hold at every rate a project may choose (whole Hz from
 // MIN_SIM_HZ to MAX_SIM_HZ), so that picking a rate changes the I/O latency and the sampling resolution and
 // nothing else. The range is continuous, so these run at a spread across it (both ends, rates that do not
 // divide a second evenly, and the common ones), with the demo cell's acceptance ladder
-// (editor/demoAcceptance.ts) and the live gate (e2e/verify-sim-rate.mjs) covering the rest. Why the
+// (editor/demo/demoAcceptance.ts) and the live gate (e2e/verify-sim-rate.mjs) covering the rest. Why the
 // floor is 60 is a measured failure, not a guess: docs/sim-clock.md.
 //
 // The world tests assert rate-invariance rather than pinning absolute numbers (world.test.ts and
@@ -14,9 +14,9 @@ import type { PackageManifest } from '../core/partPackage'
 
 import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
-import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/partPackage'
-import { registerPackage } from '../core/partRegistry'
-import { createSdkPart } from '../core/scene'
+import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/parts/partPackage'
+import { registerPackage } from '../core/parts/partRegistry'
+import { createSdkPart } from '../core/scene/scene'
 import { DEFAULT_SIM_HZ, MAX_SIM_HZ, MIN_SIM_HZ, SCENE_VERSION, toSimRate } from '../core/types'
 import type { PartInstance, SceneJSON, SdkPart, SimRate } from '../core/types'
 import { buildPackage } from './buildPackage'

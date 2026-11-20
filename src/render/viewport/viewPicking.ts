@@ -4,7 +4,7 @@
 import { Vector3 } from 'three'
 import type { Intersection, Object3D } from 'three'
 import { isCargoPart } from '../../core/frame'
-import { partFootprint, toWorldXZ } from '../../core/partGeometry'
+import { partFootprint, toWorldXZ } from '../../core/parts/partGeometry'
 import { silhouetteOverlapsRect } from '../../core/selection'
 import type { ScreenPoint } from '../../core/selection'
 import type { PartInstance } from '../../core/types'

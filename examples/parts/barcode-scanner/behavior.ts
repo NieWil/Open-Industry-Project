@@ -2,22 +2,37 @@
 // passes under it. Its local Z is the direction of travel, the arch's two columns stand at +-X either side of the bed,
 // and the part origin is the centre of the arch, on the floor.
 //
-// A case is READ once, however long it stays under the arch: the scanner MARKS each case it reads (`scanned`), and a
-// case already marked is never counted again. So a case stopped under the arch by a held line, or one backed up into
-// it, still counts one, and anything downstream can ask whether a case has been scanned (ctx.marked, or a beam hit's
-// `marks`) without being wired to this part. The read zone counts CARGO only, so a person walking through never reads.
+// The head reads along a scan line across the conveyor just above the belt: a case is READ as it crosses the line,
+// and the code on its label goes to the code tag with the good-read pulse, so a program can route the case by it. The
+// code is the case's product attribute that `codeMark` names (a cargo part's `attribute: true` param, or a mark an
+// upstream machine left). The read happens only while an unread case is in the read window, which counts CARGO only,
+// so a person walking through the line never reads.
+//
+// A case is read once, however long it stays under the arch: the scanner MARKS the case it read (`scanned`, on that
+// one case), and a case already marked is never read again. So a case stopped under the arch by a held line, or one
+// backed up into it, still counts one, and anything downstream can ask whether a case has been scanned (ctx.marked,
+// or a beam hit's `marks`) without being wired to this part.
 //
 // Today every read is a good read. What a real scan point adds on top - a no-read the program diverts to a reject
-// spur, a count checked against the shipment's expected count, a case's SKU routing it - builds on these same tags.
+// spur, a count checked against the shipment's expected count - builds on these same tags.
 //
-// Demonstrates a sensing zone used to identify rather than to trip, product state (`mark` / `marked`) as a
-// read-once memory, and a one-shot pulse to the PLC. Its only indicators are the ones a real scan arch has: the red
+// Demonstrates a beam that reads what a case carries (`sense(...).marks`), a mark on the one case read (`markHit`)
+// as a read-once memory, and a one-shot pulse to the PLC. Its only indicators are the ones a real scan arch has: the red
 // scan window and a good-read beacon. The count goes to the PLC, where a real line keeps it (an HMI, not the arch).
 
 const PULSE = 0.25 // s the good-read tag stays true after a read: several scans of any program, however slow its task
 
 let count = 0
 let pulse = 0 // s left on the good-read pulse (and the green lamp)
+let code = 0 // the last code read
+
+/** a label's code as a whole number for a DINT tag: a number as it is, a numeric string parsed, anything else 0 */
+function codeOf(v) {
+  if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v)
+  if (typeof v === 'boolean') return v ? 1 : 0
+  if (typeof v === 'string' && /^\s*-?\d+\s*$/.test(v)) return parseInt(v, 10)
+  return 0
+}
 
 definePart({
   lamps: ['read', 'scan'],
@@ -25,11 +40,13 @@ definePart({
     width: { type: 'number', default: 1.0, min: 0.4, max: 3, step: 0.01, label: 'Clear width (m)', desc: 'The gap between the two columns, across the direction of travel. Wider than the conveyor, so the columns stand clear of its legs.' },
     surfaceHeight: { type: 'number', default: 0.8, min: 0.2, max: 2, step: 0.01, label: 'Conveyor height (m)', desc: 'Height of the conveying surface under the arch: the bottom of the read zone.' },
     clearance: { type: 'number', default: 0.6, min: 0.2, max: 2, step: 0.01, label: 'Clearance (m)', desc: 'From the conveying surface up to the scanner head. The tallest load must pass under it; the read zone fills that height.' },
-    readDepth: { type: 'number', default: 0.5, min: 0.1, max: 2, step: 0.05, label: 'Read depth (m)', desc: 'How far along the direction of travel (local Z) the read zone reaches, centred under the head. A case is read when its CENTRE enters it.' },
+    readDepth: { type: 'number', default: 0.5, min: 0.1, max: 2, step: 0.05, label: 'Read depth (m)', desc: 'How far along the direction of travel (local Z) the read window reaches, centred under the head. A case is read as it crosses the scan line once its CENTRE is in the window, and the scan window lights while one is.' },
+    codeMark: { type: 'string', default: 'code', label: 'Code attribute', desc: 'The product attribute the label carries, read off each case into the code tag: a number, or digits in text. A case without it reads 0.' },
+    showBeam: { type: 'boolean', default: false, label: 'Show scan line', desc: 'Draw the scan line across the conveyor. A viewing aid only.' },
     beamColor: { type: 'color', default: '#f2bd0f', label: 'Beam color', desc: 'Paint of the crossbeam the head hangs from.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
     readTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Good read tag (pulse)', group: 'Comms', desc: 'Goes true for a quarter of a second each time a case is read. Take its rising edge to count or to act on a read.' },
     countTag: { type: 'tag', dir: 'out', stType: 'DINT', default: '', label: 'Read count tag', group: 'Comms', desc: 'Running total of cases read this run. It only ever climbs.' },
+    codeTag: { type: 'tag', dir: 'out', stType: 'DINT', default: '', label: 'Code tag (the last code read)', group: 'Comms', desc: 'The code on the label of the last case read, set on the same scan the good-read pulse rises. It holds until the next read.' },
   },
   geometry(g, p) {
     const width = typeof p.width === 'number' && p.width > 0 ? p.width : 1.0
@@ -104,21 +121,23 @@ definePart({
   },
   step(ctx) {
     const inZone = ctx.zone('read')
-    // marks land after the tick, so a case read this tick shows as marked from the next one: never counted twice
+    // a read needs an unread CASE in the window (the window never counts a person) and the scan line on one not yet
+    // read. Marks land after the tick, so a case read this tick shows as marked from the next one: never read twice
     const unread = inZone - ctx.marked('read', 'scanned')
-    if (unread > 0) {
-      count += unread
+    const line = ctx.sense('scanLine')
+    if (unread > 0 && line.hit && !(line.marks && line.marks.scanned)) {
+      count += 1
       pulse = PULSE
-      ctx.mark('read', 'scanned', true)
+      code = codeOf(line.marks ? line.marks[ctx.params.codeMark] : undefined)
+      ctx.markHit('scanLine', 'scanned', true)
     } else if (pulse > 0) {
       pulse = Math.max(0, pulse - ctx.dt)
     }
     const good = pulse > 0
     ctx.lamps.scan = inZone > 0
     ctx.lamps.read = good
-    if (ctx.params.enableComms) {
-      if (ctx.params.readTag) ctx.writeTag(ctx.params.readTag, good)
-      if (ctx.params.countTag) ctx.writeNumber(ctx.params.countTag, count)
-    }
+    if (ctx.params.readTag) ctx.writeTag(ctx.params.readTag, good)
+    if (ctx.params.countTag) ctx.writeNumber(ctx.params.countTag, count)
+    if (ctx.params.codeTag) ctx.writeNumber(ctx.params.codeTag, code)
   },
 })

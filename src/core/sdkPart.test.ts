@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { partParamSpecs, schemaToParamSpecs } from './packageParams'
-import { clearPackages, getPackage, hasPackage, listPackages, onPackagesChanged, registerPackage, unregisterPackage } from './partRegistry'
-import type { PartPackage } from './partPackage'
-import { createSdkPart, createPart, normalizePart, serializeScene, validateScene } from './scene'
+import { clearPackages, getPackage, hasPackage, listPackages, onPackagesChanged, registerPackage, unregisterPackage } from './parts/partRegistry'
+import type { PartPackage } from './parts/partPackage'
+import { createSdkPart, createPart, normalizePart, serializeScene, validateScene } from './scene/scene'
 import { SCENE_VERSION } from './types'
 import type { SdkPart } from './types'
-import { PACKAGE_FORMAT } from './partPackage'
+import { PACKAGE_FORMAT } from './parts/partPackage'
 
 function pkg(over: Partial<PartPackage> = {}): PartPackage {
   return {

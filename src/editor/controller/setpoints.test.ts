@@ -7,13 +7,13 @@
 // would show a number that isn't the one the part read - a subtler version of the same bug.
 
 import { beforeEach, describe, expect, it } from 'vitest'
-import { clearPackages, registerPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { clearPackages, registerPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { PartInstance, SdkPart } from '../../core/types'
 import type { TagValue } from '../../plc'
 import type { EditorController } from '../controller'
 import { globalTags, liveSetpoints } from './setpoints'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 const CONVEYOR = 'acme.conveyor'
 

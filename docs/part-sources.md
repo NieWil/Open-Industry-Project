@@ -22,7 +22,7 @@ or its git history shows the change, and the only way to get the old conveyor ba
 1. **A project holds its own copy of every part it uses**: built-ins, shelf parts, imported parts, cargo, and the
    parts those parts name (below). The project's parts (`store.userPackages`) are complete; the registry is those parts.
 2. **Each copy records where it came from**, per source: `origin: { app?, shelf? }`, each the fingerprint of the
-   version that source had when the copy was made (`partFingerprint`, src/core/partOrigin.ts). Keyed by source
+   version that source had when the copy was made (`partFingerprint`, src/core/parts/partOrigin.ts). Keyed by source
    because one copy can have two: a project's version of a built-in that is also on the shelf was made from the
    built-in and copied from the shelf, and its maintainer needs to hear when either moves. A later source (a part
    library, below) is a new key, not a new field, and a build that does not know a key keeps it. `origin` is
@@ -33,7 +33,7 @@ or its git history shows the change, and the only way to get the old conveyor ba
    derives those differently does not make every copy read as edited or updated. A record without the `v2:` prefix
    is an older stamp made by `storedPackageHash`. `matchesRecord` reads it with that hash, so older projects keep
    their statuses.
-3. **The app is a source like the shelf.** The four statuses of [src/core/partOrigin.ts](../src/core/partOrigin.ts)
+3. **The app is a source like the shelf.** The four statuses of [src/core/parts/partOrigin.ts](../src/core/parts/partOrigin.ts)
    (`sourceStatus`) apply to every part, whatever its source:
 
    | Project copy vs its origin | Source now vs its origin | Status |
@@ -43,15 +43,21 @@ or its git history shows the change, and the only way to get the old conveyor ba
    | changed | same | edited here |
    | changed | changed | changed in both |
 
-4. **Nothing changes until someone says so.** An app update never changes a project's parts. When a project opens
-   and newer versions of its parts exist, the app says so ("4 parts in this project have updates") with **Update
-   all** and **Review** (components/PartUpdatesNotice.tsx). The catalog cards carry the same badges. An update is one
+4. **Nothing changes until someone says so, and every source says so the same way.** A newer version never changes
+   a project's parts. Wherever a part came from (the app, a part library, the parts shelf), a newer version there
+   shows the same way (editor/parts/partUpdates.ts): an "Update" badge on the part's card, which opens one dialog
+   listing what changes here (components/PartChangeDialog.tsx), and one notice above the cards ("4 parts in this
+   project have updates") with **Update all** and **Review** (components/PartUpdatesNotice.tsx). An update is one
    part at a time or all at once, confirms when it would replace this project's own edits ("changed in both"), and
    is a library change, not an undo step, like Import part. Update all asks first, naming the parts whose project
-   changes it discards. Review lists each part with the same two answers as the catalog badge and the Inspector.
-   The prompt stays up until answered or dismissed, and a dismiss lasts this opening of the project. "Use the app's
-   new version" everywhere is `store.updateFromApp`, a fresh stamped copy. The prompt covers app updates only:
-   shelf updates stay on the Shelf tab, since asking means reading the shelf folder.
+   changes it discards. Review lists each update with where it comes from. The app's updates also offer "Keep this
+   project's version", which records the answer so the app stops asking until it changes the part again (the
+   Inspector asks the same). A declined library or shelf update keeps its badge. The prompt stays up until answered
+   or dismissed, and a dismiss lasts this opening of the project. "Use the app's new version" is
+   `store.updateFromApp`, a fresh stamped copy. A part library is read for this only when the project holds a part
+   from one ([part-libraries.md](part-libraries.md)); the shelf is read as it always is
+   ([parts-shelf.md](parts-shelf.md)). When one part has newer versions in two places, its card offers the most
+   specific: the shelf, then a library, then the app.
 5. **History is the folder's job.** The copies live in `<project>/parts/<slug>/`, so git, or a copy of the folder,
    keeps every version a project ever had. The app keeps no version store of its own.
 
@@ -64,14 +70,14 @@ never adopted as the project's own.
 `origin` is part of a part's manifest, so it travels with the part by every route (`.part.json`, Import Parts from
 Folder, a project folder or `.oip`). A part carried by hand from a shelf or a built-in says "update available"
 against the same source like any copy. A part that came from no source has nothing to compare with, so no stamp
-would help it. Pinned by `src/editor/partFile.test.ts` "a part keeps its origin on every import route". A known
+would help it. Pinned by `src/editor/parts/partFile.test.ts` "a part keeps its origin on every import route". A known
 gap: an imported part with a built-in's id and no `origin.app` goes in unstamped (status "same id, different
 part"), while reading a format-4 project stamps its built-in copies with the current version.
 
 ## What an update changes
 
 The stamp says that a part has a newer version. Review also says what taking it changes. `partChanges(from, to)`
-([src/core/partChanges.ts](../src/core/partChanges.ts)) compares the project's copy with the source's version and
+([src/core/parts/partChanges.ts](../src/core/parts/partChanges.ts)) compares the project's copy with the source's version and
 lists the differences most severe first: **breaking** (a signal removed or its direction or type changed, a setting
 removed or retyped), **placement** (snap features, shape or colliders, conveyor joins: placed copies may sit
 differently), **behavior** (the script, defaults, ranges, new signals or settings), **appearance** (models, textures,
@@ -112,7 +118,7 @@ could point at a part the project does not have (`packageDependencies`). The cas
 - `pallet-dispenser`'s `holds.part` names `oip.pallet` (examples/parts/pallet-dispenser/rig.json).
 - `unit-load` declares its pieces (`unit.pieces`: `oip.pallet` and `oip.box`, examples/parts/unit-load/behavior.ts),
   and [src/core/frame.ts](../src/core/frame.ts) `unitPieces` reads them through `unitPiecesOf`. A stored copy
-  without the declaration falls back to the same pair (`UNDECLARED_UNIT_PIECES` in core/partPackage.ts).
+  without the declaration falls back to the same pair (`UNDECLARED_UNIT_PIECES` in core/parts/partPackage.ts).
 - A product param (`product: true`, a string naming a cargo part) names what a spawner makes or a sink counts. Its
   default is a dependency of the part (`packageDependencies`), and a value an instance sets is one of the project
   (`productRefsOf`, followed by `missingLibraryCopies`, the CLIs' `projectLibrary` and the editor's `forSim`, which
@@ -131,7 +137,7 @@ Copies alone do not keep people on one app. If a later app stops running somethi
 capability, a shape kind, a param type), that project needs the old app again. So:
 
 - **Nothing a part can use is removed without an automatic upgrade.** `upgradeStoredPackage`
-  ([src/core/partPackage.ts](../src/core/partPackage.ts)) stays the one door a stored part comes through, and
+  ([src/core/parts/partUpgrade.ts](../src/core/parts/partUpgrade.ts)) stays the one door a stored part comes through, and
   `RETIRED_SHAPE_KINDS` keeps its grace period (`npm run retired-kinds`).
 - **A test proves it.** A corpus of old part versions (every built-in as shipped, plus representative authored
   parts) loads and runs against every build; one that stops loading or behaves differently fails it. Same family as
@@ -142,7 +148,7 @@ changes a project's parts.
 
 ### The Part SDK level
 
-A part asks for the update through its SDK level ([src/core/partSdk.ts](../src/core/partSdk.ts)). The package format
+A part asks for the update through its SDK level ([src/core/parts/partSdk.ts](../src/core/parts/partSdk.ts)). The package format
 moves only when a stored spelling must be translated, so most SDK growth (a new `ctx` member, a new manifest field)
 leaves it alone. An older build would load a part that uses the new thing and then fail inside the part. The level
 covers that gap:
@@ -155,7 +161,7 @@ covers that gap:
   part and the part's fingerprint at that time. A stamp is kept while the fingerprint matches, so loading or copying
   a part keeps the level it was made under. A part changed since its stamp takes the current build's level the next
   time it is built. Until then its level is unknown and nothing is said.
-- The stamp is left out of the fingerprint and the stored hash (`NOT_THE_PART` in core/partOrigin.ts), so it never
+- The stamp is left out of the fingerprint and the stored hash (`NOT_THE_PART` in core/parts/partOrigin.ts), so it never
   reads as an update, an edit or a new corpus version.
 - A build older than a placed part's level shows a warning in the Problems dock (group Parts). It warns and never
   refuses: the stamp is cautious (a part made under a newer level usually uses nothing new), and an installed app
@@ -165,7 +171,7 @@ covers that gap:
 
 On read, a format-4 project gets a copy of every built-in its scene places (and what
 those name), stamped with the current app's fingerprint (`keepDefinitionsOnce`, `missingLibraryCopies` in
-core/project.ts). That is the best available choice, since nothing records which version it was actually built
+core/project/project.ts). That is the best available choice, since nothing records which version it was actually built
 against. A copy that already has a record (`origin.app` from an edit, `origin.shelf` from the shelf) keeps it. A
 built-in copy a scene carries with no `origin.app` (a format-2 snapshot) gives way to the current built-in. One
 with a record (a scene file from another project) joins the library as that project's version. Library entries are never
@@ -204,7 +210,7 @@ the definition but not the file, so a later app that changes `Diverter.glb` at t
 project. A part that comes from a library has no app path at all.
 
 So in project format 6 every asset is a real file in the part's folder, named by the hash of its bytes, and the
-manifest names the file (`src/core/partAssets.ts`). The folder codec, the `.oip` archive and Put on Shelf write
+manifest names the file (`src/core/parts/partAssets.ts`). The folder codec, the `.oip` archive and Put on Shelf write
 `assets/<sha256>.*`, and every reader joins the files back into `data`, so packages in memory and the fingerprint
 are the same either way. The format number is its own so that an older build refuses such a folder by its version
 rather than by a part with no bytes:
@@ -216,7 +222,7 @@ parts/<slug>/assets/<sha256>.glb     (or .webp, ...)
 ```
 
 - **One layout everywhere a part is stored:** a project's `parts/`, the shelf, a library release, and the single-part
-  file `.oippart` (that folder, zipped, as `.oip` is the project folder zipped; `src/core/partArchive.ts`).
+  file `.oippart` (that folder, zipped, as `.oip` is the project folder zipped; `src/core/parts/partArchive.ts`).
   `.part.json` imports forever, like the flat `.oip`. One reader, one validator, one fingerprint. The installer
   registers `.oip` and `.oippart` ([desktop-shell.md](desktop-shell.md#project-and-part-files)). Opening a `.oip` imports it as a
   new project and never edits the file in place: a `.oip` is a way in and out, never a place a project lives.
@@ -246,7 +252,7 @@ core/shippedAssets.ts), so dev draws the same bytes production does. A re-export
 available", never a silent change to old projects. An asset that carries its hash fingerprints by the hash alone
 (`partFingerprint`), so the same part reads the same as bytes, as a folder file or as a reference.
 
-The writers (folder, `.oip`, shelf) ask `editor/shippedAssetCache.ts` for the bytes synchronously and write
+The writers (folder, `.oip`, shelf) ask `editor/parts/shippedAssetCache.ts` for the bytes synchronously and write
 `assets/<sha256>.*`. The cache fetches and hash-checks them when a part enters the library. An asset whose bytes
 have not arrived yet is written as its reference until the next round. Read back, bytes the app ships are held as
 a reference again (`referenceShippedAssets`), which keeps the autosave light.

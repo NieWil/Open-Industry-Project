@@ -1,5 +1,5 @@
 import { versionedAssetUrl } from '../core/assetVersions'
-import { packageThumbFile } from '../core/partPackage'
+import { packageThumbFile } from '../core/parts/partPackage'
 import { PART_DEFS } from '../core/types'
 import type { PartType } from '../core/types'
 

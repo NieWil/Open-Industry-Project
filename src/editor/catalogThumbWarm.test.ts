@@ -9,11 +9,11 @@
 // a card with no warmed url is a cold fetch. Both are silent in production, so both fail here.
 import { describe, expect, it } from 'vitest'
 import { readdirSync } from 'node:fs'
-import { packageThumbFile } from '../core/partPackage'
+import { packageThumbFile } from '../core/parts/partPackage'
 import { PART_DEFS } from '../core/types'
 import type { PartType } from '../core/types'
 import { prefetchThumbnails } from '../render/prefetch'
-import { bundledManifests, bundledThumbnailIds } from './bundledExamples'
+import { bundledManifests, bundledThumbnailIds } from './parts/bundledExamples'
 
 /** Capture the urls prefetchThumbnails warms, by standing in for the DOM Image it uses. */
 function warmedUrls(ids: readonly string[]): string[] {

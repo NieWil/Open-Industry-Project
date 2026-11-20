@@ -1,13 +1,13 @@
 /// <reference types="node" />
 // This build's first-party parts, read from the repository and baked the way the app bakes its bundle
-// (editor/bundledPackageData.ts): the built-ins (examples/parts/<dir>/{rig.json, behavior.ts}) and the first-party
+// (editor/parts/bundledPackageData.ts): the built-ins (examples/parts/<dir>/{rig.json, behavior.ts}) and the first-party
 // library parts (libraries/<library>/<dir>/{manifest.json, behavior.js}). For the node-side tests that run parts
 // against this build: the old-parts corpus (partCorpus.test.ts) and the listed library (libraryCorpus.test.ts).
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { PartPackage } from '../core/partPackage'
+import type { PartPackage } from '../core/parts/partPackage'
 import { buildPackage } from './buildPackage'
 import type { PackageManifest } from './buildPackage'
 

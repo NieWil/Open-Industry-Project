@@ -46,13 +46,14 @@ const SAVED_PROJECT = {
 }
 const ids = (scene) => JSON.stringify(scene?.parts?.map((p) => p.id))
 
-const hookReady = () => !!(window.__oip?.store && window.__oip.store.getState().scene.parts.length > 0)
+// (the store is up before App mounts, and `savedProject` is one of the hooks App adds: wait for it too)
+const hookReady = () => !!(window.__oip?.store && window.__oip.store.getState().scene.parts.length > 0 && typeof window.__oip.savedProject === 'function')
 const isColdStartNoise = (t) => /Failed to fetch|custom-part mesh load failed|\[vite\]/.test(t)
 
 const documentId = (page) => page.evaluate(() => localStorage.getItem('oip-web/document-id'))
 const partCount = (page) => page.evaluate(() => window.__oip.store.getState().scene.parts.length)
 const inDemoView = (page) => page.evaluate(() => window.__oip.store.getState().demoSession)
-const savedProject = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('oip-web/project') ?? 'null'))
+const savedProject = (page) => page.evaluate(async () => JSON.parse((await window.__oip.savedProject()) ?? 'null'))
 const partIds = (page) => page.evaluate(() => window.__oip.store.getState().scene.parts.map((p) => p.id))
 const forkNotice = (page) => page.evaluate(() => window.__oip.store.getState().demoForkNotice)
 const projectName = (page) => page.evaluate(() => window.__oip.store.getState().projectName)
@@ -73,7 +74,7 @@ const libraryProjects = (page) =>
           const all = db.transaction('docPayload').objectStore('docPayload').getAll()
           all.onsuccess = () => {
             db.close()
-            resolve(all.result.map((row) => row.project))
+            resolve(all.result.map((row) => row.project ?? JSON.parse(row.text)))
           }
           all.onerror = () => {
             db.close()
@@ -115,12 +116,15 @@ async function main() {
   page.on('console', (m) => { if (m.type() === 'error' && !isColdStartNoise(m.text())) errors.push(m.text()) })
   page.on('pageerror', (e) => errors.push('PAGEERR ' + String(e)))
   // Seed the returning user's project + silence the onboarding tour (its overlay eats toolbar clicks).
-  // Seed only if absent: this runs on every navigation, so writing unconditionally would restore the
-  // pristine 2-scene project on the reload below and fake the very regression this script checks for.
+  // Seed once: this runs on every navigation, so writing again would restore the pristine 2-scene project on the
+  // reload below and fake the very regression this script checks for. The first boot moves the key into the library.
   await page.addInitScript((project) => {
     try {
       localStorage.setItem('oip-web/tutorial-done', '1')
-      if (!localStorage.getItem('oip-web/project')) localStorage.setItem('oip-web/project', JSON.stringify(project))
+      if (!localStorage.getItem('e2e/seeded')) {
+        localStorage.setItem('oip-web/project', JSON.stringify(project))
+        localStorage.setItem('e2e/seeded', '1')
+      }
     } catch { /* storage disabled */ }
   }, SAVED_PROJECT)
 

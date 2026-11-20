@@ -1,17 +1,17 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartPackage } from '../core/partPackage'
-import { createSdkPart } from '../core/scene'
-import { findSnap } from '../core/snapFeatures'
-import { conveyingSurfaceAt } from '../core/conveyorSurface'
-import { beltLikeView, conveyorEndsOf } from '../core/partGeometry'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartPackage } from '../core/parts/partPackage'
+import { createSdkPart } from '../core/scene/scene'
+import { findSnap } from '../core/snap/snapFeatures'
+import { conveyingSurfaceAt } from '../core/conveyor/conveyorSurface'
+import { bedView, conveyorEndsOf } from '../core/parts/partGeometry'
 import { scaffoldLine } from '../core/lineScaffold'
-import { formatParamArgs, hiddenParamArgs, parseParamArgs, withParamArgs } from '../core/partParamArgs'
+import { formatParamArgs, hiddenParamArgs, parseParamArgs, withParamArgs } from '../core/parts/partParamArgs'
 import type { PartInstance, SdkPart } from '../core/types'
 import { buildPackage } from '../sim/buildPackage'
-import { bundledBehaviors, bundledManifests } from './bundledExamples'
+import { bundledBehaviors, bundledManifests } from './parts/bundledExamples'
 
-// core/lineScaffold.ts (npm run add-part --scaffold) and core/partParamArgs.ts (--params / --host-params) against
+// core/lineScaffold.ts (npm run add-part --scaffold) and core/parts/partParamArgs.ts (--params / --host-params) against
 // the real shipped parts: a scaffold is only as good as the snaps the shipped parts declare.
 
 const pkgs = new Map<string, PartPackage>()
@@ -70,7 +70,7 @@ describe('withParamArgs', () => {
   it("gives a belt its length through the resize path (its segments) and refuses a param it doesn't have", () => {
     const belt = fresh('oip.belt-conveyor', 'b', { width: 0.8, length: 3 })
     expect(belt.params.width).toBe(0.8)
-    expect(beltLikeView(belt)!.segments.map((s) => s.length)).toEqual([3])
+    expect(bedView(belt, 'path')!.segments.map((s) => s.length)).toEqual([3])
     expect(() => fresh('oip.belt-conveyor', 'b', { wdith: 0.8 })).toThrow(/no param "wdith"/)
   })
 
@@ -140,9 +140,10 @@ describe('withParamArgs', () => {
     expect([d.params.fpmUnits, d.params.speedFpm]).toEqual([true, 200])
   })
 
-  it('switches comms on when a tag is named', () => {
-    expect(fresh('oip.diffuse-sensor', 'e', { tag: 'Eye' }).params.enableComms).toBe(true)
-    expect(fresh('oip.diffuse-sensor', 'e', { tag: 'Eye', enableComms: false }).params.enableComms).toBe(false)
+  it('names a tag without adding a comms switch the part does not declare', () => {
+    const eye = fresh('oip.diffuse-sensor', 'e', { tag: 'Eye' })
+    expect(eye.params.tag).toBe('Eye')
+    expect('enableComms' in eye.params).toBe(false)
   })
 })
 
@@ -167,11 +168,10 @@ describe('scaffoldLine', () => {
     // held with that belt, so a stopped belt can't stack boxes under it (check-layout's feed warning)
     expect(src.params.conveyorId).toBe('belt')
     expect(src.params.keepSpacing).toBe(true)
-    // wiring: meaningful names, comms on, and a program that drives rather than passes through
+    // wiring: meaningful names, and a program that drives rather than passes through
     expect(belt.params.runTag).toBe('Belt1Run')
     expect(eye.params.tag).toBe('DischargeEye')
     expect(src.params.runTag).toBe('SpawnerRun')
-    expect(belt.params.enableComms).toBe(true)
     expect(out.program).toContain('Belt1Run := Running AND NOT DischargeEye;')
     expect(out.program).toContain('SpawnerRun := Running AND NOT DischargeEye;')
     expect(out.program).not.toMatch(/Cmd\b/)

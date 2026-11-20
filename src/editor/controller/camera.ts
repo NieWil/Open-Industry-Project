@@ -2,13 +2,15 @@
 // scene slot, the opening view, the Focus / Follow press run and the follow badge. The bookkeeping is this
 // area's own state (CameraState, held by the controller); the store and view come in as dependencies.
 
-import { partDisplayName } from '../../core/partDisplayName'
-import { DEMO_OPENING_VIEW } from '../demoScenes'
-import { clearViewportState, readViewportState } from '../storePrefs'
-import { SCENE_SLOT, sceneSlotKey } from '../documentStore'
+import { Vector3 } from 'three'
+import { partDisplayName } from '../../core/parts/partDisplayName'
+import { DEMO_OPENING_VIEW } from '../demo/demoScenes'
+import { clearViewportState, persistViewportState, readViewportState } from '../store/storePrefs'
+import { takeLinkCamera } from './linkCamera'
+import { SCENE_SLOT, sceneSlotKey } from '../project/documentStore'
 import { DEFAULT_CAMERA_POSE } from '../../render/api'
 import type { IRenderView, ProjectionMode } from '../../render/api'
-import type { EditorState, EditorStore } from '../store'
+import type { EditorState, EditorStore } from '../store/store'
 import type { EditorController } from '../controller'
 
 /** The camera's own bookkeeping: the slot it is filed under, the Focus / Follow press run, the part-focus return. */
@@ -61,7 +63,16 @@ export function restoreCamera(c: CameraState, ec: CameraDeps): void {
   c.key = key
   // a scene slot framed before cameras were kept per document is under its bare id: the first document to
   // ask for it takes it (storePrefs.readViewportState)
-  const saved = readViewportState(key, key.startsWith('@') ? undefined : SCENE_SLOT)
+  let saved = readViewportState(key, key.startsWith('@') ? undefined : SCENE_SLOT)
+  // A room link may carry the camera its sender copied it at. That is this visit's opening view, over a camera
+  // remembered from an earlier one. It is filed as the room's camera at once, since an instant pose is not a
+  // gesture that settles, and the address no longer has it on a reload.
+  const linked = key.startsWith('@room:') ? takeLinkCamera() : null
+  if (linked) {
+    const { ortho, ...pose } = linked
+    saved = { pose, projection: ortho ? 'orthographic' : 'perspective', auto: false }
+    persistViewportState(key, saved)
+  }
   ec.view.setCameraPose(saved ? saved.pose : openingView(ec.store), { instant: true })
   // the projection is saved with the pose: an orthographic frustum is derived from the camera→target
   // distance (EditorCamera.setFocusDistance), so restored without the pose it was framed at it
@@ -79,6 +90,23 @@ export function resetCamera(ec: CameraDeps): void {
   clearViewportState(viewportKey(ec.store))
   ec.view.setProjection('perspective')
   ec.view.setCameraPose(openingView(ec.store))
+}
+
+/** the world axis each axis view looks down, as the orbit gizmo maps them (+X right, +Y top, +Z front) */
+const AXIS_VIEWS = {
+  'view.front': new Vector3(0, 0, 1),
+  'view.rear': new Vector3(0, 0, -1),
+  'view.right': new Vector3(1, 0, 0),
+  'view.left': new Vector3(-1, 0, 0),
+  'view.top': new Vector3(0, 1, 0),
+  'view.bottom': new Vector3(0, -1, 0),
+} as const
+
+export type AxisViewId = keyof typeof AXIS_VIEWS
+
+/** an orthographic view down a world axis, as an orbit-gizmo ball click gives (Numpad 1 / 3 / 7, the palette) */
+export function viewAlongAxis(view: IRenderView, id: AxisViewId): void {
+  view.snapToAxis(AXIS_VIEWS[id])
 }
 
 /** whether the current F run is following (an even press count ≥ 2) */

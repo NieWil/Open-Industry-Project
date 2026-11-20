@@ -1,30 +1,31 @@
 import { Vector3 } from 'three'
 import type { BoxFrame } from '../core/frame'
-import { subscribePartDiagnostics } from '../core/partDiagnostics'
-import { getPackage, onPackagesChanged } from '../core/partRegistry'
+import { subscribePartDiagnostics } from '../core/parts/partDiagnostics'
+import { getPackage, onPackagesChanged } from '../core/parts/partRegistry'
 import type { AuthorableShapeKind } from './rigTree'
-import type { RigShape } from '../core/partPackage'
+import type { RigShape } from '../core/parts/partPackage'
 import { IdleUseSession } from '../sim/idlePose'
 import type { PartDiagnostic } from '../sim/validatePart'
-import { moveViewportState, persistViewportState } from './storePrefs'
-import { onCurrentDocumentChange, SCENE_SLOT, sceneSlotKey, slotDocumentId } from './documentStore'
-import type { SnapCandidate, SnapPose } from '../core/snapFeatures'
-import type { PartDef, PartInstance, PartType, SceneJSON } from '../core/types'
+import { moveViewportState, persistViewportState } from './store/storePrefs'
+import { onCurrentDocumentChange, SCENE_SLOT, sceneSlotKey, slotDocumentId } from './project/documentStore'
+import type { SnapCandidate, SnapPose } from '../core/snap/snapFeatures'
+import type { PartInstance, PartType, SceneJSON } from '../core/types'
 import type { DisplayUnits } from '../core/units'
-import { sceneUnits } from '../core/sceneUnits'
+import { sceneDisplayUnits } from '../core/scene/sceneUnits'
 import type { BoxPick, IRenderView, ResizeHandle } from '../render/api'
-import type { PlcFault, SimClient } from '../sim/client'
+import type { PlcFault, SimClient, StepDone } from '../sim/client'
 import type { StepStats } from '../sim/protocol'
+import type { ScanTime } from '../sim/plcHost'
 import type { ProcessImageSnapshot, TagValue } from '../plc'
-import { keepProjectVersion } from './storePackages'
+import { keepProjectVersion } from './store/storePackages'
 // the link's sessions are loaded on use (loadExternalPlc): only what the first frame shows is static
-import { desktopAdsHost, desktopEipHost, desktopOpcUaHost, desktopPlcIoHost, flattenFrameTags } from './externalPlcStatus'
-import type { AdsHost, EipHost, ExternalPlcLink, ExternalPlcStatus, OpcUaHost, PlcIoHost, PlcTagList } from './externalPlcStatus'
-import { desktopOpcUaServerHost, OPC_UA_SERVER_OFF } from './opcUaServer'
-import type { OpcUaServerHost, OpcUaServerSession, OpcUaServerStatus, PublishedProgram } from './opcUaServer'
-import { programOutOfDate, type ReloadBlocker } from './programReload'
+import { desktopAdsHost, desktopEipHost, desktopOpcUaHost, desktopPlcIoHost } from './links/externalPlcStatus'
+import type { AdsHost, EipHost, ExternalPlcLink, ExternalPlcStatus, OpcUaHost, PlcIoHost, PlcTagList } from './links/externalPlcStatus'
+import { desktopOpcUaServerHost, OPC_UA_SERVER_OFF } from './links/opcUaServer'
+import type { OpcUaServerHost, OpcUaServerStatus, PublishedProgram } from './links/opcUaServer'
+import { programOutOfDate, type ReloadBlocker } from './program/programReload'
 import { coverSceneSwapIfArriving } from './sceneSwapCover'
-import type { EditorState, EditorStore, LiveCargoPose, ToolMode, TransformSpace } from './store'
+import type { EditorState, EditorStore, LiveCargoPose, ToolMode, TransformSpace } from './store/store'
 // controller/ area modules: each owns its state in an object this class holds (see the class comment)
 import * as dragOps from './controller/drag'
 import type { Drag } from './controller/drag'
@@ -51,6 +52,11 @@ import * as vertexSnapOps from './controller/vertexSnap'
 import * as pointerOps from './controller/pointer'
 import * as keyboardOps from './controller/keyboard'
 import * as catalogOps from './controller/catalogPlace'
+import { LiveView } from './controller/liveView'
+import { selectionSet } from './store/selectionSet'
+
+/** {@link EditorController.plcAliases} with no program attached */
+const NO_PLC_ALIASES: ReadonlyMap<string, string> = new Map()
 
 export type { PlcFaults, ProgramStatus }
 
@@ -95,6 +101,7 @@ export class EditorController {
   }
   // author mode: re-apply placed visuals when a part package's geometry changes in the registry (live edit / hot-reload)
   private unsubscribePackages: () => void = () => {}
+  private readonly unsubscribeDiagnostics: () => void
   /** internal - for controller/ modules */
   drag: Drag | null = null
   /** the live snap of the gesture in flight (controller/snapRest.ts LiveSnapState); e2e scripts read `snap.candidate`
@@ -198,6 +205,7 @@ export class EditorController {
   opcUaServerHost: OpcUaServerHost | null = desktopOpcUaServerHost()
   // the static idle actuation preview's memo and the devices a stopped-scene Use is operating (controller/useSessions.ts)
   private readonly uses = new useOps.UseSessions()
+  private readonly live = new LiveView(this) // following another connection's shared run (controller/liveView.ts)
 
   constructor(store: EditorStore, view: IRenderView, sim: SimClient, container: HTMLElement) {
     this.store = store
@@ -218,17 +226,17 @@ export class EditorController {
     window.addEventListener('keydown', this.onKeyDown)
     window.addEventListener('keyup', this.onKeyUp)
     document.addEventListener('visibilitychange', this.onVisibilityChange)
+    window.addEventListener('blur', this.onWindowBlur)
 
     sim.onFrame = (frame) => {
       this.lastFrame = frame
-      // an external PLC exchanges its I/O once per frame, like a fieldbus (editor/externalPlc.ts)
-      if (this.links.externalSession) {
-        const out = this.links.externalSession.exchange(flattenFrameTags(frame.tags))
-        if (out) this.sim.setTags(out)
-      }
-      // the simulated PLC's OPC UA server reads the program's variables as the watch table does
-      this.links.uaServer?.update(this.plcWatch, this.program.plcAttached)
+      // an external PLC exchanges its I/O once per frame, like a fieldbus (editor/links/externalPlc.ts), and so does
+      // each named controller's (controller/plcLinks.ts)
+      linkOps.exchangeFrame(this.links, this.sim, frame.tags)
+      // the simulated PLC's OPC UA servers read the program's variables as the watch table does
+      this.updateUaServers(this.plcWatch, this.program.plcAttached)
       this.view.applyBoxFrame(frame)
+      this.live.share(frame)
       this.boxCount = frame.count
       this.trackSelectedBox(frame)
       pilotOps.pilotFrameTick(this.pilot, this, frame)
@@ -269,10 +277,10 @@ export class EditorController {
         error: f.line !== undefined ? `${what}: ${f.message} (line ${f.line}, col ${f.col})` : `${what}: ${f.message}`,
       })
     }
-    // Custom-part runtime diagnostics (core/partDiagnostics): a throwing step()/geometry(), a compile
+    // Custom-part runtime diagnostics (core/parts/partDiagnostics): a throwing step()/geometry(), a compile
     // failure at attach, an unknown commanded joint/lamp. One console line per unique problem (deduped
     // at the source - a per-tick repeat can't spam); the Inspector shows them on the selected part.
-    subscribePartDiagnostics((e) => {
+    this.unsubscribeDiagnostics = subscribePartDiagnostics((e) => {
       if (e.kind !== 'report') return
       const d = e.entry
       console.warn(`[part${d.partId ? ` ${d.partId}` : ''}${d.packageId ? ` (${d.packageId})` : ''}] ${d.source}: ${d.message}`)
@@ -287,7 +295,7 @@ export class EditorController {
     this.prevSpace = s.space
     this.prevFlowArrows = s.flowArrows
     this.prevShowGrid = s.showGrid
-    this.prevDisplayUnits = sceneUnits(s.scene)
+    this.prevDisplayUnits = sceneDisplayUnits(s.scene)
     this.camera.projection = s.projection
     this.prevSceneLoads = store.sceneLoads
     view.syncScene(s.scene)
@@ -295,7 +303,7 @@ export class EditorController {
     view.setRunning(s.running)
     view.setFlowArrowsVisible(s.flowArrows)
     view.setGridVisible(s.showGrid)
-    view.setDisplayUnits(sceneUnits(s.scene))
+    view.setDisplayUnits(sceneDisplayUnits(s.scene))
     view.setProjection(s.projection)
 
     // Put the camera back where this scene was left (workspace state, like the dock sizes), falling
@@ -374,7 +382,7 @@ export class EditorController {
     // a SCADA may be waiting for the simulated PLC's OPC UA server from the moment the app opens
     this.syncOpcUaServer()
     // a scene that runs on an external PLC: have the link's code in hand before Play needs it
-    if (this.externalPlcAvailable && s.externalPlc.enabled) void linkOps.loadExternalPlc(this.links).catch(() => {})
+    if (this.externalPlcAvailable && linkOps.anyLinkOn(s.externalPlc)) void linkOps.loadExternalPlc(this.links).catch(() => {})
   }
 
   run(): void {
@@ -391,22 +399,23 @@ export class EditorController {
   }
 
   /**
-   * The PLC's tag names over OPC UA, for the tag picker, or null when none have been read. From the last browse of
-   * a run's link (kept after Stop) or of {@link readPlcTags}. Its `endpoint` says which PLC: a caller compares it to
-   * the settings, since the address may have changed since. Changes notify through {@link onExternalPlcStatus}.
+   * The PLC's tag names, for the tag picker, or null when none have been read. Over OPC UA from the last browse of
+   * a run's link (kept after Stop) or of {@link readPlcTags}; over ADS and EtherNet/IP from {@link readPlcTags} alone. Its `protocol`
+   * and `endpoint` say which PLC: a caller compares them to the settings, since the link may have changed since. Changes notify through {@link onExternalPlcStatus}.
    */
   get plcTagList(): Readonly<PlcTagList> | null {
     return this.links.plcTags
   }
 
-  /** Whether the tag picker can read a PLC's tags (the desktop app can, over OPC UA; a browser tab cannot). */
+  /** Whether the tag picker can read the default controller's PLC's tags: the desktop app can, over OPC UA, ADS or EtherNet/IP. */
   get plcTagsAvailable(): boolean {
-    return this.opcUaHost !== null
+    const mode = this.store.getState().externalPlc.mode
+    return mode === 'opcua' ? this.opcUaHost !== null : mode === 'ads' ? !!this.adsHost?.symbols : mode === 'eip' ? !!this.eipHost?.tags : false
   }
 
   /**
-   * Read the OPC UA PLC's tag names now, for the tag picker. While a run holds the link this does nothing: that
-   * link's own browse is the fresher answer, and it goes into {@link plcTagList} by itself.
+   * Read the default controller's PLC's tag names now, over OPC UA, ADS or EtherNet/IP, for the tag picker. While a run holds the
+   * link this does nothing: an OPC UA run's own browse is the fresher answer, and it goes into {@link plcTagList} by itself.
    */
   readPlcTags(): void {
     linkOps.readPlcTags(this.links, this)
@@ -425,6 +434,14 @@ export class EditorController {
     return this.links.externalSession ? this.links.externalSession.status() : this.links.externalStatus
   }
 
+  /**
+   * A named controller's link state (`Cell2::...` tags, core/io/controllerTag.ts), for Controller Properties and the
+   * toolbar's link status: its run's, or its last one, kept after Stop. Changes notify through {@link onExternalPlcStatus}.
+   */
+  namedPlcStatus(name: string): Readonly<ExternalPlcStatus> {
+    return linkOps.namedStatus(this.links, name)
+  }
+
   /** Subscribe to external-PLC status changes (listening, a master connecting, a failure); returns an unsubscribe. */
   onExternalPlcStatus(cb: () => void): () => void {
     this.links.watchers.add(cb)
@@ -434,11 +451,6 @@ export class EditorController {
   /** the external-PLC link of the current run, or null (internal - for controller/program.ts: it owns the I/O) */
   get externalSession(): ExternalPlcLink | null {
     return this.links.externalSession
-  }
-
-  /** the simulated PLC's OPC UA server while it is switched on, or null (internal - for controller/program.ts) */
-  get uaServer(): OpcUaServerSession | null {
-    return this.links.uaServer
   }
 
   /** The simulated PLC's OPC UA server's state, for Controller Properties. */
@@ -455,25 +467,48 @@ export class EditorController {
     linkOps.syncOpcUaServer(this.links, this.program, this)
   }
 
-  /** internal - for controller/program.ts */
-  publishToUaServer(program: PublishedProgram): void {
-    linkOps.publishToUaServer(this.links, this.store, program)
+  /** internal - for controller/program.ts: the default controller's program (null when it runs on an external PLC), and
+   *  each simulated controller's own on its own server */
+  publishToUaServer(program: PublishedProgram | null): void {
+    if (program) linkOps.publishToUaServer(this.links, this.store, program)
+    linkOps.publishNamedUaServers(this.links, this.program, this)
+  }
+
+  /** internal - for controller/program.ts: every OPC UA server's values, and whether a program runs here */
+  updateUaServers(watch: Readonly<Record<string, TagValue>> | null, live: boolean): void {
+    linkOps.updateUaServers(this.links, watch, live)
+  }
+
+  /** A simulated controller's own OPC UA server's state, for Controller Properties. */
+  namedUaServerStatus(name: string): Readonly<OpcUaServerStatus> {
+    return linkOps.namedUaServerStatus(this.links, name)
   }
 
   /** internal - for controller/simRun.ts */
   detachExternalPlc(): void {
     linkOps.detachExternalPlc(this.links)
+    programOps.setLinkDriven(this.program, this.sim, [])
   }
 
   togglePause(): void {
     runOps.togglePause(this)
   }
 
+  setPaused(paused: boolean): void {
+    runOps.setPaused(this, paused)
+  }
+
+  step(): void {
+    runOps.step(this)
+  }
+
+  stepBy(opts: { steps?: number; until?: number }): Promise<StepDone | null> {
+    return runOps.stepBy(this, opts)
+  }
+
   /** Set the simulation speed multiplier. Applies live to a
    *  running sim and persists for the next run; usable while stopped. */
   setTimeScale(scale: number): void {
-    // an external PLC keeps wall-clock time, so the sim does too while one is connected
-    if (this.links.externalSession && scale !== 1) return
     this.store.setTimeScale(scale)
     this.sim.setTimeScale(scale) // no-op when stopped; run() re-pushes the current value
   }
@@ -683,7 +718,7 @@ export class EditorController {
    * running program or the key is not a BOOL of it.
    */
   togglePlcBit(key: string): boolean {
-    return programOps.togglePlcBit(this, key)
+    return programOps.togglePlcBit({ ec: this, p: this.program }, key)
   }
 
   /**
@@ -692,7 +727,41 @@ export class EditorController {
    * one it only reads holds the value. `key` is the watch key. The reason it was refused, or null when written.
    */
   writePlcValue(key: string, text: string): string | null {
-    return programOps.writePlcValue(this, key, text)
+    return programOps.writePlcValue({ ec: this, p: this.program }, key, text)
+  }
+
+  /**
+   * Force a variable of the running program: hold it at `text`, or at the value it has now, until released. The
+   * program reads the held value and the parts see it, whatever the scene feeds or the program writes. A write
+   * ({@link writePlcValue}, {@link togglePlcBit}) to a forced variable changes the held value. A force stays until
+   * released, through Stop and into the next run from its first scan, as on a controller; an attach drops one its
+   * program no longer has, and loading another scene drops them all. Never saved. The reason it was refused, or null
+   * when held.
+   */
+  forcePlcValue(key: string, text?: string): string | null {
+    return programOps.forcePlcValue({ ec: this, p: this.program }, key, text)
+  }
+
+  /** Release one forced variable, or every one when `key` is left out. */
+  releasePlcForces(key?: string): void {
+    programOps.releasePlcForces({ ec: this, p: this.program }, key)
+  }
+
+  /** The attached program's bare-name aliases (LocalPlcLink.aliases): the rule a part's tag binds by. Empty with
+   *  no program attached. */
+  get plcAliases(): ReadonlyMap<string, string> {
+    return (this.program.plcAttached ? this.program.uaProgram?.aliases : undefined) ?? NO_PLC_ALIASES
+  }
+
+  /** The running program's forced variables and the values they are held at, by watch key. */
+  get plcForces(): Readonly<Record<string, number | boolean>> {
+    return this.sim.forces
+  }
+
+  /** Subscribe to forces being set or released; returns an unsubscribe. */
+  onPlcForces(cb: () => void): () => void {
+    this.program.forceWatchers.add(cb)
+    return () => this.program.forceWatchers.delete(cb)
   }
 
   /** Live variable image of the running program (null when none), for a watch table. Rendered from
@@ -707,8 +776,17 @@ export class EditorController {
    *  against a 100 ms one and needs a grace on both sides. Without it, a gate like
    *  verify-no-spawn-before-attach reports correct spawns as births on a shut gate. */
   get plcWatch(): Readonly<Record<string, TagValue>> | null {
-    if (!this.program.plcAttached) return null
-    return this.sim.plcState?.watch ?? this.program.seedWatch
+    return linkOps.plcImage(this.links, this.ownPlcWatch, this.lastFrame) ?? this.live.watch() // else a followed run's (liveView.ts)
+  }
+
+  /** The image of the program a write or force can reach: this app's program, else a followed run's. Unlike
+   *  {@link plcWatch} it leaves out an external PLC's tags, which a force here would never reach. */
+  get plcProgramWatch(): Readonly<Record<string, TagValue>> | null {
+    return this.ownPlcWatch ?? this.live.watch()
+  }
+
+  private get ownPlcWatch(): Readonly<Record<string, TagValue>> | null {
+    return this.program.plcAttached ? (this.sim.plcState?.watch ?? this.program.seedWatch) : null
   }
 
   /** Per-part effective param values the running behaviors reported this frame (`ctx.report`), keyed by
@@ -756,19 +834,31 @@ export class EditorController {
     return s ? { inputs: s.inputs, outputs: s.outputs } : { inputs: {}, outputs: {} }
   }
 
-  /** cumulative scan-engine telemetry since the program started (null when none). With the scan
-   *  interleaved in the worker, sim time can't backlog - a nonzero `overruns` only means the
-   *  cycle time was pushed below what one physics step can drain (see PlcHost). Resets on each Run. */
   /** The controller's fault (plc/faults.ts): the one that stopped the program. It stands as it was after the program
    *  stops, until the next program starts. */
   get plcFaults(): PlcFaults {
     return { source: this.program.faultSource, fault: this.program.lastFault }
   }
 
+  /** cumulative scan-engine telemetry since the program started (null when none). With the scan
+   *  interleaved in the worker, sim time can't backlog - a nonzero `overruns` only means the
+   *  cycle time was pushed below what one physics step can drain (see PlcHost). Resets on each Run. */
   get plcScanStats(): { scansRun: number; overruns: number } | null {
     if (!this.program.plcAttached) return null
     const s = this.sim.plcState
     return { scansRun: s?.scansRun ?? 0, overruns: s?.overruns ?? 0 }
+  }
+
+  /** How long each task's scans take to execute, from the latest frame (sim/plcHost.ts ScanTime). Null when no
+   *  program runs here, empty until its first frame. */
+  get plcScanTimes(): readonly ScanTime[] | null {
+    if (!this.program.plcAttached) return null
+    return this.sim.plcState?.scanTimes ?? []
+  }
+
+  /** Start the scan-time averages and maxima over; the next frame carries the fresh ones. */
+  resetPlcScanTimes(): void {
+    if (this.program.plcAttached) this.sim.resetScanTimes()
   }
 
   // (e2e verify-camera-persistence calls it at runtime)
@@ -798,6 +888,11 @@ export class EditorController {
     cameraOps.resetCamera(this)
   }
 
+  /** an axis view: Numpad 1 / 3 / 7 and the palette's Front View and the rest (controller/camera.ts) */
+  viewAlongAxis(id: cameraOps.AxisViewId): void {
+    cameraOps.viewAlongAxis(this.view, id)
+  }
+
   dispose(): void {
     dragOps.cancelActiveDrag(this)
     this.container.removeEventListener('pointerdown', this.onPointerDown)
@@ -809,15 +904,17 @@ export class EditorController {
     window.removeEventListener('keydown', this.onKeyDown)
     window.removeEventListener('keyup', this.onKeyUp)
     document.removeEventListener('visibilitychange', this.onVisibilityChange)
+    window.removeEventListener('blur', this.onWindowBlur)
     this.unsubscribe()
     this.unsubscribeDocument()
     this.unsubscribePackages()
+    this.unsubscribeDiagnostics()
     window.removeEventListener('pagehide', this.flushCamera)
     this.view.onCameraSettled = null
     this.store.setLiveCargoHost(null)
     this.sim.onFrame = () => {}
-    void this.links.uaServer?.stop()
-    this.links.uaServer = null
+    this.live.dispose()
+    linkOps.stopUaServers(this.links)
   }
 
   /**
@@ -876,16 +973,16 @@ export class EditorController {
   /**
    * Author mode: import a GLB model and apply it to a rig link - the link's shape becomes a `mesh`
    * referencing the embedded GLB (base64, so the part stays self-contained + portable). Applied live
-   * (registerPackage → rebuild → attachMesh loads it). `dataBase64` is the file's raw bytes, base64-encoded
-   * (no `data:` prefix). Replaces the link's current shape; persist with "Save part".
+   * (registerPackage → rebuild → attachMesh loads it). Replaces the link's current shape; a part that is just
+   * this model is fitted to it in the same step (core/parts/modelFit.ts), and `fitted` says so.
    *
-   * Returns an advisory warning string (or null). The import always proceeds (the embedded model is what
+   * `warning` is advisory (or null). The import always proceeds (the embedded model is what
    * makes the part self-contained, and we don't know the browser's real quota), but the embedding is what
    * pushes the project doc over localStorage, so an oversized model is called out at the moment it's
    * picked rather than only via the autosave banner later. See LARGE_EMBED_B64 and projectFile.SaveResult.
    */
-  setLinkMesh(packageId: string, linkName: string, dataBase64: string): string | null {
-    return authoringOps.setLinkMesh(this, packageId, linkName, dataBase64)
+  setLinkMesh(packageId: string, linkName: string, glb: Uint8Array): { warning: string | null; fitted: boolean; unreadable?: true } {
+    return authoringOps.importLinkMesh(this, packageId, linkName, glb)
   }
 
   /**
@@ -928,14 +1025,14 @@ export class EditorController {
     authoringOps.deleteRigNode(this, packageId, linkName)
   }
 
-  /**
-   * Author mode: add, edit, or remove (pass null) the kinematic joint that drives a link. A joint makes
-   * the node articulated - the part's behavior script commands it by name via ctx.setJoint(name, value). The
-   * joint name is kept stable across edits so an existing setJoint reference stays valid. Applied live.
-   */
-  setRigJoint(packageId: string, linkName: string, joint: { type: 'revolute' | 'prismatic'; axis: [number, number, number]; min: number; max: number } | null): void {
+  /** Author mode: add, edit, or remove (null) the joint that drives a link; the behavior commands it by name
+   *  via ctx.setJoint, and the name stays stable across edits so those references stay valid. Applied live. */
+  setRigJoint(packageId: string, linkName: string, joint: Parameters<typeof authoringOps.setRigJoint>[3]): void {
     authoringOps.setRigJoint(this, packageId, linkName, joint)
   }
+
+  /** Author mode: the Part Editor's rig edits (split, pivot, merge back, parent, PLC control), in controller/partAuthoring.ts. */
+  readonly rig = authoringOps.rigEdits(this)
 
   /**
    * Author mode (in-browser behavior editor): validate a candidate behavior script against the part's own
@@ -963,7 +1060,7 @@ export class EditorController {
   }
 
   /**
-   * Import a part file (.part.json - see editor/partFile.ts) into the user's library: validate + re-bake
+   * Import a part file (.part.json - see editor/parts/partFile.ts) into the user's library: validate + re-bake
    * it, register it as the authoritative copy, and surface it in the catalog. Returns a human-readable
    * error, or null on success/cancel. `confirmReplace` (when given) gates overwriting an id that's already
    * loaded - declining is a silent no-op, like cancelling a file dialog. Replacing a bundled example
@@ -971,6 +1068,15 @@ export class EditorController {
    */
   importPart(file: string | Uint8Array, confirmReplace?: (existingName: string) => boolean): Promise<string | null> {
     return authoringOps.importPart(this, file, confirmReplace)
+  }
+
+  /** importPart, then place one copy where the file was dropped on the viewport (the drop point stands in for a card
+   *  dragged there). Declining the replace places nothing. */
+  async dropPartFile(file: Uint8Array, clientX: number, clientY: number, confirmReplace?: (existingName: string) => boolean): Promise<string | null> {
+    const res = await authoringOps.importPartFile(this, file, confirmReplace)
+    if ('error' in res) return res.error
+    if (res.id !== null) catalogOps.placePackageAt(this, res.id, clientX, clientY)
+    return null
   }
 
   /**
@@ -992,12 +1098,12 @@ export class EditorController {
    * the scene. Returns the new package id (null on a view-only link or in a shared room, where the Part
    * Editor is refused).
    */
-  createBlankPart(): string | null {
-    return authoringOps.createBlankPart(this)
+  createBlankPart(from?: Parameters<typeof authoringOps.createBlankPart>[1]): string | null {
+    return authoringOps.createBlankPart(this, from)
   }
 
   /** A part's own name and catalog category (the definition's, not a placed copy's). Returns '' or why not. */
-  setPartInfo(packageId: string, patch: { name?: string; category?: PartDef['category'] }): string {
+  setPartInfo(packageId: string, patch: { name?: string; category?: string }): string {
     return authoringOps.setPartInfo(this, packageId, patch)
   }
 
@@ -1029,7 +1135,12 @@ export class EditorController {
     this.sim.setPaused(s.paused) // restore the user's intent (normally resume)
   }
 
-  private onStoreChange = (): void => {
+  private onStoreChange = (transient = false): void => {
+    // A scene that arrives during an open drag or reposition from anything but the gesture's own moves (a project
+    // load, a folder reload, an agent's edit). Each move rebuilds the scene from the one the gesture started on, so
+    // the next move would write that old scene over the new one and the release would commit it. A gesture's own
+    // moves are transient and its release closes it before committing, so a lasting scene change here is not its own.
+    if (!transient && this.store.getState().scene !== this.prevScene) dragOps.dropOvertakenGesture(this)
     const s = this.store.getState()
     // a part removed out from under an in-flight reposition: drop the gesture
     const repos = this.repo.active
@@ -1073,7 +1184,10 @@ export class EditorController {
     if (demoRetired) {
       // A demo peek just ended, and the store says how (EditorStore.demoForkedSlot). The two endings
       // want opposite things from the camera and are the same flag flip from here.
-      if (this.store.demoForkedSlot !== null) {
+      // Shared (roomEntry.ts): the tab took the demo into a room in place. The address names the room before the
+      // session ends, and it is the same scene on screen, so the camera carries over as it does for a fork. A room
+      // has no camera filed yet, and a restore would jump the sharer to the default view mid-share.
+      if (this.store.demoForkedSlot !== null || this.viewportKey().startsWith('@room:')) {
         // Forked (stashDemoSession): the document did not change (the same scene continues under a new
         // identity), so the camera carries over to the new slot instead of being swapped. Without this the
         // demo's opening frame is recorded under a key nothing reads again, and the next reload opens the
@@ -1112,6 +1226,8 @@ export class EditorController {
     // cover is decided right after it, in the same task, before any frame paints (sceneSwapCover.ts).
     const sceneLoaded = this.store.sceneLoads !== this.prevSceneLoads
     this.prevSceneLoads = this.store.sceneLoads
+    // forces outlive Stop but not the scene: another project's program can reuse a variable name
+    if (sceneLoaded) this.releasePlcForces()
     // a definition session (Catalog ✎) swaps the document's scene for its own: the document's parts are held, not
     // disposed, while it is open, and come back on Back without a rebuild (~0.5 s on the demo scene, plus the shader
     // programs three would release and recompile). Set before the sync it governs: on at the session's opening sync,
@@ -1181,14 +1297,14 @@ export class EditorController {
       }
     }
     if (s.externalPlc !== this.links.uaServerSettings) this.syncOpcUaServer()
-    const runningChanged = s.running !== this.prevRunning
+    // the view runs while this client runs, and while it draws another connection's shared run (controller/liveView.ts)
+    const runningChanged = (s.running || s.liveFollowing) !== this.prevRunning
     if (runningChanged) {
-      this.view.setRunning(s.running)
-      this.prevRunning = s.running
+      this.view.setRunning((this.prevRunning = s.running || s.liveFollowing))
       // returning to idle: setRunning(false) just reset every rig to its authored rest pose (resetRunPoses),
       // so the cached idle keys no longer describe what's on screen - forget them and re-pose every device
       // from the authored state below (the blade drops back if `active` is off).
-      if (!s.running) this.uses.idlePoseKeys.clear()
+      if (!this.prevRunning) this.uses.idlePoseKeys.clear()
       // either edge: a run starts from the design, not from what a stopped Use left a device doing, and what the
       // run left it doing is gone at Stop. A jogged arm is the same: back to its saved pose.
       this.dropUseSessions()
@@ -1221,7 +1337,7 @@ export class EditorController {
       this.prevShowGrid = s.showGrid
     }
     // the measure tool reads lengths in the scene's Units, so a switch (or a scene with other Units) re-labels it
-    const units = sceneUnits(s.scene)
+    const units = sceneDisplayUnits(s.scene)
     if (units !== this.prevDisplayUnits) {
       this.view.setDisplayUnits(units)
       this.prevDisplayUnits = units
@@ -1290,7 +1406,7 @@ export class EditorController {
 
   /** internal - for controller/ modules */
   selectedParts(s: EditorState): PartInstance[] {
-    return s.scene.parts.filter((p) => s.selectedIds.includes(p.id))
+    return s.scene.parts.filter((p) => selectionSet(s.selectedIds).has(p.id))
   }
 
   /**
@@ -1741,8 +1857,8 @@ export class EditorController {
     repositionOps.commitReposition(this.repo, this)
   }
 
-  cancelReposition(): void {
-    repositionOps.cancelReposition(this.repo, this)
+  cancelReposition(revert = true): void {
+    repositionOps.cancelReposition(this.repo, this, revert)
   }
 
   // --- pointer -------------------------------------------------------------
@@ -1791,6 +1907,8 @@ export class EditorController {
   private onPointerUp = (e: PointerEvent): void => pointerOps.onPointerUp(this.press, this, e)
 
   private onPointerCancel = (e: PointerEvent): void => pointerOps.onPointerCancel(this.press, this, e)
+  // focus leaving mid-drag (Alt-Tab) may take the release with it: cancel the drag, as Escape does
+  private readonly onWindowBlur = (): void => dragOps.cancelActiveDrag(this)
 
   resolveTap(clientX: number, clientY: number, shift: boolean): void {
     pointerOps.resolveTap(this, clientX, clientY, shift)

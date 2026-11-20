@@ -1,0 +1,168 @@
+{
+  "format": 6,
+  "id": "oip.laser-sensor",
+  "name": "Laser Sensor",
+  "params": {
+    "maxRange": {
+      "type": "number",
+      "default": 4,
+      "min": 0.1,
+      "max": 10,
+      "step": 0.05,
+      "label": "Max range (m)",
+      "desc": "How far down the beam a target is still measured. The beam is cast along local +Z, so aim the sensor by rotating it."
+    },
+    "showBeam": {
+      "type": "boolean",
+      "default": true,
+      "label": "Show beam",
+      "desc": "Draw the beam line in the viewport. A viewing aid only - hiding it does not change what the sensor measures."
+    },
+    "distanceTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "REAL",
+      "default": "",
+      "label": "Distance tag",
+      "unit": "m",
+      "group": "Comms",
+      "desc": "Where the measured distance to the target is published, in metres. With nothing in range it reads the max range rather than 0, so compare against that to detect an empty beam."
+    }
+  },
+  "behavior": "// Laser Sensor — a measuring light barrier that reports the distance to cargo in its beam. Demonstrates the\n// distance output of sensing: the host hands ctx.sense().distance the metres to the nearest cargo within\n// range; the behavior writes it to a PLC REAL tag (the measured range, or maxRange when the beam is clear).\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n//\n// The housing is drawn in code as a generic housing of this kind. The height, the footprint, where the beam leaves\n// the housing (the snap `at` and the lens link sit there) and the materials are the part's interface. Part-local\n// metres: +Z is the front (the beam axis), y 0 the underside of the connector.\n\n// ---- from examples/parts/_shared/sensorOutlines.js ----\n// a rounded-corner rectangle, for windows and panels\nfunction rrect(x0, y0, x1, y1, r) {\n  const pts = []\n  for (const [cx, cy, a0] of [[x1 - r, y0 + r, -Math.PI / 2], [x1 - r, y1 - r, 0], [x0 + r, y1 - r, Math.PI / 2], [x0 + r, y0 + r, Math.PI]])\n    for (let k = 0; k <= 3; k++) { const a = a0 + (k * Math.PI) / 6; pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]) }\n  return pts\n}\n\n// a 16-sided circle, for mounting holes\nfunction circle(cy, cz, r) {\n  const pts = []\n  for (let k = 0; k < 16; k++) { const a = (k * Math.PI) / 8; pts.push([cy + r * Math.cos(a), cz + r * Math.sin(a)]) }\n  return pts\n}\n\nconst LASER = {\n  halfX: 0.057, // 114 mm wide across the body\n  panel: 0.0008, // the label panel standing proud of each flank: the footprint's outer width is 2 * (halfX + panel)\n  back: -0.0735,\n  capZ: 0.04, // where the dark front cap meets the body\n  front: 0.074, // the window face: the beam origin and the guard contact\n  bodyY0: 0.038, // the housing's underside; the M12 plug hangs below it\n  bodyY1: 0.152,\n  emitY: 0.095, // the window's centre\n  led: [0, 0.156, 0.056], // the detection LED, sitting on the front cap's top\n  height: 0.16, // the LED's top\n}\n\ndefinePart({\n  lamps: ['led'],\n  params: {\n    maxRange: { type: 'number', default: 4, min: 0.1, max: 10, step: 0.05, label: 'Max range (m)', desc: 'How far down the beam a target is still measured. The beam is cast along local +Z, so aim the sensor by rotating it.' },\n    showBeam: { type: 'boolean', default: true, label: 'Show beam', desc: 'Draw the beam line in the viewport. A viewing aid only - hiding it does not change what the sensor measures.' },\n    distanceTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Distance tag', unit: 'm', group: 'Comms', desc: 'Where the measured distance to the target is published, in metres. With nothing in range it reads the max range rather than 0, so compare against that to detect an empty beam.' },\n  },\n  // The housing, drawn: a body with two mounting holes and a label panel on each flank, a dark front cap with\n  // the window and four screws, a top panel with a display and two status LEDs, and an M12 plug underneath.\n  // Part-local metres, front (+Z) = the beam. Materials: amber (body), dark (front cap, side and top panels),\n  // black (plug, screws), orange (display), gray (status LEDs), lilac (window).\n  geometry(g) {\n    const X = LASER.halfX, PANEL = LASER.panel, BACK = LASER.back, CAPZ = LASER.capZ, FRONT = LASER.front, Y0 = LASER.bodyY0, Y1 = LASER.bodyY1\n    const YC = (Y0 + Y1) / 2\n    // the body: a block with two mounting holes through it near the back; its front edge butts the cap square\n    const body = g.extrude([[Y0, BACK], [Y0, CAPZ], [Y1, CAPZ], [Y1, BACK]], -X, X, {\n      axis: 'x', bevel: 0.002, square: [1],\n      holes: [circle(Y0 + 0.02, BACK + 0.0155, 0.0033), circle(Y1 - 0.02, BACK + 0.0155, 0.0033)],\n    })\n    // the dark front cap, the window in it, and a screw in each corner\n    const cap = g.bevelBox([2 * X, Y1 - Y0, FRONT - 0.002 - CAPZ], [0, YC, (CAPZ + FRONT - 0.002) / 2], 0.002, ['z-'])\n    const win = g.extrude(rrect(-0.04, YC - 0.04, 0.04, YC + 0.04, 0.002), FRONT - 0.002, FRONT, { bevel: 0.0005 })\n    const screws = []\n    for (const sx of [-1, 1]) for (const sy of [-1, 1])\n      screws.push(g.lathe([[0, 0], [0.0045, 0], [0.0045, 0.0006], [0.003, 0.0012], [0, 0.0012]], { axis: 'z', center: [sx * 0.0495, YC + sy * 0.0495, FRONT - 0.002], segments: 12 }))\n    // a label panel on each flank, between the cap and the mounting holes\n    const panels = [-1, 1].map((s) => g.extrude(rrect(Y0 + 0.012, BACK + 0.03, Y1 - 0.012, CAPZ - 0.008, 0.004), s * X, s * (X + PANEL), { axis: 'x' }))\n    // the top: a dark panel carrying the display and two status LEDs\n    const top = g.extrude(rrect(-0.044, BACK + 0.01, 0.044, CAPZ - 0.008, 0.004), Y1, Y1 + 0.001, { axis: 'y', bevel: 0.0003 })\n    const display = g.extrude(rrect(-0.034, -0.012, 0.034, 0.022, 0.003), Y1 + 0.001, Y1 + 0.0016, { axis: 'y' })\n    const leds = [-1, 1].map((s) => g.lathe([[0, 0], [0.004, 0], [0.004, 0.0008], [0, 0.0012]], { axis: 'y', center: [s * 0.013, Y1 + 0.001, -0.038], segments: 16 }))\n    // the M12 plug under the body: a turned body and a hex coupling nut\n    const PZ = -0.01\n    const plug = g.lathe([[0, 0], [0.0078, 0], [0.0085, 0.0008], [0.0085, 0.01], [0.009, 0.02], [0.009, Y0], [0, Y0]], { axis: 'y', center: [0, 0, PZ], segments: 24 })\n    const nut = g.lathe([[0, 0.01], [0.0115, 0.01], [0.0115, 0.021], [0, 0.021]], { axis: 'y', center: [0, 0, PZ], segments: 6, smooth: false })\n    const both = { doubleSided: true }\n    return [\n      Object.assign({ desc: body, material: 'amber' }, both),\n      Object.assign({ desc: g.merge(cap, top, ...panels), material: 'dark' }, both),\n      Object.assign({ desc: win, material: 'lilac' }, both),\n      Object.assign({ desc: g.merge(plug, nut, ...screws), material: 'black' }, both),\n      Object.assign({ desc: display, material: 'orange' }, both),\n      Object.assign({ desc: g.merge(...leds), material: 'gray' }, both),\n    ]\n  },\n  step(ctx) {\n    const s = ctx.sense('lens')\n    const inRange = s.hit && s.distance <= ctx.params.maxRange\n    const dist = inRange ? s.distance : ctx.params.maxRange\n    ctx.lamps.led = inRange\n    if (ctx.params.distanceTag) ctx.writeNumber(ctx.params.distanceTag, dist)\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "lens",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.095,
+          0.074
+        ],
+        "beam": {
+          "range": 10,
+          "rangeParam": "maxRange",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "led",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.014,
+            0.008,
+            0.012
+          ]
+        },
+        "offset": [
+          0,
+          0.156,
+          0.056
+        ],
+        "lamps": [
+          {
+            "emissive": [
+              1,
+              0.1,
+              0.05
+            ]
+          }
+        ]
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 0.1156,
+      "width": 0.1475,
+      "top": 0.16
+    }
+  },
+  "category": "Devices",
+  "snap": {
+    "mounts": [
+      {
+        "at": [
+          0,
+          0,
+          0.074
+        ],
+        "accepts": "conveyorGuard",
+        "face": "in",
+        "outwardOffset": 0.02,
+        "yOffset": 0.02,
+        "fitRangeParam": "maxRange"
+      }
+    ]
+  },
+  "materials": [
+    {
+      "id": "orange",
+      "color": [
+        0.82757083,
+        0.13286832,
+        0
+      ],
+      "metalness": 0,
+      "roughness": 0.45
+    },
+    {
+      "id": "amber",
+      "color": [
+        0.21404114,
+        0.10048151,
+        0
+      ],
+      "metalness": 0,
+      "roughness": 0.55
+    },
+    {
+      "id": "dark",
+      "color": [
+        0.00232198,
+        0.00116099,
+        0.00116099
+      ],
+      "metalness": 0,
+      "roughness": 0.35
+    },
+    {
+      "id": "black",
+      "color": [
+        0.00232198,
+        0.00232198,
+        0.00232198
+      ],
+      "metalness": 0,
+      "roughness": 0.55
+    },
+    {
+      "id": "gray",
+      "color": [
+        0.50196087,
+        0.50196087,
+        0.50196087
+      ],
+      "metalness": 0,
+      "roughness": 0.55
+    },
+    {
+      "id": "lilac",
+      "color": [
+        0.50196087,
+        0.50196087,
+        0.84705955
+      ],
+      "metalness": 0,
+      "roughness": 0.55
+    }
+  ],
+  "sdk": {
+    "level": 9,
+    "of": "v2:7529:2bqnze97inv"
+  }
+}

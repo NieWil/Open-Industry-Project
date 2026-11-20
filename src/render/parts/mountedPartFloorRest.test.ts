@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { partFootprint, restOnSurface } from '../../core/partGeometry'
-import { clearPackages, registerPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { partFootprint, restOnSurface } from '../../core/parts/partGeometry'
+import { clearPackages, registerPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { PartInstance } from '../../core/types'
 import { examplePart, type RigGeo } from './examplePart'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 // Regression: the blade stop, chain transfer and diverter are conveyor-mounted equipment whose rig origin sits
 // at the belt/deck surface, so their real geometry (housing, deck, chain lanes - mostly GLB meshes core can't measure)

@@ -2,7 +2,7 @@
 // registers both, package.json build.fileAssociations), "Open with", or a path on the command line.
 //
 // Main reads the file and hands the renderer its bytes, never a path. The renderer imports them exactly as its own
-// Import Project / Import part would (src/editor/desktopFileOpen.ts), and gets no access to the folder the file sat
+// Import Project / Import part would (src/editor/desktop/desktopFileOpen.ts), and gets no access to the folder the file sat
 // in. A `.oip` becomes a project of its own (its folder is made on its first edit, like any new project); a `.oippart`
 // goes into the open project's parts. Neither edits the file: a `.oip` is a way in and out, never a place a project
 // lives (docs/part-sources.md).

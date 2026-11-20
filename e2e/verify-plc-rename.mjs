@@ -94,7 +94,7 @@ async function main() {
       if (!belt) throw new Error('the belt conveyor package is missing')
       st.loadScene({
         version: st.getState().scene.version,
-        parts: [{ id: 'belt', type: 'part', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0, params: { shapePreset: 'custom', segments: [[4, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, enableComms: true, runTag: 'Run' } }],
+        parts: [{ id: 'belt', type: 'part', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0, params: { shapePreset: 'custom', segments: [[4, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, runTag: 'Run' } }],
         packages: [belt],
       })
     })

@@ -1,5 +1,5 @@
 import type { PartInstance, SceneJSON } from '../core/types'
-import type { PartPackage } from '../core/partPackage'
+import type { PartPackage } from '../core/parts/partPackage'
 
 /** An ordinary live edit expressed against the scene the worker already holds (protocol 'updatePatch'). */
 export interface ScenePatch {

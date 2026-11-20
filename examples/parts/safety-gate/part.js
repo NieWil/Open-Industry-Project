@@ -25,7 +25,6 @@ definePart({
     id: 'oip.safety-gate',
     name: 'Safety Gate',
     category: 'Structure',
-    commsParam: 'enableComms',
     // End-to-end chaining (declarative SnapChain, docs/part-snap-chain.md): the gate butts into a fence run or
     // corners with one, sharing the corner post via the omitPost* handshake. Group 'barrierFence' is shared with
     // the Fence - a gate is a door IN a fence line - at the fence family's tight 1 m reach.
@@ -45,13 +44,12 @@ definePart({
     open: { type: 'boolean', default: false, label: 'Open', group: 'Start state', desc: 'Swing the leaf open. This is the state it starts in; Use swings it by hand, which is how someone in pilot mode walks through the guard line.' },
     openAngle: { type: 'number', default: 110, min: -180, max: 180, step: 1, label: 'Open angle (°)', desc: 'How far the leaf swings about the hinge when open. Negative angles swing it the other way, for a gate that has to open into the aisle.' },
     openSpeed: { type: 'number', default: 180, min: 10, max: 720, step: 5, label: 'Open speed (°/s)', desc: 'How fast the leaf travels between shut and the open angle.' },
-    normallyClosed: { type: 'boolean', default: false, label: 'Normally closed (inverts the signal)', desc: 'Invert the signal this gate publishes, so the tag reads true while the gate is SHUT - the safety convention, where a broken wire and an open gate look the same to the program. Affects the comms output only, never the visuals.' },
+    normallyClosed: { type: 'boolean', default: false, label: 'Normally closed (inverts the signal)', desc: 'Invert the signal this gate publishes, so the tag reads true while the gate is SHUT - the safety convention, where a broken wire and an open gate look the same to the program. Affects the tag only, never the visuals.' },
     postColor: { type: 'color', default: '#f2bd0f', label: 'Post color', group: 'Colors', desc: 'Post tint.' },
     meshColor: { type: 'color', default: '#0d0d0d', label: 'Mesh color', group: 'Colors', desc: 'Tint of the leaf frame and the panel it holds.' },
     handleColor: { type: 'color', default: '#c91717', label: 'Handle color', group: 'Colors', desc: 'Tint of the emergency release handle.' },
     omitPostStart: { type: 'boolean', default: false, label: 'Omit start post', group: 'Posts', desc: 'Suppress the post at local -X so a snapped neighbour draws the shared one instead. Snapping sets this for you.' },
     omitPostEnd: { type: 'boolean', default: false, label: 'Omit end post', group: 'Posts', desc: 'Suppress the post at local +X so a snapped neighbour draws the shared one instead. Snapping sets this for you.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
     tag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Gate signal tag', group: 'Comms', desc: 'Where the gate publishes its state for the program to read. Whether true means open or shut is set by Normally closed above.' },
   },
   // A revolute hinge + a hidden collision-only leaf box; the visible mesh comes from geometry().
@@ -196,12 +194,14 @@ definePart({
   },
   step(ctx) {
     if (ctx.used()) flip = !flip
-    const open = ctx.params.open !== flip
+    // a PLC that drives this tag is watching a real gate switch (Watch only): the leaf swings as that switch reads
+    const watched = ctx.params.tag && ctx.tagDriven(ctx.params.tag)
+    const open = watched ? ctx.readTag(ctx.params.tag) !== ctx.params.normallyClosed : ctx.params.open !== flip
     ctx.report('open', open) // the hand state it is actually in (useParam requires it): authored, then hand-flipped
     const target = open ? ctx.params.openAngle * D2R : 0
     angle = ctx.approach(angle, target, ctx.params.openSpeed * D2R * ctx.dt)
     ctx.joints.swing = angle
     // safety-door-switch output — normallyClosed inverts the signal only, not the motion
-    if (ctx.params.enableComms && ctx.params.tag) ctx.writeTag(ctx.params.tag, open !== ctx.params.normallyClosed)
+    if (ctx.params.tag) ctx.writeTag(ctx.params.tag, open !== ctx.params.normallyClosed)
   },
 })

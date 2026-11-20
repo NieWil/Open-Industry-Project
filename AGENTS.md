@@ -31,9 +31,10 @@ PLCs) built in TypeScript / three.js / Jolt-physics. It also ships a native surf
 | Desktop package | `npm run desktop:pack` (→ `apps/desktop/release/win-unpacked`) · `npm run desktop:dist` (NSIS installer; refuses a dirty tree or a HEAD not on origin/main, because an installer's build stamp claims collab rooms) · `node scripts/desktop-smoke.mjs <executable>` (boots a packaged build over CDP; fuses block `--inspect`, so Playwright can't drive it). See [apps/desktop/README.md](apps/desktop/README.md). A release is the hand-started [desktop.yml](.github/workflows/desktop.yml) workflow with `upload` ticked |
 | Edge speed | `npm run edge-bench` ([docs/cdn-runbook.md](docs/cdn-runbook.md)) |
 | Eager-JS census | `npm run eager-census` (the first-frame JS graph by source module; `-- --no-build`, `-- --top 40`) |
+| Step profile | `npm run profile` (where the time goes on reload, after the cover lifts, opening the PLC dock, the ladder face, Problems, Play and Stop, on an 800-part reference line; `-- play dock`, `-- --stations 1000`, `-- --project line.oip`, `-- --no-build`) |
 | Dev on prod assets | `OIP_DEV_PROD_ASSETS=1 npm run dev` (serves `/models` + `/textures` from `dist/`) |
 | ST oracles | `npm run st-oracle` (MATIEC) · `st-oracle:ed3` (STruC++) · `st-oracle:xml` · `st-oracle:openplc` · `st-oracle:dry`; on Windows `wsl -u root -- bash scripts/oracle-wsl.sh all` |
-| PLC in the loop | `npm run openplc-loop` (OpenPLC over Modbus TCP) · `npm run s7-loop` (snap7 over S7) |
+| PLC in the loop | `npm run openplc-loop` (OpenPLC over Modbus TCP) · `npm run openplc-loop:cells` (OpenPLC as a second controller beside the program) · `npm run s7-loop` (snap7 over S7) |
 | Headless CLIs | `catalog`, `check-part`, `add-part`, `edit-part`, `duplicate-parts`, `rename-tag`, `assign-io`, `snap-part`, `shot-part`, `inspect-glb`, `import-model`, `validate-project`, `check-st`, `check-wiring`, `check-layout`, `test-project`, `check-flow`, `bench-sim`, `capabilities`, `build-part-sdk`, `build-parts`, `build-library`, `sign-library`, `library-key`, `check-submission`, `library-corpus`, `bake-walls`, `sdk-usage`, `retired-kinds` |
 
 The headless CLIs, the oracles and the PLC loops are documented in [docs/cli.md](docs/cli.md): no browser, real exit
@@ -88,7 +89,7 @@ a choice is unclear, take the conservative one. Concretely:
   (THIRD_PARTY_NOTICES.md).
 - **No vendor-derived data or behaviour**: nothing captured from a vendor's software, and no behaviour fitted to its
   output. Where IEC leaves a choice open, the engine's rule is ours and documented as ours.
-- **Connecting is fine**: protocol clients talk to equipment the user owns (Modbus, OPC UA, S7, ADS through the user's
+- **Connecting is fine**: protocol clients talk to equipment the user owns (Modbus, OPC UA, S7, SLMP, ADS through the user's
   own TcAdsDll, EtherNet/IP through libplctag). Reading another tool's spellings on input and writing IEC is fine.
 - **Claims**: "a subset of IEC 61131-3 ... not certified"; never "compliant", "certified" or a logo. Vendor names only
   to identify a product (THIRD_PARTY_NOTICES.md lists the marks), never as our specification ("as CODESYS does").
@@ -115,7 +116,7 @@ e.g. don't reach for `three` inside `core` to "just compute a matrix."
 
 **The four big classes compose owned state; don't put fields back on them.** `RenderView`
 ([view.ts](src/render/viewport/view.ts)), `EditorController` ([controller.ts](src/editor/controller.ts)),
-`SimWorld` ([world.ts](src/sim/world.ts)) and `EditorStore` ([store.ts](src/editor/store.ts)) are composition
+`SimWorld` ([world.ts](src/sim/world.ts)) and `EditorStore` ([store.ts](src/editor/store/store.ts)) are composition
 roots: each area keeps its fields in an object it owns, in its own module, held as a `readonly` field (e.g.
 `ViewWarmState` in viewWarm.ts, `CameraState` in controller/camera.ts, `CargoRegistry` in sim/cargoRegistry.ts,
 `UndoHistory` in storeHistory.ts). An area's functions take their own state plus a narrow dependency type (a
@@ -137,13 +138,16 @@ projectTestsRun.ts); eslint enforces both.
   three.js internals patch; read before bumping three, update when you add or retire a patch), `cdn-runbook.md`
   (hosting measurements and texture-residency numbers; read before spending effort on load performance).
 - **`apps/desktop/`** - the native (Electron) shell wrapping the same TS core.
+- **Code review passes: [.claude/review-ledger.md](.claude/review-ledger.md)**, where the last pass stopped, the next
+  area in the rotation, and findings left on purpose. A review reads it first, skips what it lists as accepted, and
+  adds its own row last.
 - **The agent door: [src/editor/agent/tools.ts](src/editor/agent/tools.ts)**, what an AI agent may do to the open
   editor, served by the desktop app over MCP at `http://127.0.0.1:5189/mcp`
   ([apps/desktop/mcpServer.cjs](apps/desktop/mcpServer.cjs) is only the transport). Off in an installed app until
-  Help > Agent Connections... allows it, on in the dev shell. Agent edits go through the store's own paths, one
+  Settings > Agent connections allows it (Help > Agent Connections... opens it there), on in the dev shell. Agent edits go through the store's own paths, one
   "Agent: ..." undo step each; a new tool is one entry in `AGENT_TOOLS`. Read [docs/agent-tools.md](docs/agent-tools.md)
   first. Gated by `verify-agent-mcp-electron.mjs`.
-- **The PLC panel is [PlcPanel.tsx](src/editor/components/PlcPanel.tsx)**: it owns the program file and the window
+- **The PLC panel is [PlcPanel.tsx](src/editor/components/plc/PlcPanel.tsx)**: it owns the program file and the window
   (text editor, status lines, file menu, the organizer column with `PlcOrganizer` / `LadderView` / `LadderVariables`,
   and the controller's faults). It pops out only from the pop-out button in its header, and a dialog opened from the
   popup mounts in that document ([dialogHost.ts](src/editor/dialogHost.ts)). Ladder chords are the keymap's `ladder`
@@ -161,6 +165,13 @@ projectTestsRun.ts); eslint enforces both.
 - **In a part folder with a `part.js`, `behavior.ts` and `rig.json` are output.** Edit the `part.js` (or the
   `examples/parts/_shared/` module it imports) and run `npm run build-parts -- <dir>`; `--check` fails CI on an edit
   to the output. They carry no header saying so, because the same text ships in every project's copy.
+- **A part runs on every step (`step`) or when its inputs change (`react`).** A reactive part is not called on a
+  step where nothing the host hands it differs from its last call and it did not ask with `ctx.again()`. What it last
+  commanded stands ([partSleep.ts](src/sim/partSleep.ts), the authoring guide's "`react`" section). Anything new the
+  host hands a part must be compared in `inputsSame`, or a reactive part never hears it change. Only a part that was
+  called has its conveyor surfaces written to the physics table (`ConveyorFacets.syncPart`), so nothing else may write
+  a surface entry during a run. A first-party reactive part must give the same run with `wakeAllParts`. Gated by
+  `partReact.test.ts`.
 - **After changing a first-party part, re-record it: `npm run parts:record`.** It runs
   `scripts/shipped-behaviors.mjs` (older rooms recognise built-ins by their behavior copies), `scripts/part-corpus.mjs`
   (every shipped part version must still load and behave as recorded; `test-corpus/` is append-only) and, when a model
@@ -176,6 +187,24 @@ projectTestsRun.ts); eslint enforces both.
   literal enters the source through `JSON.stringify`. Measure with `npm run bench-sim -- <project> [--engine walker]`
   (fingerprint must not move), A/B in one process for anything under ~20%, and never lower a
   [scanSpeed.test.ts](src/plc/scanSpeed.test.ts) floor to make it pass.
+- **A reader of the open program asks the program worker; it does not check or compile on the page.** Checking costs
+  about 19 ms per thousand lines and compiling about 30, and readers run at every pause in typing and every scene
+  edit. [programWorkerClient.ts](src/editor/program/programWorkerClient.ts) answers three questions off the main
+  thread: `surfaceFor` (what the program declares, for the Inspector's tag fields), `checkFor` (its problems, for the
+  text editor's lint) and `factsFor` (all the Problems panel asks, [programFacts.ts](src/editor/program/programFacts.ts)).
+  Hand it the program as the store holds it (text, table, scan time): `controllerFor` reads the whole text too. A new
+  question is a function of the ask in [programWorkerAsk.ts](src/editor/program/programWorkerAsk.ts), which the worker
+  and the page's fallback both call. All three go to one worker ([programService.ts](src/editor/program/programService.ts)),
+  one at a time with the lint first, so the program is read once for all of them; a new kind of question joins that
+  queue. The worker runs the walker, so nothing from the program is evaluated there. Play
+  still compiles on the page, once per attach.
+- **A running program's value table (`plcWatch`) may be a Proxy over a copy of the controller's memory**
+  ([core/watchTable.ts](src/core/watchTable.ts), docs/plc-typed-storage.md "The watch table"). `table[key]` and
+  `key in table` are fine. Never `Object.keys`, `Object.entries`, spread or `for..in` one: a large program holds
+  half a million values. Use `watchKeysOf` / `forEachWatchValue` / `watchKeyCount` / `overlayTable`, and
+  `withWatchValue` to show a written value. Keep what you derive from the keys per key set (`keySetOf`,
+  core/watchKeys.ts), since the table is a new object on every send. Gated by `largeWatchBudget.test.ts` and
+  `watchPlan.test.ts`.
 - **Two I/O binding rules are ours, not IEC's** ([src/plc/DEVICE-IO.md](src/plc/DEVICE-IO.md)): the first PLC scan
   follows the parts' first step (so a normally-closed input reads TRUE on scan 1; changing this moves every bench-sim
   fingerprint), and a controller running one program instance also answers to its variables by bare name. Add any
@@ -187,7 +216,7 @@ projectTestsRun.ts); eslint enforces both.
   selection, so it is pushed the answer (`menu:enabled`). [apps/desktop/main.cjs](apps/desktop/main.cjs) holds no app
   labels of its own.
 - **Only authoring writes the document; operating never does.** The store's edit gate
-  ([store.ts](src/editor/store.ts) `commit` → `documentChanged`) decides what is an edit: a change to the scene minus
+  ([store.ts](src/editor/store/store.ts) `commit` → `documentChanged`) decides what is an edit: a change to the scene minus
   what the current run owns (`documentOf`). Only that gets undo, autosave, folder writes, room-feed lines or a demo
   fork. Use operates a device and never writes a param ([controller/pilot.ts](src/editor/controller/pilot.ts)
   `idleUsePart`). Run or session state never enters `scene.parts` except as run-owned cargo, marked run-owned before
@@ -196,7 +225,7 @@ projectTestsRun.ts); eslint enforces both.
   `verify-walk-session.mjs` and the "edit gate" block in `store.test.ts`.
 - **A reaction to a scene edit must cost what the edit touches, not the scene.** A drag streams ~60 scenes a second.
   In the view a reaction is a `SceneConsumer` ([viewSceneConsumers.ts](src/render/viewport/viewSceneConsumers.ts))
-  declaring the parts it `reads` (checked against [SceneDelta](src/core/sceneDelta.ts)) and an idle `audit()`; a pure
+  declaring the parts it `reads` (checked against [SceneDelta](src/core/scene/sceneDelta.ts)) and an idle `audit()`; a pure
   derivation of parts is a `memoParts.ts` memo. [docs/scene-change-consumers.md](docs/scene-change-consumers.md).
   Gated by `verify-interaction-budget.mjs`.
 - **Text an editor component shows goes through [src/core/i18n.ts](src/core/i18n.ts)**: one `defineMessages` table
@@ -233,9 +262,9 @@ projectTestsRun.ts); eslint enforces both.
   the folder through `scripts/lib/projectFolderFiles.mjs` and declares built-ins (`scripts/lib/builtIns.mjs`) before
   it validates.
 - **A rig link's pose has one resolver**: core `rigWorldPosesInto` / `rigLinkLocalPoseInto`
-  ([src/core/rigPose.ts](src/core/rigPose.ts)). Never bake a param-driven offset into a link at build time. Which
+  ([src/core/rig/rigPose.ts](src/core/rig/rigPose.ts)). Never bake a param-driven offset into a link at build time. Which
   fields a param, joint or script owns is `linkFieldOwnership`, and the Inspector and gizmo lock what it says.
-- **Flow facts are facts, never problems** (core/flowFacts.ts, core/flowFactLog.ts). They reach `get_problems`'
+- **Flow facts are facts, never problems** (core/flow/flowFacts.ts, core/flow/flowFactLog.ts). They reach `get_problems`'
   `flowFacts`, the Tests overlay, `test-project` and `check-flow`, never the Problems dock, an error or warning count, or
   a test verdict, since an accumulating line stalls on purpose. Gated by `verify-flow-facts.mjs`.
 - **A CLI that starts vite in middleware mode passes `server: { middlewareMode: true, hmr: false, ws: false }`**, or it

@@ -2,6 +2,8 @@
 // The transpiler/interpreter consumes a plain ST *source string* - every authoring
 // surface (Monaco buffer, fetched `.st` asset, inline literal) reduces to that.
 
+import type { WatchLayout } from '../core/watchTable'
+
 export interface SourcePos {
   /** 1-based line */
   line: number
@@ -407,7 +409,7 @@ export interface Decl {
   maxLen?: number
   /**
    * A LOCATED variable's direct address (`Eye AT %IX100.0 : BOOL`), in the canonical spelling of
-   * core/iecAddress.ts. The address, not the name, is how the variable meets the scene and any
+   * core/io/iecAddress.ts. The address, not the name, is how the variable meets the scene and any
    * external controller: an %I variable is an input under that key, a %Q one an output.
    */
   location?: string
@@ -641,7 +643,7 @@ export interface Ast {
   /** every `LADDER ... END_LADDER` section, in source order. Their rungs are already lowered into the bodies
    *  above, so nothing that runs a program reads this: it is for whoever needs the rungs as rungs (the ladder
    *  view, the PLCopen LD writer) or their ST (the text exporters). See ladder.ts. */
-  ladder: import('./ladder').LdSection[]
+  ladder: import('./ladder/ladder').LdSection[]
   /** where the code outside every POU begins (its VAR sections end): where a controller-scoped tag is
    *  declared (plc/tags.ts). The end of the file when there is no such code. */
   bodyStart: number
@@ -744,6 +746,13 @@ export interface TagPort {
   get(): TagValue | undefined
 }
 
+/** The watch table as places in a program's memory ({@link CompiledProgram.watchPlan}): where each value is, and the
+ *  buffer they are all in. The buffer is the running program's own, so a reader copies it before handing it on. */
+export interface WatchPlan {
+  layout: WatchLayout
+  memory: ArrayBuffer
+}
+
 export interface CompiledProgram {
   /**
    * The controller's tasks, in declaration order, continuous last. Empty for a program with no
@@ -764,6 +773,18 @@ export interface CompiledProgram {
   readonly bindable: string[]
   /** snapshot of every scalar variable's current value (for a watch table) */
   readonly watch: Readonly<Record<string, TagValue>>
+  /**
+   * The keys of `watch` that no program instance owns: the controller's tags and the globals. For a reader that needs
+   * those names and not every instance's values, which on a large program is the whole cost of `watch`
+   * (plc/link/plcLink.ts, the bare-name aliases). Absent from a program with no instances to tell them from.
+   */
+  sharedWatchKeys?(): string[]
+  /**
+   * Whether the variable a qualified name starts at is one its program instance declares, in any spelling:
+   * `Line.Zone[3].Run` asks whether instance `Line` declares `Zone`. Every key `watch` lists under an instance
+   * starts at one, so a name this refuses is no key of it. False for a name no instance leads.
+   */
+  instanceDeclares?(name: string): boolean
   /**
    * Everything the program holds, keyed as `watch` keys it - with no array left out for being large. The watch table
    * caps an array's size because it is built and posted many times a second; this is for what is asked once and must
@@ -791,9 +812,15 @@ export interface CompiledProgram {
    * What a variable is, by the name the watch table keys it by: its declared type (an enumeration reads
    * `ENUM`), whether it is a constant, and its address when it is located. Undefined for a function block's
    * member (`T1.Q`) and for anything that is not a single bit, number or string. For a surface that publishes
-   * the variables by name and has to say what each one holds (editor/opcUaServer.ts).
+   * the variables by name and has to say what each one holds (editor/links/opcUaServer.ts).
    */
   varInfo(name: string): VarInfo | undefined
+  /**
+   * Where `watch`'s values are in the program's memory, for a host that sends the table many times a second: the
+   * bytes copy in a fraction of the time the table takes to build (core/watchTable.ts). Planned once. Null from an
+   * engine whose memory is not one buffer (the walker), and absent from a program that is not compiled here.
+   */
+  watchPlan?(): WatchPlan | null
   /** execute one cyclic scan; `dt` = elapsed seconds since the previous scan, which moves the
    *  controller's clock on. Timers read that clock, so one the scan does not call (inside an IF,
    *  behind EN) still measures the time between its calls. Throws a

@@ -5,7 +5,9 @@
 // definitions over IPC and answers each call against the live store, so an agent's edit is an ordinary edit: the
 // same edit gate, undo step and autosave as a person's. Nothing here knows what a tool does. Main does two things
 // for the tools that a page cannot: capture the window's pixels (capture_view) and read a model file by path
-// (import_model), each asked for over IPC by the editor while it runs a call.
+// (import_model), each asked for over IPC by the editor while it runs a call. The project tools (list_projects,
+// open_project, new_project) are main's own (agentProjects.cjs): opening a project reloads the page, and main owns
+// which folders may open.
 //
 // The protocol subset is small and hand-written rather than an SDK dependency: Streamable HTTP, POST
 // only, one JSON response per request (no SSE stream, no sessions), and the methods a tools-only server needs:
@@ -23,8 +25,8 @@
 // A local process can still connect, as it can to every other loopback service. It already runs as the user.
 
 const http = require('node:http')
-const { readFile, stat } = require('node:fs/promises')
-const { basename, extname, isAbsolute } = require('node:path')
+const { readdir, readFile, stat } = require('node:fs/promises')
+const { basename, dirname, extname, isAbsolute, join, relative } = require('node:path')
 
 /** Legacy revisions (opened with initialize); the first is what initialize offers a client asking for one it does not know. */
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-11-25', '2025-03-26', '2024-11-05']
@@ -33,9 +35,17 @@ const MODERN_VERSIONS = ['2026-07-28']
 const META = 'io.modelcontextprotocol/'
 /** A captured view wider than this is scaled down: a model reads a 1600 px frame as well as a 4K one, for less. */
 const CAPTURE_MAX_WIDTH = 1600
-/** The model files import_model reads, and the largest it reads (a big STEP assembly is tens of MB). */
-const MODEL_EXTENSIONS = new Set(['.glb', '.step', '.stp'])
+/** The model files import_model reads, and the most it reads (a big STEP assembly is tens of MB). */
+const MODEL_EXTENSIONS = new Set(['.glb', '.step', '.stp', '.usd', '.usda', '.usdc', '.usdz', '.urdf', '.xacro'])
+// a xacro description's own files besides meshes: other xacro, URDF and YAML files, and package manifests
+const XACRO_SIDE_EXTENSIONS = new Set(['.xacro', '.urdf', '.yaml', '.yml', '.stl', '.dae', '.obj'])
+// a URDF robot's own files: the description and the meshes its links name
+const URDF_SIDE_EXTENSIONS = new Set(['.urdf', '.stl', '.dae', '.obj'])
 const MODEL_MAX_BYTES = 200 * 1024 * 1024
+/** A USD root layer pulls in layers and textures from beside it: these are read with it, from under its folder. */
+const USD_LAYER_EXTENSIONS = new Set(['.usd', '.usda', '.usdc'])
+const USD_SIDE_EXTENSIONS = new Set(['.usd', '.usda', '.usdc', '.usdz', '.png', '.jpg', '.jpeg', '.webp'])
+const USD_MAX_FILES = 4000
 /** How long a modern client may cache tools/list and server/discover. The tools change only with the app version. */
 const LIST_TTL_MS = 5 * 60_000
 const DEFAULT_PORT = 5189
@@ -50,67 +60,165 @@ const INSTRUCTIONS =
   'for production lines, robot cells and machines, driven by PLC programs. Call get_guide first for units, ' +
   'conventions and the test spec format. Edits are ordinary edits (each call is one undo step the user can take ' +
   'back). A change is done when run_test passes; capture_view shows what was built. To write or change a part ' +
-  'definition, start with get_part_sdk.'
+  'definition, start with get_part_sdk. To work on another project, list_projects then open_project, or new_project.'
 
 /**
- * The renderer that serves the tools, and the calls in flight to it. One editor window serves at a time: the one
- * that announced last (the app is single-instance, so in practice there is one).
+ * The renderers that serve the tools, and the calls in flight to them. Every editor window serves its own project's
+ * tools, and calls go to one of them: the window the user focused last ({@link focus}), else the one that announced
+ * first. A call in flight stays with the window it went to.
  */
 class AgentHost {
+  /**
+   * `opts.shellTools`: tools main runs itself (agentProjects.cjs), each `{ definition, run(host, args) }`. They are
+   * listed after the renderer's and never forwarded to it.
+   */
   constructor(opts = {}) {
     this.callTimeoutMs = opts.callTimeoutMs ?? CALL_TIMEOUT_MS
     this.readyWaitMs = opts.readyWaitMs ?? READY_WAIT_MS
+    this.shellTools = new Map((opts.shellTools ?? []).map((t) => [t.definition.name, t]))
     /** @type {{ id: number, send: (channel: string, msg: unknown) => void, isDestroyed: () => boolean } | null} */
     this.server = null
     this.tools = null
+    /** every window serving tools, by id: { sender, tools } */
+    this.serving = new Map()
+    /** the window the user focused last, which calls go to once it serves */
+    this.preferred = null
     this.nextId = 1
-    /** @type {Map<number, { resolve: (r: object) => void, timer: NodeJS.Timeout, serverId: number }>} */
+    /** @type {Map<number, { resolve: (r: object) => void, timer: NodeJS.Timeout, serverId: number, reloadOk?: boolean }>} */
     this.pending = new Map()
     this.waiters = new Set()
+    /** nextServe's waiters: woken by a window's next announcement only */
+    this.serveWaiters = new Set()
+    /** why each window said it is about to reload, for the drop its navigation causes */
+    this.leavingWhy = new Map()
+  }
+
+  /**
+   * Window `senderId` is about to reload for a reason only the page knows (the dev server forcing a full reload).
+   * Kept for {@link reloaded}, so an agent whose call the reload cut off is told why.
+   */
+  leaving(senderId, why) {
+    if (typeof why === 'string' && why !== '') this.leavingWhy.set(senderId, why.slice(0, 300))
+  }
+
+  /** Window `senderId` navigated: drop it, with the reason the page gave before it went, if it gave one. */
+  reloaded(senderId) {
+    const why = this.leavingWhy.get(senderId)
+    this.leavingWhy.delete(senderId)
+    this.drop(senderId, `the editor reloaded${why ? ` (${why})` : ''}; call again in a moment, once it serves its tools again`, true)
   }
 
   /** A window announced its tools (or withdrew them with null). */
   serve(sender, tools) {
     if (!Array.isArray(tools)) {
-      if (this.server && this.server.id === sender.id) this.drop(sender.id, 'the editor window closed')
+      this.drop(sender.id, 'the editor window closed')
       return
     }
-    if (this.server && this.server.id !== sender.id) this.drop(this.server.id, 'another editor window took over')
-    this.server = sender
-    this.tools = tools
-    for (const wake of this.waiters) wake()
+    this.serving.set(sender.id, { sender, tools })
+    // calls go to it when nothing serves, when it is the window the user is in, or when it is the one serving again
+    if (this.server === null || this.server.id === sender.id || this.preferred === sender.id) this.use(sender.id)
+    for (const wake of [...this.waiters, ...this.serveWaiters]) wake()
     this.waiters.clear()
+    this.serveWaiters.clear()
   }
 
-  /** Forget window `senderId`: its tools go, and its calls in flight fail with `why`. */
-  drop(senderId, why) {
-    if (!this.server || this.server.id !== senderId) return
-    this.server = null
-    this.tools = null
+  /** Send calls to window `id` from now on. */
+  use(id) {
+    const s = this.serving.get(id)
+    if (!s) return
+    this.server = s.sender
+    this.tools = s.tools
+  }
+
+  /** The user focused window `id`: calls go to it from now on (once it serves, if it does not yet). */
+  focus(id) {
+    this.preferred = id
+    this.use(id)
+  }
+
+  /** The window calls go to now, or null while none serves. */
+  servingId() {
+    return this.server ? this.server.id : null
+  }
+
+  /**
+   * Forget window `senderId`: its tools go, and its calls in flight fail with `why`. `reloaded`: the page reloaded,
+   * which a request that reloads the editor (reloadOk) reads as its answer.
+   */
+  drop(senderId, why, reloaded = false) {
+    this.serving.delete(senderId)
+    if (this.server && this.server.id === senderId) {
+      this.server = null
+      this.tools = null
+      // A reloading window comes back, and calls wait for it (its project is the one the agent works on). A closed
+      // one does not: another serving window takes its calls.
+      if (!reloaded) {
+        const next = this.serving.has(this.preferred) ? this.preferred : this.serving.keys().next().value
+        if (next !== undefined) this.use(next)
+      }
+    }
     for (const [id, p] of this.pending) {
       if (p.serverId !== senderId) continue
       clearTimeout(p.timer)
       this.pending.delete(id)
-      p.resolve({ ok: false, error: why })
+      p.resolve(reloaded && p.reloadOk ? { ok: true, text: 'reloading' } : { ok: false, error: why })
     }
+  }
+
+  /** Every tool: the renderer's, then main's own. */
+  listed(tools) {
+    return [...tools, ...[...this.shellTools.values()].map((t) => t.definition)]
   }
 
   /** The tool list, once a window serves one; null if none does within `ms`. */
   async waitForTools(ms = this.readyWaitMs) {
-    if (this.tools) return this.tools
-    await new Promise((resolve) => {
-      const timer = setTimeout(done, ms)
-      function done() {
-        clearTimeout(timer)
-        resolve()
-      }
-      this.waiters.add(done)
-    })
-    return this.tools
+    if (this.tools) return this.listed(this.tools)
+    await this.wakeOn(this.waiters, ms)
+    return this.tools ? this.listed(this.tools) : null
   }
 
-  /** Forward one call; resolves with the renderer's reply ({ok, text} | {ok: false, error}). Never rejects. */
+  /** True once a window next announces its tools (a reloaded editor is ready again), false if none does within `ms`. */
+  nextServe(ms) {
+    return this.wakeOn(this.serveWaiters, ms)
+  }
+
+  /** Resolves true when `set` is woken, false after `ms`. */
+  wakeOn(set, ms) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => finish(false), ms)
+      const finish = (woken) => {
+        clearTimeout(timer)
+        set.delete(done)
+        resolve(woken)
+      }
+      const done = () => finish(true)
+      set.add(done)
+    })
+  }
+
+  /** Run one call: main's own tool here, any other forwarded to the editor. Resolves {ok, text} | {ok: false, error}; never rejects. */
   async call(name, args) {
+    const own = this.shellTools.get(name)
+    if (own) {
+      if (!(await this.waitForTools())) return { ok: false, error: 'no editor window is open in Open Industry Project' }
+      try {
+        return await own.run(this, args ?? {})
+      } catch (e) {
+        return { ok: false, error: String(e?.message ?? e) }
+      }
+    }
+    return this.send('agent:call', { name, args: args ?? {} }, `'${name}'`)
+  }
+
+  /**
+   * Ask the editor for something only main may ask (agentProjects.cjs: 'openFolder', 'newProject'). On its own
+   * channel, so an MCP client cannot name one as a tool. A reload before the answer is read as 'reloading'.
+   */
+  request(op, args) {
+    return this.send('agent:shell', { op, args }, `the editor's ${op}`, true)
+  }
+
+  async send(channel, msg, what, reloadOk = false) {
     if (!(await this.waitForTools())) return { ok: false, error: 'no editor window is open in Open Industry Project' }
     const server = this.server
     if (!server || server.isDestroyed()) return { ok: false, error: 'the editor window closed' }
@@ -118,10 +226,10 @@ class AgentHost {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        resolve({ ok: false, error: `'${name}' did not answer within ${Math.round(this.callTimeoutMs / 1000)} s` })
+        resolve({ ok: false, error: `${what} did not answer within ${Math.round(this.callTimeoutMs / 1000)} s` })
       }, this.callTimeoutMs)
-      this.pending.set(id, { resolve, timer, serverId: server.id })
-      server.send('agent:call', { id, name, args: args ?? {} })
+      this.pending.set(id, { resolve, timer, serverId: server.id, reloadOk })
+      server.send(channel, { id, ...msg })
     })
   }
 
@@ -330,7 +438,7 @@ function registerAgentHost(ipcMain, host) {
       // a reload or a closed window stops serving without saying so. did-navigate is the main frame's
       // cross-document commit only (in-page history moves are did-navigate-in-page), and it fires before the new
       // page's scripts run, so the drop cannot race the reloaded page announcing its tools again
-      wc.on('did-navigate', () => host.drop(id, 'the editor reloaded'))
+      wc.on('did-navigate', () => host.reloaded(id))
       wc.once('destroyed', () => {
         watched.delete(id)
         host.drop(id, 'the editor window closed')
@@ -338,6 +446,7 @@ function registerAgentHost(ipcMain, host) {
     }
   })
   ipcMain.on('agent:result', (_event, msg) => host.answer(msg?.id, msg?.reply))
+  ipcMain.on('agent:leaving', (event, why) => host.leaving(event.sender.id, why))
   // capture_view: the window's pixels inside the 3D view's rectangle, as the user sees them
   ipcMain.handle('agent:capture', async (event, rect) => {
     const r = rect && typeof rect === 'object' ? rect : {}
@@ -354,19 +463,159 @@ function registerAgentHost(ipcMain, host) {
   ipcMain.handle('agent:readModel', async (_event, path) => readModel(path))
 }
 
-/** A model file's bytes for import_model, or why not: an absolute path to a .glb / .step / .stp of a sane size. */
+/**
+ * A model file's bytes for import_model and import_robot, or why not: an absolute path to a .glb / .step / .stp / USD /
+ * URDF file of a sane size. A .usd / .usda / .usdc root also brings `files`: the USD layers and images under its folder
+ * (hidden folders such as .thumbs left out), keyed by their path from that folder, with `root` the root layer's own
+ * key. A .urdf brings the mesh files it names (readUrdf), a .xacro its ROS packages' robot files (readXacro).
+ */
 async function readModel(path) {
   if (typeof path !== 'string' || !isAbsolute(path)) return { error: 'give the model file as an absolute path' }
   const ext = extname(path).toLowerCase()
-  if (!MODEL_EXTENSIONS.has(ext)) return { error: `a model is a .glb, .step or .stp file, not '${ext || 'no extension'}'` }
+  if (!MODEL_EXTENSIONS.has(ext)) return { error: `a model is a .glb, .step, .stp, USD (.usd, .usda, .usdc, .usdz) or URDF (.urdf, .xacro) file, not '${ext || 'no extension'}'` }
   try {
     const info = await stat(path)
     if (!info.isFile()) return { error: `${path} is not a file` }
     if (info.size > MODEL_MAX_BYTES) return { error: `${basename(path)} is ${Math.round(info.size / 1e6)} MB; the largest model read is ${MODEL_MAX_BYTES / 1024 / 1024} MB` }
-    return { name: basename(path), bytes: new Uint8Array(await readFile(path)) }
+    const bytes = new Uint8Array(await readFile(path))
+    if (ext === '.urdf') return await readUrdf(path, bytes)
+    if (ext === '.xacro') return await readXacro(path, bytes)
+    if (!USD_LAYER_EXTENSIONS.has(ext)) return { name: basename(path), bytes }
+    const dir = dirname(path)
+    const sides = USD_SIDE_EXTENSIONS
+    const what = 'USD layers and images'
+    const files = []
+    let total = 0
+    const walk = async (at) => {
+      for (const entry of await readdir(at, { withFileTypes: true })) {
+        if (entry.name.startsWith('.')) continue
+        const full = join(at, entry.name)
+        if (entry.isDirectory()) {
+          await walk(full)
+          continue
+        }
+        if (!entry.isFile() || !sides.has(extname(entry.name).toLowerCase())) continue
+        if (files.length >= USD_MAX_FILES) throw new Error(`more than ${USD_MAX_FILES} ${what} under ${dir}`)
+        const data = full === path ? bytes : new Uint8Array(await readFile(full))
+        total += data.length
+        if (total > MODEL_MAX_BYTES) throw new Error(`the ${what} under ${dir} are over ${MODEL_MAX_BYTES / 1024 / 1024} MB`)
+        files.push({ path: relative(dir, full).replaceAll('\\', '/'), bytes: data })
+      }
+    }
+    await walk(dir)
+    return { name: basename(path), bytes, files, root: relative(dir, path).replaceAll('\\', '/') }
   } catch (e) {
     return { error: `could not read ${path}: ${e?.code === 'ENOENT' ? 'no such file' : String(e?.message ?? e)}` }
   }
+}
+
+/**
+ * A URDF and the mesh files it names, read one by one: no folder walk, so a robot saved in Downloads reads its own
+ * meshes and nothing else there. A `package://<package>/<path>` mesh is looked for at <path> under the description
+ * package: the nearest folder at or above the URDF with a package.xml (packageDirOf, so a URDF in `robots/` or in
+ * `urdf/<model>/` finds its meshes), else the folder above the URDF when it sits in a `urdf` folder, else its own
+ * folder. A relative one is looked for beside the URDF. A mesh not found is left out, and the importer lists it as
+ * missing. Keys are paths from the package folder, which the importer matches by their tails.
+ */
+async function readUrdf(path, bytes) {
+  const own = dirname(path)
+  const dir = (await packageDirOf(own)) ?? (basename(own).toLowerCase() === 'urdf' ? dirname(own) : own)
+  const text = Buffer.from(bytes).toString('utf8')
+  const named = new Set([...text.matchAll(/filename\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((m) => m[1] ?? m[2]))
+  const files = [{ path: relative(dir, path).replaceAll('\\', '/'), bytes }]
+  const seen = new Set([path])
+  let total = bytes.length
+  for (const name of named) {
+    let full
+    if (/^package:\/\//i.test(name)) full = join(dir, name.replace(/^package:\/\/[^/]*\/?/i, ''))
+    else if (/^file:\/\//i.test(name)) full = name.replace(/^file:\/\//i, '')
+    else full = isAbsolute(name) ? name : join(own, name)
+    if (seen.has(full) || !URDF_SIDE_EXTENSIONS.has(extname(full).toLowerCase())) continue
+    seen.add(full)
+    let data
+    try {
+      data = new Uint8Array(await readFile(full))
+    } catch {
+      continue
+    }
+    total += data.length
+    if (total > MODEL_MAX_BYTES) throw new Error(`the meshes ${basename(path)} names are over ${MODEL_MAX_BYTES / 1024 / 1024} MB`)
+    const key = relative(dir, full).replaceAll('\\', '/')
+    files.push({ path: key.startsWith('..') ? basename(full) : key, bytes: data })
+  }
+  return { name: basename(path), bytes, files, root: files[0].path }
+}
+
+/** The ROS package holding `dir`: the nearest folder at or above it with a package.xml (up to four up), else null. */
+async function packageDirOf(dir) {
+  for (let d = dir, i = 0; i < 5; i++, d = dirname(d)) {
+    if (await isFile(join(d, 'package.xml'))) return d
+    if (dirname(d) === d) break
+  }
+  return null
+}
+async function isFile(p) {
+  try {
+    return (await stat(p)).isFile()
+  } catch {
+    return false
+  }
+}
+/** a package.xml's <name>, or null */
+async function packageNameOf(dir) {
+  try {
+    return /<name>\s*([^<\s]+)\s*<\/name>/.exec(await readFile(join(dir, 'package.xml'), 'utf8'))?.[1] ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A xacro description and the files it can read: its ROS package (the nearest folder above it with a package.xml,
+ * else its own folder), and each package it names with $(find) found beside that one, by its package.xml or its
+ * folder name. Robot files only (XACRO_SIDE_EXTENSIONS and package.xml), keyed from the folder holding the packages,
+ * so each key starts with its package's folder as a picked folder's would.
+ */
+async function readXacro(path, bytes) {
+  const own = dirname(path)
+  const pkg = (await packageDirOf(own)) ?? own
+  const base = dirname(pkg)
+  const files = []
+  const read = new Set()
+  let total = 0
+  const walk = async (at) => {
+    for (const entry of await readdir(at, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue
+      const full = join(at, entry.name)
+      if (entry.isDirectory()) {
+        await walk(full)
+        continue
+      }
+      const keep = entry.name.toLowerCase() === 'package.xml' || XACRO_SIDE_EXTENSIONS.has(extname(entry.name).toLowerCase())
+      if (!entry.isFile() || !keep || read.has(full)) continue
+      if (files.length >= USD_MAX_FILES) throw new Error(`more than ${USD_MAX_FILES} robot files under ${base}`)
+      const data = full === path ? bytes : new Uint8Array(await readFile(full))
+      total += data.length
+      if (total > MODEL_MAX_BYTES) throw new Error(`the robot files under ${base} are over ${MODEL_MAX_BYTES / 1024 / 1024} MB`)
+      read.add(full)
+      files.push({ path: relative(base, full).replaceAll('\\', '/'), bytes: data })
+    }
+  }
+  await walk(pkg)
+  // the other packages it finds: named in any xacro read so far, looked for beside its own
+  const wanted = new Set()
+  for (const f of files) if (/\.xacro$/i.test(f.path)) for (const m of Buffer.from(f.bytes).toString('utf8').matchAll(/\$\(find\s+([^)\s]+)\)/g)) wanted.add(m[1])
+  wanted.delete(await packageNameOf(pkg))
+  if (wanted.size > 0) {
+    for (const entry of await readdir(base, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      const dir = join(base, entry.name)
+      if (dir === pkg) continue
+      const name = (await packageNameOf(dir)) ?? entry.name
+      if (wanted.has(name) || wanted.has(entry.name)) await walk(dir)
+    }
+  }
+  return { name: basename(path), bytes, files, root: relative(base, path).replaceAll('\\', '/') }
 }
 
 module.exports = { AgentHost, DEFAULT_PORT, MODERN_VERSIONS, PROTOCOL_VERSIONS, handleMessage, readModel, registerAgentHost, requestEra, startMcpServer }

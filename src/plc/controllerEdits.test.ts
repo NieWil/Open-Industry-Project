@@ -24,7 +24,7 @@ import {
   taskNameError,
 } from './controllerEdits'
 import { flattenDocument, parseDocument } from './document'
-import { exportProgram } from './export'
+import { exportProgram } from './exchange/export'
 import { compile } from './interpreter'
 import { lex } from './lexer'
 import { parse } from './parser'

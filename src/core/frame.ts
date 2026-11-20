@@ -1,20 +1,19 @@
 import { fitLoad, wrapAnchor } from './cargoWrap'
 import type { WrapBody } from './cargoWrap'
-import { ancestorIds } from './hierarchy'
 import { hexToRgb, quatFromYXZ, quatToYXZ } from './math'
-import { getPackage, registryRevision } from './partRegistry'
+import { getPackage, registryRevision } from './parts/partRegistry'
 import type { PartInstance } from './types'
 import { BOX_FRICTION, PALLET_FRICTION, PALLET_SIZE, TOTE_FRICTION, TOTE_MASS } from './types'
 import { PALLET_STANDARDS, palletStandardSize } from './pallet'
 import { TOTE_FOOT_H, TOTE_STANDARDS, toteStandardSize } from './tote'
 import { rotateXZ } from './transforms'
-import type { CargoMarkValue, PartPackage, RigGeometry } from './partPackage'
-import { isCargoPackage, unitPiecesOf } from './partPackage'
-import type { ParamValue } from './partApi'
-import { resolvePartParams } from './partScript'
+import type { CargoMarkValue, PartPackage, RigGeometry } from './parts/partPackage'
+import { isCargoPackage, unitPiecesOf } from './parts/partPackage'
+import type { ParamValue } from './parts/partApi'
+import { resolvePartParams } from './parts/partScript'
 import { cargoPieces, cargoPiecesBounds, cargoShapeKey } from './cargoBody'
 import type { CargoPiece } from './cargoBody'
-import type { RigParams } from './rigPose'
+import type { RigParams, SubPose } from './rig/rigPose'
 
 export const CARGO_KIND_BOX = 0
 export const CARGO_KIND_PALLET = 1
@@ -33,7 +32,7 @@ export const cargoKindName = (kind: number): CargoKindName =>
   kind === CARGO_KIND_PALLET ? 'pallet' : kind === CARGO_KIND_TOTE ? 'tote' : kind === CARGO_KIND_PART ? 'part' : 'box'
 
 /**
- * What a cargo body is to the machines around it, as bits (core/partPackage.ts CargoDecl): fork pockets (a fork's fit
+ * What a cargo body is to the machines around it, as bits (core/parts/partPackage.ts CargoDecl): fork pockets (a fork's fit
  * check), heavy (it bears loads: a firmer solver island, never a dropped/tipped fact), load base (where wrapping starts and what
  * anchors a unit load), separate contacts (no manifold reduction). The engine asks these, never which kind or part a
  * body is (docs/part-libraries.md, "App code names capabilities, not parts").
@@ -174,9 +173,10 @@ export function unitStart(part: PartInstance): UnitStart | null {
   return { join: on(decl.joinWhen), marks: attrs.values, types: attrs.types, dress }
 }
 
-/** The cargo parts an authored unit load holds: its descendants in the scene that are cargo. Membership is exactly
- *  that; nothing standing nearby joins. */
-export function unitMembers(parts: readonly PartInstance[], unitId: string): PartInstance[] {
+/** parent id → its children in scene order, so several {@link unitMembers} walks over one part list share one index */
+export type PartChildren = ReadonlyMap<string, readonly PartInstance[]>
+
+export function partChildren(parts: readonly PartInstance[]): PartChildren {
   const kids = new Map<string, PartInstance[]>()
   for (const p of parts) {
     if (p.parent === undefined) continue
@@ -184,6 +184,13 @@ export function unitMembers(parts: readonly PartInstance[], unitId: string): Par
     if (!list) kids.set(p.parent, (list = []))
     list.push(p)
   }
+  return kids
+}
+
+/** The cargo parts an authored unit load holds: its descendants in the scene that are cargo. Membership is exactly
+ *  that; nothing standing nearby joins. A caller walking many loads passes `kids` ({@link partChildren}) built once,
+ *  or each walk re-indexes every part. */
+export function unitMembers(parts: readonly PartInstance[], unitId: string, kids: PartChildren = partChildren(parts)): PartInstance[] {
   const out: PartInstance[] = []
   const seen = new Set<string>([unitId])
   const walk = (id: string): void => {
@@ -222,14 +229,14 @@ const UNIT_LOAD_DX = 0.013
  * cargo instance at its world pose (id `<load>#<n>`, never a scene part), which is what lets the stopped view and the
  * sim build them through the one cargo recognizer (cargoView) exactly as they build a filed pallet and its cases.
  */
-export function unitPieces(parts: readonly PartInstance[], unit: PartInstance): PartInstance[] {
+export function unitPieces(parts: readonly PartInstance[], unit: PartInstance, kids?: PartChildren): PartInstance[] {
   if (unit.type !== 'part') return []
   const pkg = getPackage(unit.packageId)
   const pieces = pkg ? unitPiecesOf(pkg) : undefined
   if (!pkg || !pieces) return []
   const cv = unit.params.courses ?? pkg.params.courses?.default
   const courses = typeof cv === 'number' ? Math.min(8, Math.max(0, Math.round(cv))) : 0
-  if (courses === 0 || unitMembers(parts, unit.id).length > 0) return []
+  if (courses === 0 || unitMembers(parts, unit.id, kids).length > 0) return []
   const col = unit.params.caseColor ?? pkg.params.caseColor?.default
   const caseColor = typeof col === 'string' ? col : '#ffffff'
   const uq = partQuat(unit)
@@ -434,12 +441,15 @@ export function carryCargoPose(pose: CargoPose, a0: PartInstance, a1: PartInstan
  */
 export function carryingAncestor(
   id: string,
-  afterParts: readonly PartInstance[],
   beforeById: ReadonlyMap<string, PartInstance>,
   afterById: ReadonlyMap<string, PartInstance>,
   skip: (id: string) => boolean,
 ): { before: PartInstance; after: PartInstance } | null {
-  for (const anc of ancestorIds(afterParts, id)) {
+  // the parent chain in `afterById`, nearest first as hierarchy's ancestorIds walks it, without rebuilding a
+  // whole-scene map per moved box
+  const seen = new Set<string>([id])
+  for (let anc = afterById.get(id)?.parent; anc !== undefined && !seen.has(anc); anc = afterById.get(anc)?.parent) {
+    seen.add(anc)
     if (skip(anc)) continue
     const a0 = beforeById.get(anc)
     const a1 = afterById.get(anc)
@@ -525,7 +535,10 @@ export interface BoxFrame {
   /** per-part rig joint commands this step (partId → {jointName: value}); the view animates rig visuals. Absent when no rig part commanded a joint. */
   joints?: Record<string, Record<string, number>>
   /** per-part rig setSubPose overrides this step (partId → {linkName: {position?, rotation?}}). Absent when none. */
-  subPoses?: Record<string, Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>>
+  subPoses?: Record<string, Record<string, SubPose>>
+  /** per-part conveying-copy belt speeds this step (partId -> {link: speed per copy, m/s}), for the view to run each
+   *  copy's belt; present for every part with conveying copies, an empty map when none ran. Absent when no part has any. */
+  copySpeeds?: Record<string, Record<string, number[]>>
   /** per-part rig emissive lamp states this step (partId → {lampName: on}); the view lights rig visuals. Absent when no rig part lit a lamp. */
   lamps?: Record<string, Record<string, boolean>>
   /** Effective param values each behavior reported this step (ctx.report), keyed by part id then param
@@ -617,11 +630,14 @@ export function buildAuthoredCargoFrame(parts: readonly PartInstance[]): BoxFram
   // one recognizer for what IS cargo (built-in box/pallet + C-cargo custom parts) - see cargoView
   // `owner` is the unit load a self-stacked piece belongs to (unitPieces): its row is picked and selected as the load
   const cargo: { part: PartInstance; view: CargoView; owner?: string }[] = []
+  // built on the first unit load, then shared by every load's member walk here and in unitDressings
+  let kids: PartChildren | undefined
   for (const p of parts) {
     const view = cargoView(p)
     if (view) cargo.push({ part: p, view })
     else if (p.type === 'part' && getPackage(p.packageId)?.unit) {
-      for (const piece of unitPieces(parts, p)) {
+      kids ??= partChildren(parts)
+      for (const piece of unitPieces(parts, p, kids)) {
         const pv = cargoView(piece)
         if (pv) cargo.push({ part: piece, view: pv, owner: p.id })
       }
@@ -664,7 +680,7 @@ export function buildAuthoredCargoFrame(parts: readonly PartInstance[]): BoxFram
     colors[p3 + 1] = g
     colors[p3 + 2] = b
   }
-  const dressings = unitDressings(parts, { count, ids, positions, quats, halfExtents, kinds, caps, partIds })
+  const dressings = unitDressings(parts, { count, ids, positions, quats, halfExtents, kinds, caps, partIds }, kids)
   return { count, ids, positions, quats, halfExtents, colors, kinds, caps, partIds, simTime: 0, ...(dressings.length ? { dressings } : {}), ...(shapes && shapeRefs ? { shapes, shapeRefs } : {}) }
 }
 
@@ -672,9 +688,9 @@ export function buildAuthoredCargoFrame(parts: readonly PartInstance[]): BoxFram
  * {@link buildAuthoredCargoFrame} memoized on what it reads: the cargo parts and unit loads (by reference, in order, as
  * memoParts.ts keys a derivation), every other part's parent edge (unitMembers walks descendants through non-cargo
  * parts), and the package registry. A streamed edit of anything else (a robot's tool-size drag) reuses the frame: the
- * stopped editor builds it on every scene change, and on the demo two builds cost ~16 ms per pointer-move
- * (unitDressings is O(loads x rows)). One memo per caller, since callers pass different part lists (the view drops
- * hidden cargo). The frame is shared across calls: treat it as immutable.
+ * stopped editor builds it on every scene change, and on the demo two builds cost ~10 ms per pointer-move. One memo
+ * per caller, since callers pass different part lists (the view drops hidden cargo). The frame is shared across
+ * calls: treat it as immutable.
  */
 export function memoizeAuthoredCargoFrame(): (parts: readonly PartInstance[]) => BoxFrame {
   let lastRefs: PartInstance[] | null = null
@@ -724,16 +740,21 @@ export function cargoFramesEqual(a: BoxFrame, b: BoxFrame): boolean {
 export function unitDressings(
   parts: readonly PartInstance[],
   rows: Pick<BoxFrame, 'count' | 'ids' | 'positions' | 'quats' | 'halfExtents' | 'kinds' | 'caps' | 'partIds'>,
+  kids?: PartChildren,
 ): FrameDressing[] {
   const out: FrameDressing[] = []
   let bodies: WrapBody[] | null = null
   let rowOf: Map<string, number> | null = null
+  // the rows carrying each part id, for a load that stacks itself (its pieces' rows carry its id)
+  let ownRows: Map<string, number[]> | null = null
   for (const part of parts) {
     const start = unitStart(part)
     if (!start || start.dress.length === 0) continue
-    if (!bodies || !rowOf) {
+    if (!bodies || !rowOf || !ownRows) {
       bodies = []
       rowOf = new Map()
+      ownRows = new Map()
+      kids ??= partChildren(parts)
       for (let i = 0; i < rows.count; i++) {
         const p = i * 3
         const q = i * 4
@@ -743,12 +764,17 @@ export function unitDressings(
           half: [rows.halfExtents[p]!, rows.halfExtents[p + 1]!, rows.halfExtents[p + 2]!],
         })
         const id = rows.partIds[i]
-        if (id) rowOf.set(id, i)
+        if (id) {
+          rowOf.set(id, i)
+          let list = ownRows.get(id)
+          if (!list) ownRows.set(id, (list = []))
+          list.push(i)
+        }
       }
     }
-    let member = unitMembers(parts, part.id).map((m) => rowOf!.get(m.id)).filter((i): i is number => i !== undefined)
+    let member = unitMembers(parts, part.id, kids).map((m) => rowOf!.get(m.id)).filter((i): i is number => i !== undefined)
     // a load that stacks itself: its pieces' rows carry its own id (buildAuthoredCargoFrame)
-    if (member.length === 0) member = [...Array(rows.count).keys()].filter((i) => rows.partIds[i] === part.id)
+    if (member.length === 0) member = ownRows.get(part.id) ?? []
     if (member.length === 0) continue
     const b = bodies
     const a = wrapAnchor(member.map((i) => ({ index: i, y: b[i]!.pos[1], pallet: frameHasCap(rows, i, CARGO_CAP_LOAD_BASE) })))

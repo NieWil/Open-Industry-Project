@@ -1,6 +1,8 @@
 // Getting a program onto a real OpenPLC Runtime v4, the way OpenPLC's own editor does it: shared by
-// scripts/openplc-loop.mjs (the conveyor case) and e2e/guide-modbus.mjs (the published guide's program).
+// scripts/openplc-loop.mjs and scripts/openplc-cells-loop.mjs (the conveyor case) and e2e/guide-modbus.mjs (the
+// published guide's program).
 //
+//   remoteDevice      the simulator's Modbus table as the editor's remote device
 //   buildProgramZip   IEC text + a Modbus remote device -> the editor's project, its compile chain, and the
 //                     program.zip its upload sends (STruC++ output, runtime headers, conf/modbus_master.json)
 //   openRuntime       OPENPLC_URL, a runtime already up on :8443, or the per-user Windows install started
@@ -70,6 +72,55 @@ export function buildProgramZip(ours, editor, { text, device, locations = [], ou
   const zip = zipSync(Object.fromEntries(Object.entries(bundle).map(([k, v]) => [k, strToU8(v)])))
   writeFileSync(join(outDir, 'program.zip'), zip)
   return { zip, files: Object.keys(bundle).length, programSt: chain.programSt }
+}
+
+const FUNCTION_CODE = { discreteInput: '2', coil: '15', inputRegister: '4', holdingRegister: '16' }
+
+/**
+ * The simulator as an OpenPLC "remote device" (devices/remote/<name>.json, the editor's
+ * PLCRemoteDeviceSchema). The editor's generator takes a group's start from its first point's IEC
+ * location and maps the rest in order, which is the rule the simulator's table was derived by
+ * (addressForModbusPoint), so a group must hold points of ONE width: the runtime walks a 32-bit group
+ * two registers at a time and a 16-bit one register at a time.
+ *
+ * Bits span their whole range with spares, which is what proves the mapping rule rather than a list of
+ * hand-placed points; registers are grouped into runs of equal width. `cycleMs` is how often the master polls each group.
+ */
+export function remoteDevice(ours, io, host, cycleMs) {
+  const ioGroups = []
+  const group = (area, offset, length, ioPoints) =>
+    ioGroups.push({ id: `${area}-${offset}`, name: `${area}-${offset}`, functionCode: FUNCTION_CODE[area], cycleTime: cycleMs, offset: String(offset), length, errorHandling: 'keep-last-value', ioPoints })
+
+  for (const area of ['discreteInput', 'coil', 'inputRegister', 'holdingRegister']) {
+    const points = io.points.filter((p) => p.area === area).sort((a, b) => a.address - b.address)
+    if (points.length === 0) continue
+    if (ours.isBitArea(area)) {
+      const lo = points[0].address
+      const hi = points[points.length - 1].address
+      const ioPoints = []
+      for (let a = lo; a <= hi; a++) {
+        const p = points.find((q) => q.address === a)
+        ioPoints.push({ id: `${area}-${a}`, name: p ? p.tag : `spare_${area}_${a}`, type: 'BOOL', iecLocation: ours.addressForModbusPoint(area, a) })
+      }
+      group(area, lo, hi - lo + 1, ioPoints)
+      continue
+    }
+    let run = []
+    const flush = () => {
+      if (run.length === 0) return
+      const words = ours.registerWords(run[0].type)
+      const ioPoints = run.map((p) => ({ id: `${area}-${p.address}`, name: p.tag, type: p.type ?? 'INT', iecLocation: ours.addressForModbusPoint(area, p.address, words) }))
+      group(area, run[0].address, run.length * words, ioPoints)
+      run = []
+    }
+    for (const p of points) {
+      const last = run[run.length - 1]
+      if (last && (ours.registerWords(last.type) !== ours.registerWords(p.type) || last.address + ours.registerWords(last.type) !== p.address)) flush()
+      run.push(p)
+    }
+    flush()
+  }
+  return { name: 'oip_sim', protocol: 'modbus-tcp', modbusTcpConfig: { transport: 'tcp', host, port: io.port, timeout: 1000, slaveId: 1, ioGroups } }
 }
 
 /** The runtime to deploy to, and how to put it back the way it was found. */

@@ -4,12 +4,12 @@
 // advances - the overlay never fakes the work for them. See TutorialOverlay for the
 // runtime that resolves the spotlight target and watches `done`.
 
-import { conveyorEndsOf, type PartEnd } from '../../core/partGeometry'
-import { commsOn, commsParamOf } from '../../core/conveyorDirection'
+import { conveyorEndsOf, type PartEnd } from '../../core/parts/partGeometry'
+import { commsOn, commsParamOf } from '../../core/conveyor/conveyorDirection'
 import type { PartInstance, SceneJSON } from '../../core/types'
 import type { EditorController } from '../controller'
-import { DESKTOP_MAC, DESKTOP_SHELL } from '../desktopMenuBridge'
-import type { EditorState, EditorStore } from '../store'
+import { DESKTOP_MAC, DESKTOP_SHELL } from '../desktop/desktopMenuBridge'
+import type { EditorState, EditorStore } from '../store/store'
 import { defineMessages, t } from '../../core/i18n'
 
 // The cards' text. Each step reads its strings through a getter, so t() runs when the overlay renders the card,
@@ -48,7 +48,7 @@ const M = defineMessages('tutorialSteps', {
   stopBody: 'Press Stop. The box returns to where you placed it, ready to run again with a program controlling it.',
   tagTitle: 'Tag the conveyor',
   tagBody:
-    'A program controls a part through its PLC tag, a name you give it. The conveyor is selected and Enable Comms is on. Type **{tag}** into the highlighted Run Tag field in the Inspector, then press Enter.',
+    'A program controls a part through its PLC tag, a name you give it. The conveyor is selected. Type **{tag}** into the highlighted Run Tag field in the Inspector, then press Enter.',
   writeTitle: 'Write the program',
   writeBody:
     'A PLC program runs its logic over and over, reading its inputs and driving its outputs each pass. This one reads the sensor and stops the conveyor when a box arrives:\n\n{code}\n\nClick below to tag the sensor **{sensor}**, the same way you tagged the conveyor, and load that program into the PLC tab.',
@@ -244,8 +244,9 @@ function isWired(p: PartInstance, tag: string): boolean {
 }
 
 /**
- * Entry hook for the "Tag the conveyor" step: select the conveyor and switch its comms on, so the
- * Inspector is open on it and the hands-on lesson is just naming it in the PLC tag field.
+ * Entry hook for the "Tag the conveyor" step: select the conveyor, so the Inspector is open on it and the
+ * hands-on lesson is just naming it in the PLC tag field. A copy whose package declares a comms switch
+ * (`commsParam`; no built-in does) has it switched on too.
  * Idempotent - safe to re-run if the effect fires again.
  */
 function primeConveyorTagging(ctx: TutorialContext): void {
@@ -315,9 +316,11 @@ function isDiffuseSensor(p: PartInstance): boolean {
 /** Setup-step action: tag the sensor for the user (same as they tagged the conveyor) + write the program */
 function tagSensorAndWriteProgram(ctx: TutorialContext): void {
   const scene = ctx.store.getState().scene
-  const parts = scene.parts.map((p) =>
-    isDiffuseSensor(p) ? ({ ...p, params: { ...p.params, enableComms: true, tag: SENSOR_TAG } } as PartInstance) : p,
-  )
+  const parts = scene.parts.map((p) => {
+    if (!isDiffuseSensor(p)) return p
+    const key = commsParamOf(p)
+    return { ...p, params: { ...p.params, ...(key ? { [key]: true } : {}), tag: SENSOR_TAG } } as PartInstance
+  })
   ctx.store.commit('Tag sensor', { ...scene, parts })
   // Surface the PLC panel before writing, so the user watches the program arrive: the card says it
   // appears there and offers to edit it. The panel docks behind the Parts tab by default, which is also

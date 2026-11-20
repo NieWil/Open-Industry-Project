@@ -27,11 +27,11 @@
 // JSON.stringify, and a literal string is further escaped of `<`, `>` and `(`, the characters SES's source checks
 // look for.
 
-import { partSandboxActive } from '../core/partSandbox'
+import { partSandboxActive } from '../core/parts/partSandbox'
 import { builtinFor, evalBuiltin, isBuiltinFunc } from './builtins'
 import { FAULT, StFault } from './faults'
 import { type Env, identKey } from './program'
-import { bool, calendarRangeError, FB_INPUTS, idiv, imod, isCalendar, isInt, isReal, MAX_LOOP_ITERATIONS, num, roundEven, str, unboundMessage, wrap } from './runtime'
+import { bool, calendarRangeError, FB_INPUTS, idiv, imod, isCalendar, isInt, isInt32, isReal, MAX_LOOP_ITERATIONS, num, roundEven, str, unboundMessage, wrap } from './runtime'
 import type { Expr, MethodDef, ScalarType, SourcePos, Stmt, TagValue } from './types'
 import { StError } from './types'
 import { viewOf } from './typed/arena'
@@ -79,9 +79,15 @@ export interface TypedScope {
   frameOf(m: MethodDef): PouLayout
   /** a user function block's runner: its body, generated once for the definition, run on an instance's address */
   fb(name: string): { run(b: number, now: number): void }
-  /** a user function's runner (typed/pou.ts TypedFn): which of its inputs take a whole array or struct (by address), and
-   *  the layout of its result when that is one */
-  fn(name: string): { readonly aggregate: readonly boolean[]; readonly result: TypeLayout | null }
+  /** a user function's runner (typed/pou.ts TypedFn): which of its inputs take a whole array or struct (by address),
+   *  the layout of its result when that is one, and where its inputs and result are */
+  fn(name: string): {
+    readonly aggregate: readonly boolean[]
+    readonly result: TypeLayout | null
+    readonly inputSlots: readonly { off: number; layout: TypeLayout }[]
+    readonly resultSlot: { off: number; layout: TypeLayout }
+    readonly direct: boolean
+  }
   /** the region a call site of a function with a whole array or struct result copies it into (typed/calls.ts) */
   temp(call: Expr): number | undefined
 }
@@ -173,6 +179,10 @@ function helpersFor(x: GenInternals): Record<string, unknown> {
       if (i < lo || i > hi) throw subscript(i, lo, hi, pos)
       return i - lo
     },
+    /** a subscript outside its dimension, where the generated code checked it in place */
+    ixFault(i: number, lo: number, hi: number, pos: SourcePos): never {
+      throw subscript(i, lo, hi, pos)
+    },
     not: (t: ScalarType, v: TagValue): TagValue => (typeof v === 'boolean' ? !v : wrap(t, ~num(v))),
     eqS: (l: TagValue, r: TagValue): boolean => (strOf(l, r) ? str(l) === str(r) : eq(l, r)),
     neS: (l: TagValue, r: TagValue): boolean => (strOf(l, r) ? str(l) !== str(r) : !eq(l, r)),
@@ -248,8 +258,8 @@ function integerArithmetic(fits: GenInternals['fits']): Record<string, unknown> 
       const k = w(x)
       return k === x ? k : fits(t, x, k, pos)
     }
-    // DINT / DWORD multiply through Math.imul (a double product past 2^53 has lost the low bits the wrap keeps)
-    const imul = t === 'DINT' || t === 'DWORD'
+    // a 32-bit product through Math.imul (runtime.ts isInt32)
+    const imul = isInt32(t)
     out[`mul_${t}`] = (l: number, r: number, pos: SourcePos): number => {
       const x = l * r
       const k = imul ? w(Math.imul(l | 0, r | 0)) : w(x)
@@ -259,11 +269,37 @@ function integerArithmetic(fits: GenInternals['fits']): Record<string, unknown> 
   return out
 }
 
-/** A function the generated code is running in, and the loops open in it (EXIT / CONTINUE name the innermost). */
+/** The loops open in the scan function (EXIT / CONTINUE name the innermost). A sub-function a block is split into
+ *  never opens a frame of its own: its jumps are SUB_JUMP codes. */
 interface Frame {
   loops: number[]
-  root: boolean
 }
+
+/** Whether a place's read runs nothing but loads: a variable or THIS, a field of one, or an element whose subscripts
+ *  are such reads or literals. Its code can then be repeated without running anything twice. */
+function readsOnly(e: Expr): boolean {
+  switch (e.node) {
+    case 'var':
+    case 'this':
+    case 'num':
+      return true
+    case 'member':
+      return readsOnly(e.obj)
+    case 'index':
+      return readsOnly(e.obj) && e.indices.every(readsOnly)
+    default:
+      return false
+  }
+}
+
+type JumpKind = 'return' | 'exit' | 'continue'
+/** A jump whose code waits for its frame: U+0001, the kind's initial, U+0001. JSON.stringify escapes every control
+ *  character, so no name or literal in the source can contain the mark. */
+const JUMP_MARK = '\u0001'
+const JUMP_PLACEHOLDER = new RegExp(`${JUMP_MARK}([rec])${JUMP_MARK}`, 'g')
+const JUMP_KINDS: Record<string, JumpKind> = { r: 'return', e: 'exit', c: 'continue' }
+/** a jump out of a sub-function a statement list was split into: the code its caller acts on (`signals`) */
+const SUB_JUMP: Record<JumpKind, string> = { return: 'return 1;', exit: 'return 2;', continue: 'return 3;' }
 
 const isNumber = (t: string | undefined): boolean => t !== undefined && (isInt(t as ScalarType) || isReal(t as ScalarType))
 
@@ -273,7 +309,9 @@ class Generator {
   /** the sub-functions a large statement list was split into */
   readonly fns: string[] = []
   #ids = 0
-  #frame: Frame = { loops: [], root: true }
+  readonly #frame: Frame = { loops: [] }
+  /** the open loops' count where the statement being generated starts (null: outside any block) */
+  #base: number | null = null
 
   constructor(
     private readonly scope: GenScope,
@@ -499,10 +537,10 @@ ${lines.join(NL)}
       if (!m || m.hidden) return this.unsupported(`the parameter '${arg}'`)
       return { dyn: 'fm', off: m.off, layout: m.layout }
     }
-    const scalars: { arg: string; v: string }[] = []
+    const scalars: { arg: string; v: string; e: Expr }[] = []
     e.args.filter((a) => !a.out && !a.inout && !a.copy && !a.bind).forEach((a, i) => {
       lines.push(`const a${i} = ${this.expr(a.value)};`)
-      scalars.push({ arg: a.name, v: `a${i}` })
+      scalars.push({ arg: a.name, v: `a${i}`, e: a.value })
     })
     const stores: string[] = []
     e.args.forEach((a, i) => {
@@ -529,17 +567,17 @@ ${lines.join(NL)}
       }
     })
     lines.push('const fm = R.enter(f);', ...stores)
-    for (const { arg, v } of scalars) {
+    for (const { arg, v, e: given } of scalars) {
       const p = at(arg)
       if (p.layout.kind !== 'scalar') return this.unsupported(`the parameter '${arg}'`)
-      const value = p.layout.enumerated ? wrapCode('INT', `num(${v})`) : this.coerce(p.layout.scalar, p.layout.cap, undefined, v)
+      const value = p.layout.enumerated ? wrapCode('INT', `num(${v})`) : this.coerce(p.layout.scalar, p.layout.cap, undefined, v, given)
       lines.push(this.storeAt(p, value))
     }
     lines.push('R.run(f, now, fm);')
     for (const a of e.args) {
       if (!a.inout || frame.byKey.get(identKey(a.name))!.ref) continue
       const r = `r${this.id()}`
-      lines.push(`{ const ${r} = ${this.loadAt(at(a.name))}; ${this.place(a.value, r)} }`)
+      lines.push(this.strCopyTo(a.value, at(a.name)) ?? `{ const ${r} = ${this.loadAt(at(a.name))}; ${this.place(a.value, r)} }`)
     }
     for (const a of e.args) {
       if (!a.out) continue
@@ -547,7 +585,7 @@ ${lines.join(NL)}
       if (a.copy) lines.push(`copyBytes(${addrCode(this.addr(a.value))}, ${addrCode(p)}, ${p.layout.size});`)
       else {
         const q = `q${this.id()}`
-        lines.push(`{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, this.loadAt(p))}; ${this.place(a.value, q)} }`)
+        lines.push(this.strCopyTo(a.value, p, this.x.placeMaxLen(a.value)) ?? `{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, this.loadAt(p))}; ${this.place(a.value, q)} }`)
       }
     }
     if (sig.ret === null) lines.push('const r = 0;')
@@ -596,7 +634,7 @@ ${lines.join(NL)}
     switch (op) {
       case '+': return WIDTH[t] ? `add_${t}(${L}, ${R}, ${pos})` : `addI(${tj}, ${L}, ${R}, ${pos})`
       case '-': return WIDTH[t] ? `sub_${t}(${L}, ${R}, ${pos})` : `subI(${tj}, ${L}, ${R}, ${pos})`
-      case '*': return WIDTH[t] ? `mul_${t}(${L}, ${R}, ${pos})` : `mulI(${tj}, ${L}, ${R}, ${pos}, ${t === 'DINT' || t === 'DWORD'})`
+      case '*': return WIDTH[t] ? `mul_${t}(${L}, ${R}, ${pos})` : `mulI(${tj}, ${L}, ${R}, ${pos}, ${isInt32(t)})`
       case '/': return divisor ? wrapCode(t, `trunc(${L} / (${R}))`) : `divI(${tj}, ${L}, ${R}, ${pos})`
       case 'MOD': return divisor ? wrapCode(t, `${L} % (${R})`) : `modI(${tj}, ${L}, ${R}, ${pos})`
     }
@@ -653,7 +691,14 @@ ${lines.join(NL)}
       const at = this.constOffset(ix, d)
       if (at !== null) off += at * stride
       else {
-        const term = `ix(${this.num(ix)}, ${d.lo}, ${d.hi}, ${pos})${stride === 1 ? '' : ` * ${stride}`}`
+        const v = this.num(ix)
+        // a subscript read straight from storage is checked in place: as an ix() call it can fall outside V8's
+        // inlining budget in a long body (measured: struct arrays in a 20-pass loop, 1.34 -> 0.74 µs a scan).
+        // The check repeats `v`, so it must be a read with no call in it: `a[s[Next()].j]` calls Next() once.
+        const checked = (ix.node === 'var' || ix.node === 'member') && readsOnly(ix)
+          ? `(${v} < ${d.lo} || ${v} > ${d.hi} ? ixFault(${v}, ${d.lo}, ${d.hi}, ${pos}) : ${v} - ${d.lo})`
+          : `ix(${v}, ${d.lo}, ${d.hi}, ${pos})`
+        const term = `${checked}${stride === 1 ? '' : ` * ${stride}`}`
         dyn = dyn === '' ? term : `${dyn} + ${term}`
       }
     })
@@ -662,7 +707,8 @@ ${lines.join(NL)}
 
   /** A standard block's call in the typed engine: the instance's place first, then its inputs in the call's order (the
    *  walker's argument object), then `blk_TYPE(instance, ...every accepted input, now)` with an input the call left out
-   *  undefined, as the walker's `a.PT ?? 0` sees it; then each output binding read from the record, coerced, stored. */
+   *  undefined, so the block keeps the value its record holds, as the walker's does; then each output binding read
+   *  from the record, coerced, stored. */
   typedCall(s: Extract<Stmt, { node: 'fbcall' }>): string {
     const inst = this.addr(s.target)
     if (inst.layout.kind === 'struct' && inst.layout.fb) return this.userCall(s, inst, inst.layout.fb)
@@ -685,7 +731,7 @@ ${lines.join(NL)}
       if (!field || field.hidden || field.layout.kind !== 'scalar') return this.unsupported(`the output '${a.name}'`)
       const read = this.loadAt({ dyn: f, off: field.off, layout: field.layout })
       const q = `q${this.id()}`
-      lines.push(`{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, read)}; ${this.place(a.value, q)} }`)
+      lines.push(this.strCopyTo(a.value, { dyn: f, off: field.off, layout: field.layout }, this.x.placeMaxLen(a.value)) ?? `{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, read)}; ${this.place(a.value, q)} }`)
     }
     lines.push('}')
     return lines.join(NL)
@@ -696,6 +742,26 @@ ${lines.join(NL)}
    *  which resets the function, stores them, runs it and answers its result (the walker's runFunction). */
   typedFnCall(e: Extract<Expr, { node: 'call' }>): string {
     const fn = this.scope.typed.fn(e.name)
+    // every input given in order, each a value: stored by the call site itself, coerced only where its type needs it,
+    // with no argument array (measured: 40 Zone blocks with 3 function calls each, 40 -> 26 µs a scan)
+    if (fn.direct && !e.slots && e.args.length === fn.inputSlots.length) {
+      const name = `c${this.id()}`
+      const r = this.k(fn)
+      // the arguments first, as the runner takes them: one may call this same function, whose region is shared
+      const lines = e.args.map((a, i) => `const a${i} = ${this.expr(a)};`)
+      lines.push(`${r}.enter();`)
+      e.args.forEach((a, i) => {
+        const { off, layout } = fn.inputSlots[i]!
+        if (layout.kind !== 'scalar') return
+        const value = layout.enumerated ? wrapCode('INT', `num(a${i})`) : this.coerce(layout.scalar, layout.cap, undefined, `a${i}`, a)
+        lines.push(this.storeAt({ dyn: '', off, layout }, value))
+      })
+      lines.push(`${r}.exec();`, `return ${this.loadAt({ dyn: '', off: fn.resultSlot.off, layout: fn.resultSlot.layout })};`)
+      this.fns.push(`function ${name}(b, now, m) {
+${lines.join(NL)}
+}`)
+      return `${name}(b, now, m)`
+    }
     const given = e.args.map((a, k) => {
       const at = e.slots ? e.slots[k]! : k
       return fn.aggregate[at] ? addrCode(this.aggregateOf(a)) : this.expr(a)
@@ -731,6 +797,31 @@ ${lines.join(NL)}
     return { dyn: `U32[${at}]`, off: 0, layout }
   }
 
+  /** where the text `e` reads is, when `e` is a whole STRING place: the cases `expr` answers with a plain load */
+  strSource(e: Expr): Address | null {
+    if (e.t !== 'STRING') return null
+    if (e.node === 'var' ? e.constValue !== undefined : e.node !== 'member' && e.node !== 'index') return null
+    const a = this.addr(e)
+    return a.layout.kind === 'scalar' && a.layout.scalar === 'STRING' ? a : null
+  }
+  /** a statement copying the STRING at `src` into the STRING at `dst`, cut as a store cuts it (`maxLen`, then the
+   *  capacity): the code units moved in memory, where a load and a store would build the text and take it apart
+   *  again (measured: a fifth of the scan of a large program whose blocks pass status strings around). Null when
+   *  either end is not a STRING. `src` is worked out first, as the value is before its place. */
+  strCopyAt(dst: Address, src: Address | null, maxLen?: number): string | null {
+    if (!src || dst.layout.kind !== 'scalar' || dst.layout.scalar !== 'STRING') return null
+    const cap = dst.layout.cap!
+    const z = `z${this.id()}`
+    return `{ const ${z} = ${addrCode(src)}; strCopy(${addrCode(dst)}, ${maxLen === undefined ? cap : Math.min(cap, maxLen)}, ${z}); }`
+  }
+  /** {@link strCopyAt} into the place `target`. Only where finding the place runs nothing but loads: the walker
+   *  reads the value before it finds the place, and here the text is read after. */
+  strCopyTo(target: Expr, src: Address | null, maxLen?: number): string | null {
+    if (!src || target.t !== 'STRING' || !readsOnly(target)) return null
+    if (target.node !== 'var' && target.node !== 'member' && target.node !== 'index') return null
+    return this.strCopyAt(this.addr(target), src, maxLen)
+  }
+
   /** a statement storing `v` (already in the slot's form) into the scalar at an address */
   storeAt(a: Address, v: string): string {
     if (a.layout.kind !== 'scalar') return this.unsupported('a whole array or struct here')
@@ -754,11 +845,11 @@ ${lines.join(NL)}
       return m && !m.hidden ? { dyn: f, off: m.off, layout: m.layout } : null
     }
     const lines = [`{ const ${f} = ${addrCode(inst)};`]
-    const scalars: { arg: string; v: string }[] = []
+    const scalars: { arg: string; v: string; e: Expr }[] = []
     s.args.filter((a) => !a.out && !a.inout && !a.copy && !a.bind).forEach((a, i) => {
       const v = `a${n}_${i}`
       lines.push(`const ${v} = ${this.expr(a.value)};`)
-      scalars.push({ arg: a.name, v })
+      scalars.push({ arg: a.name, v, e: a.value })
     })
     for (const a of s.args) {
       if (a.bind) {
@@ -777,13 +868,13 @@ ${lines.join(NL)}
         if (!m) continue
         const slot: Address = { dyn: f, off: m.off, layout: m.layout }
         if (m.ref) lines.push(this.storeAt(slot, addrCode(this.addr(a.value)))) // bound by reference: its address
-        else lines.push(this.storeAt(slot, this.expr(a.value))) // a scalar: its value, in, and back out below
+        else lines.push(this.strCopyAt(slot, this.strSource(a.value)) ?? this.storeAt(slot, this.expr(a.value))) // a scalar: its value, in, and back out below
       }
     }
-    for (const { arg, v } of scalars) {
+    for (const { arg, v, e: given } of scalars) {
       const m = member(arg)
       if (!m || m.layout.kind !== 'scalar') continue // a name the block does not have: its setter does nothing
-      const value = m.layout.enumerated ? wrapCode('INT', `num(${v})`) : this.coerce(m.layout.scalar, m.layout.cap, undefined, v)
+      const value = m.layout.enumerated ? wrapCode('INT', `num(${v})`) : this.coerce(m.layout.scalar, m.layout.cap, undefined, v, given)
       lines.push(this.storeAt(m, value))
     }
     lines.push(`${this.k(this.scope.typed.fb(name))}.run(${f}, now);`)
@@ -792,7 +883,7 @@ ${lines.join(NL)}
       const m = rec.byKey.get(identKey(a.name))
       if (!m || m.ref) continue
       const r = `r${this.id()}`
-      lines.push(`{ const ${r} = ${this.loadAt({ dyn: f, off: m.off, layout: m.layout })}; ${this.place(a.value, r)} }`)
+      lines.push(this.strCopyTo(a.value, { dyn: f, off: m.off, layout: m.layout }) ?? `{ const ${r} = ${this.loadAt({ dyn: f, off: m.off, layout: m.layout })}; ${this.place(a.value, r)} }`)
     }
     for (const a of s.args) {
       if (!a.out) continue
@@ -803,7 +894,7 @@ ${lines.join(NL)}
         lines.push(`copyBytes(${addrCode(dst)}, ${addrCode(m)}, ${m.layout.size});`)
       } else {
         const q = `q${this.id()}`
-        lines.push(`{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, this.loadAt(m))}; ${this.place(a.value, q)} }`)
+        lines.push(this.strCopyTo(a.value, m, this.x.placeMaxLen(a.value)) ?? `{ const ${q} = ${this.coerce(a.value.t as ScalarType, this.x.placeMaxLen(a.value), undefined, this.loadAt(m))}; ${this.place(a.value, q)} }`)
       }
     }
     lines.push('}')
@@ -845,52 +936,69 @@ ${lines.join(NL)}
     return this.unsupported('this place')
   }
 
+  /** A statement list: inline when it is short, else split into sub-functions. Each statement is generated once. A
+   *  jump that leaves the statement it is in (RETURN, or EXIT / CONTINUE of a loop opened outside it) is written as a
+   *  placeholder (`jump`), and this replaces it once it knows the frame the statement lands in. Generating a statement
+   *  again for each frame cost 2^depth for nested lists (a 12 KB nested IF took 13 s to compile). */
   block(body: Stmt[]): string {
-    const mark = this.fns.length
-    const parts = body.map((s) => this.stmt(s))
-    if (body.length < 2 || parts.reduce((n, p) => n + p.length, 0) <= CHUNK) return parts.join('\n')
-    // too big for one function V8 will optimise: generate it again as sub-functions, each statement in a frame of its own
-    this.fns.length = mark
-    const outer = this.#frame
+    const outerBase = this.#base
+    const base = this.#frame.loops.length
+    const parts = body.map((s) => {
+      this.#base = base
+      return this.stmt(s)
+    })
+    this.#base = outerBase
+    // the size it has inline, every jump as written in this frame
+    const size = body.length < 2 ? 0 : parts.reduce((n, p) => n + this.resolve(p, (kind) => this.frameJump(kind)).length, 0)
+    if (size <= CHUNK) return parts.map((p) => this.resolve(p, (kind) => this.jump(kind))).join('\n')
+    // too big for one function V8 will optimise: sub-functions, each statement in a frame of its own (no loop open,
+    // not the root), so a jump out of it is a code its caller acts on
     const out: string[] = []
     let group: string[] = []
-    let size = 0
+    let groupSize = 0
     const flush = (): void => {
       if (!group.length) return
       const name = `f${this.id()}`
       this.fns.push(`function ${name}(b, now, m) {\n${group.join('\n')}\nreturn 0;\n}`)
-      out.push(`{ const r = ${name}(b, now, m); ${this.signals('r', outer)} }`)
+      out.push(`{ const r = ${name}(b, now, m); ${this.signals('r')} }`)
       group = []
-      size = 0
+      groupSize = 0
     }
-    for (const s of body) {
-      this.#frame = { loops: [], root: false }
-      const code = this.stmt(s)
-      this.#frame = outer
-      if (size + code.length > CHUNK) flush()
+    for (const p of parts) {
+      const code = this.resolve(p, (kind) => SUB_JUMP[kind])
+      if (groupSize + code.length > CHUNK) flush()
       group.push(code)
-      size += code.length
+      groupSize += code.length
     }
     flush()
     return out.join('\n')
   }
 
-  /** what a sub-function's return code means in the frame that called it */
-  signals(r: string, f: Frame): string {
-    const saved = this.#frame
-    this.#frame = f
-    const s = `if (${r} === 1) { ${this.jump('return')} } else if (${r} === 2) { ${this.jump('exit')} } else if (${r} === 3) { ${this.jump('continue')} }`
-    this.#frame = saved
-    return s
+  /** `code` with each jump placeholder replaced by what `as` writes for its kind */
+  resolve(code: string, as: (kind: JumpKind) => string): string {
+    return code.includes(JUMP_MARK) ? code.replace(JUMP_PLACEHOLDER, (_, k: string) => as(JUMP_KINDS[k]!)) : code
   }
 
-  jump(kind: 'return' | 'exit' | 'continue'): string {
+  /** what a sub-function's return code means in the frame that called it */
+  signals(r: string): string {
+    return `if (${r} === 1) { ${this.jump('return')} } else if (${r} === 2) { ${this.jump('exit')} } else if (${r} === 3) { ${this.jump('continue')} }`
+  }
+
+  /** A jump as the code says it here. One that leaves the statement being generated depends on the frame that
+   *  statement lands in, so it is a placeholder for the enclosing block() to replace. */
+  jump(kind: JumpKind): string {
     const f = this.#frame
-    if (kind === 'return') return f.root ? 'return;' : 'return 1;'
+    const leaves = this.#base !== null && (kind === 'return' || f.loops.length <= this.#base)
+    return leaves ? `${JUMP_MARK}${kind[0]}${JUMP_MARK}` : this.frameJump(kind)
+  }
+
+  /** a jump written in the current frame */
+  frameJump(kind: JumpKind): string {
+    const f = this.#frame
+    if (kind === 'return') return 'return;'
     const top = f.loops[f.loops.length - 1]
     if (top !== undefined) return kind === 'exit' ? `break L${top};` : `break B${top};`
-    // no loop open in this function: a sub-function hands it to its caller; at the root it is the walker's signal
-    if (!f.root) return kind === 'exit' ? 'return 2;' : 'return 3;'
+    // no loop open: the walker's signal
     return kind === 'exit' ? 'throw EXIT;' : 'throw CONTINUE;'
   }
 
@@ -920,6 +1028,8 @@ ${lines.join(NL)}
         }
         const v = `v${this.id()}`
         const ranged = (s.target.node === 'var' || s.target.node === 'member' || s.target.node === 'index') && s.target.range !== undefined
+        const copied = ranged ? null : this.strCopyTo(s.target, this.strSource(s.value), this.x.placeMaxLen(s.target))
+        if (copied) return copied
         const coerced = this.coerce(s.target.t as ScalarType, this.x.placeMaxLen(s.target), s.pos, this.expr(s.value), s.value)
         const value = ranged ? `checkRange(${this.k(s.target)}, ${coerced}, ${this.k(s.pos)})` : coerced
         return `{ const ${v} = ${value}; ${this.place(s.target, v)} }`

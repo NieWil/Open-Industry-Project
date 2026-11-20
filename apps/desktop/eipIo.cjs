@@ -1,9 +1,9 @@
 // The desktop shell's half of an EtherNet/IP link: libplctag, called through koffi, and nothing about the scene.
 //
-// libplctag (MPL-2.0 / LGPL-2.0+, https://github.com/libplctag/libplctag) speaks CIP to a Logix controller: it
+// libplctag (MPL-2.0 / LGPL-2.0+, https://github.com/libplctag/libplctag) speaks CIP to a Logix or Micro800 controller: it
 // opens the session, forwards the connection through the path (`1,0`: the backplane, slot 0), packs requests and
 // reconnects on its own thread. The app decides everything else - which tags travel, which way, and what a value
-// means (src/core/eip.ts, src/editor/externalPlc.ts). This file only turns those decisions into library calls.
+// means (src/core/io/eip.ts, src/editor/links/externalPlc.ts). This file only turns those decisions into library calls.
 //
 // Nothing here blocks main. Every create, read and write is started with a timeout of 0, which returns at once
 // (PLCTAG_STATUS_PENDING), and finished by polling plc_tag_status on a timer. A synchronous call would freeze every
@@ -12,11 +12,12 @@
 // The library is a native file the build fetches (scripts/fetch-libplctag.mjs -> vendor/libplctag/), loaded on
 // the first connect: most sessions never use EtherNet/IP. A build without it says so instead of crashing.
 //
-// One link per window, closed with it. Plain Node - testable against libplctag's own simulator with
+// One link per controller in a window (linkKeys.cjs), all closed with it. Plain Node - testable against libplctag's own simulator with
 // `node apps/desktop/eipIo.test.cjs`.
 
 const { existsSync } = require('node:fs')
 const { join } = require('node:path')
+const { BAD_LINK, linkKey, listingLinkNo, onPageGone, windowKeys } = require('./linkKeys.cjs')
 
 /** The library file for this platform, as the fetch script names it. */
 const LIB_FILE = process.platform === 'win32' ? 'plctag.dll' : process.platform === 'darwin' ? 'libplctag.dylib' : 'libplctag.so'
@@ -33,6 +34,10 @@ const STATUS_OK = 0
 const POLL_MS = 2
 /** How long one request may take before it is abandoned: the app's watchdog has de-energised the PLC's outputs after a second. */
 const ANSWER_MS = 1000
+/** How long one tag listing may take: a single read carrying every tag's name, far larger than a cycle's. */
+const LIST_MS = 10000
+/** A program as the controller's listing names it; its own tags are listed by reading `<name>.@tags`. */
+const PROGRAM = /^Program:[A-Za-z_][A-Za-z0-9_]*$/
 
 let lib = null
 let loadError = null
@@ -52,6 +57,8 @@ function plctag() {
       read: so.func('int plc_tag_read(int32_t tag, int timeout)'),
       write: so.func('int plc_tag_write(int32_t tag, int timeout)'),
       decode: so.func('const char *plc_tag_decode_error(int err)'),
+      size: so.func('int plc_tag_get_size(int32_t tag)'),
+      rawBytes: so.func('int plc_tag_get_raw_bytes(int32_t tag, int start, _Out_ uint8_t *buf, int len)'),
       intAttr: so.func('int plc_tag_get_int_attribute(int32_t tag, const char *name, int dflt)'),
       bytesAttr: so.func('int plc_tag_get_byte_array_attribute(int32_t tag, const char *name, _Out_ uint8_t *buf, int len)'),
       shutdown: so.func('void plc_tag_shutdown(void)'),
@@ -113,30 +120,63 @@ function checkTarget(gateway, path) {
   return ''
 }
 
+/** libplctag's `plc` attribute for each controller family the link offers. */
+const FAMILIES = { logix: 'ControlLogix', micro800: 'Micro800' }
+
+/** Why `family` cannot be used with `path`, or ''. */
+function checkFamily(family, path) {
+  if (!Object.hasOwn(FAMILIES, family)) return `${family} is not a controller family this link knows (logix, micro800)`
+  if (family === 'micro800' && path) return 'a Micro800 takes no path: give the address of the controller itself'
+  return ''
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * libplctag's tag listing (a read of `@tags`, or `Program:Main.@tags` for one program's), entries back to back: the
+ * tag's instance id (u32), symbol type (u16), element size (u16), three array dimensions (u32 each), then the name's
+ * length (u16) and the name. An entry that runs past the buffer ends the walk: what came before it stands.
+ */
+function parseTagListing(buf) {
+  const out = []
+  let at = 0
+  while (at + 22 <= buf.length) {
+    const length = buf.readUInt16LE(at + 20)
+    if (at + 22 + length > buf.length) break
+    out.push({ name: buf.toString('latin1', at + 22, at + 22 + length), type: buf.readUInt16LE(at + 4) })
+    at += 22 + length
+  }
+  return out
+}
 
 class EipLink {
   constructor() {
     /** @type {Map<string, {handle: number, bit: boolean, cip: number | null}>} */
     this.tags = new Map()
+    /** the controller's attributes; `base` adds the element count a tag's handle takes */
+    this.where = ''
     this.base = ''
     this.closed = false
   }
 
-  /** Where the controller is: `gateway` is host[:port], `path` the route to its CPU (`1,0`), '' for none. */
-  open({ gateway, path }) {
-    const bad = checkTarget(gateway, path)
+  /**
+   * Where the controller is: `gateway` is host[:port], `path` the route to its CPU (`1,0`), '' for none. `family` is
+   * 'logix' (ControlLogix, CompactLogix) or 'micro800'; a Micro800 is always reached at its own port, so it takes no path.
+   */
+  open({ gateway, path, family = 'logix' }) {
+    const bad = checkTarget(gateway, path) || checkFamily(family, path)
     if (bad) return { error: bad }
     const f = plctag()
     if (!f) return { error: loadError }
-    this.base = `protocol=ab-eip&gateway=${gateway}${path ? `&path=${path}` : ''}&plc=ControlLogix&elem_count=1`
+    this.where = `protocol=ab-eip&gateway=${gateway}${path ? `&path=${path}` : ''}&plc=${FAMILIES[family]}`
+    this.base = `${this.where}&elem_count=1`
     return { error: '' }
   }
 
-  /** Wait until every handle has finished its request (or the deadline passes, which aborts it); their statuses by name. */
-  async settle(handles) {
+  /** Wait until every handle has finished its request (or `ms` passes, which aborts it); their statuses by name. */
+  async settle(handles, ms = ANSWER_MS) {
     const f = lib
-    const until = Date.now() + ANSWER_MS
+    const until = Date.now() + ms
     const status = handles.map((h) => (h < 0 ? h : STATUS_PENDING))
     for (;;) {
       let pending = false
@@ -189,6 +229,44 @@ class EipLink {
     return { error: '', tags: out }
   }
 
+  /**
+   * Every tag the controller lists, as `{name, type}` with the symbol type as the listing gives it, for the tag picker:
+   * the controller's own tags, then each program's (`Program:Main.Run`). `status` is 'ok', or libplctag's status for
+   * the controller's own list; a program whose list fails is left out.
+   */
+  async listTags() {
+    if (!lib || !this.where) return { error: loadError ?? 'not connected' }
+    const top = await this.readListing('@tags')
+    if (top.status !== 'ok') return { error: '', status: top.status }
+    const programs = top.entries.filter((e) => PROGRAM.test(e.name)).map((e) => e.name)
+    const scoped = await Promise.all(programs.map((p) => this.readListing(`${p}.@tags`)))
+    const tags = top.entries.filter((e) => !e.name.includes(':'))
+    scoped.forEach((list, i) => {
+      for (const e of list.entries) tags.push({ name: `${programs[i]}.${e.name}`, type: e.type })
+    })
+    return { error: '', status: 'ok', tags }
+  }
+
+  /** Read one listing (`@tags`, `Program:Main.@tags`) through a handle of its own, let go after. */
+  async readListing(name) {
+    const f = lib
+    const h = f.create(`${this.where}&name=${name}`, 0)
+    try {
+      let [status] = await this.settle([h], LIST_MS)
+      if (status === 'ok') {
+        f.read(h, 0)
+        ;[status] = await this.settle([h], LIST_MS)
+      }
+      if (status !== 'ok') return { status, entries: [] }
+      const size = Math.max(0, f.size(h))
+      const buf = Buffer.alloc(size)
+      if (size > 0) f.rawBytes(h, 0, buf, size)
+      return { status, entries: parseTagListing(buf) }
+    } finally {
+      if (h >= 0) f.destroy(h)
+    }
+  }
+
   /** One cycle: every write and every read started together, then waited on. Per-item statuses as in `bind`. */
   async exchange(writes, reads) {
     const f = lib
@@ -234,7 +312,7 @@ class EipLink {
   }
 }
 
-/** @type {Map<number, EipLink>} */
+/** @type {Map<string, EipLink>} by linkKey (linkKeys.cjs) */
 const links = new Map()
 const watched = new Set()
 
@@ -246,44 +324,50 @@ function shutdownEip() {
 }
 
 /**
- * Register the `eip:*` channels.
- *   eip:open     {gateway, path} -> {error}                   where the controller is (nothing is sent yet)
+ * Register the `eip:*` channels. Each call may name one of the window's links as `link` (linkKeys.cjs), 0 when absent.
+ *   eip:open     {gateway, path, family} -> {error}           where the controller is (nothing is sent yet); family
+ *                                                            'logix' (the default) or 'micro800'
  *   eip:bind     {tags: [{name, bit}]} -> {error, tags: [{status, cip}]}
  *                                                            a handle per tag, read once for its CIP type
  *   eip:exchange {writes: [{name, value}], reads: [name]} -> {error, writes: [status], reads: [{value, status}]}
- *   eip:close                                                let every tag go
+ *   eip:tags     {} -> {error, status, tags: [{name, type}]}    every tag the controller lists, for the tag picker
+ *   eip:close                                               let every tag go
  * A status is 'ok' or libplctag's name for what went wrong (PLCTAG_ERR_NOT_FOUND, PLCTAG_ERR_TIMEOUT ...).
  * `consent` (endpointConsent.cjs `allows`) is asked before opening a link to another host.
  */
 function registerEipIo(ipcMain, { consent }) {
   ipcMain.handle('eip:open', async (event, opts) => {
     const sender = event.sender
-    links.get(sender.id)?.close()
-    links.delete(sender.id)
+    const n = listingLinkNo(opts)
+    if (n === null) return { error: BAD_LINK }
+    const key = linkKey(sender.id, n)
+    links.get(key)?.close()
+    links.delete(key)
     const gateway = typeof opts?.gateway === 'string' ? opts.gateway : ''
     const path = typeof opts?.path === 'string' ? opts.path : ''
-    const bad = checkTarget(gateway, path)
+    // absent from an older renderer, which only knew Logix
+    const family = opts?.family === undefined ? 'logix' : opts.family
+    const bad = checkTarget(gateway, path) || checkFamily(family, path)
     if (bad) return { error: bad }
     const host = gateway.replace(/:\d+$/, '')
     if (consent && !(await consent({ host, key: `eip ${gateway}`, what: `connect to the EtherNet/IP controller at ${gateway}` }, sender)))
       return { error: `the connection to ${gateway} was not allowed` }
     const link = new EipLink()
-    const opened = link.open({ gateway, path })
+    const opened = link.open({ gateway, path, family })
     if (opened.error) return opened
-    links.set(sender.id, link)
-    if (!watched.has(sender.id)) {
-      watched.add(sender.id)
-      const id = sender.id
-      sender.once('destroyed', () => {
-        watched.delete(id)
-        links.get(id)?.close()
-        links.delete(id)
-      })
-    }
+    links.set(key, link)
+    onPageGone(sender, watched, (id) => {
+      for (const k of windowKeys(links, id)) {
+        links.get(k)?.close()
+        links.delete(k)
+      }
+    })
     return { error: '' }
   })
-  const withLink = async (event, fn) => {
-    const link = links.get(event.sender.id)
+  const withLink = async (event, opts, fn) => {
+    const n = listingLinkNo(opts)
+    if (n === null) return { error: BAD_LINK }
+    const link = links.get(linkKey(event.sender.id, n))
     if (!link) return { error: 'not connected' }
     try {
       return await fn(link)
@@ -291,12 +375,16 @@ function registerEipIo(ipcMain, { consent }) {
       return { error: String(e?.message ?? e) }
     }
   }
-  ipcMain.handle('eip:bind', (event, opts) => withLink(event, (l) => l.bind(Array.isArray(opts?.tags) ? opts.tags : [])))
-  ipcMain.handle('eip:exchange', (event, opts) => withLink(event, (l) => l.exchange(Array.isArray(opts?.writes) ? opts.writes : [], Array.isArray(opts?.reads) ? opts.reads : [])))
-  ipcMain.handle('eip:close', (event) => {
-    links.get(event.sender.id)?.close()
-    links.delete(event.sender.id)
+  ipcMain.handle('eip:bind', (event, opts) => withLink(event, opts, (l) => l.bind(Array.isArray(opts?.tags) ? opts.tags : [])))
+  ipcMain.handle('eip:exchange', (event, opts) => withLink(event, opts, (l) => l.exchange(Array.isArray(opts?.writes) ? opts.writes : [], Array.isArray(opts?.reads) ? opts.reads : [])))
+  ipcMain.handle('eip:tags', (event, opts) => withLink(event, opts, (l) => l.listTags()))
+  ipcMain.handle('eip:close', (event, opts) => {
+    const n = listingLinkNo(opts)
+    if (n === null) return
+    const key = linkKey(event.sender.id, n)
+    links.get(key)?.close()
+    links.delete(key)
   })
 }
 
-module.exports = { registerEipIo, EipLink, shutdownEip, checkTarget, libraryPath }
+module.exports = { registerEipIo, EipLink, shutdownEip, checkTarget, checkFamily, libraryPath, parseTagListing }

@@ -1,6 +1,6 @@
 /**
  * The localStorage half of the rebinding seam: core/keymap.ts owns what the bindings are, this owns
- * what they were last time. Split because core is DOM-free, the same way editor/stProgram.ts holds
+ * what they were last time. Split because core is DOM-free, the same way editor/program/stProgram.ts holds
  * the program document's storage half.
  *
  * Validated on read, not trusted. A stored map outlives the build that wrote it, so an action that
@@ -85,10 +85,20 @@ export function saveStoredKeymap(overrides: KeymapOverrides): void {
   }
 }
 
-/** Boot: install what was stored. Called once from main.tsx, before anything listens for a key. */
+/** Boot: install what was stored, and follow later changes made in other windows. Called once from
+ *  main.tsx, before anything listens for a key. */
 export function initKeymapPrefs(): void {
   const stored = readStoredKeymap()
   if (Object.keys(stored).length > 0) setKeymapOverrides(stored)
+  // a `storage` event fires in every other same-origin window (browser tabs, and the desktop app's
+  // one-window-per-project) when one of them writes, never in the writer itself
+  if (typeof window !== 'undefined') window.addEventListener('storage', (e) => applyStoredKeymapChange(e.key))
+}
+
+/** Another window changed the stored keymap (or cleared storage: `key` null): install what it holds now. */
+export function applyStoredKeymapChange(key: string | null): void {
+  if (key !== null && key !== KEYMAP_KEY) return
+  setKeymapOverrides(readStoredKeymap())
 }
 
 /**
@@ -98,7 +108,7 @@ export function initKeymapPrefs(): void {
 export function rebindAction(id: string, chords: readonly string[]): string | null {
   const binding = DEFAULT_KEYMAP.find((b) => b.id === id)
   if (!binding || binding.fixed) return id
-  const next: Record<string, readonly string[]> = { ...(currentOverrides() ?? {}), [id]: chords }
+  const next: Record<string, readonly string[]> = { ...baseOverrides(), [id]: chords }
   const clash = chords.map((c) => chordConflict(resolveKeymap(next), id, c)).find((x) => x !== null)
   if (clash) return clash
   commit(next)
@@ -107,7 +117,7 @@ export function rebindAction(id: string, chords: readonly string[]): string | nu
 
 /** Put one action back on its default chords. */
 export function resetAction(id: string): void {
-  const next = { ...(currentOverrides() ?? {}) }
+  const next = baseOverrides()
   delete next[id]
   commit(next)
 }
@@ -115,6 +125,16 @@ export function resetAction(id: string): void {
 /** Put every action back on its default chords. */
 export function resetAllActions(): void {
   commit({})
+}
+
+/**
+ * The map a rebind or reset edits: what storage holds now, not this window's table. Every write
+ * stores the whole map, so starting from this window's table erased a rebind made in another window
+ * since this one loaded. Without storage, the live table is all there is.
+ */
+function baseOverrides(): Record<string, readonly string[]> {
+  if (typeof localStorage === 'undefined') return { ...(currentOverrides() ?? {}) }
+  return { ...readStoredKeymap() }
 }
 
 /** The live override map as a mutable copy, or null when nothing is overridden. */

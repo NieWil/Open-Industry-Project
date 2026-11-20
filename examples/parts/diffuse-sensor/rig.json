@@ -2,7 +2,6 @@
   "id": "oip.diffuse-sensor",
   "name": "Photo Eye",
   "category": "Devices",
-  "commsParam": "enableComms",
   "snap": {
     "mounts": [
       {

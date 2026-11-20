@@ -1,17 +1,17 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
 import { ARC_END_EXT, CURVED_ROLLER_END_EXT, FRAME_WALL_THICKNESS, GUARD_COLLISION_THICKNESS, GUARD_HEIGHT, GUARD_THICKNESS, SCENE_VERSION } from '../core/types'
 import type { PartInstance, SceneJSON, SdkPart } from '../core/types'
-import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/partPackage'
-import { createSdkPart } from '../core/scene'
-import { registerPackage } from '../core/partRegistry'
-import { computeGuardRuns } from '../core/guardRuns'
-import { beltGuardWalls } from '../core/beltGuards'
-import { curvedGuardWalls } from '../core/curvedGuards'
-import { functionStaticWalls } from '../core/functionGuards'
-import { linkHalfExtents } from '../core/rigPose'
-import { guardColliderCrossSection } from '../core/collisionShapes'
+import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/parts/partPackage'
+import { createSdkPart } from '../core/scene/scene'
+import { registerPackage } from '../core/parts/partRegistry'
+import { computeGuardRuns } from '../core/guards/guardRuns'
+import { beltGuardWalls } from '../core/guards/beltGuards'
+import { curvedGuardWalls } from '../core/guards/curvedGuards'
+import { functionStaticWalls } from '../core/guards/functionGuards'
+import { linkHalfExtents } from '../core/rig/rigPose'
+import { guardColliderCrossSection } from '../core/geometry/collisionShapes'
 import { buildPackage } from './buildPackage'
 import { SimWorld } from './world'
 
@@ -84,11 +84,13 @@ function guardRideBump(parts: SdkPart[]): number {
     trace.push({ x: f.positions[0]!, z: f.positions[2]! })
   }
   world.dispose()
-  // steady-state ride z on the upstream bed, vs the furthest the box gets pushed off the wall past it
+  // steady-state ride z on the upstream bed, vs the furthest the box gets pushed off the wall past it. The window
+  // past it ends 0.5 m before the beds do (x = 3): a box riding at full roller speed reaches the end within the 400
+  // steps and drops off it, which moves it off the wall too.
   const ride = trace.filter((p) => p.x > -1.0 && p.x < -0.3).map((p) => p.z)
   const rideZ = ride.reduce((a, b) => a + b, 0) / Math.max(1, ride.length)
   let minAfter = Infinity
-  for (const p of trace) if (p.x > -0.2) minAfter = Math.min(minAfter, p.z)
+  for (const p of trace) if (p.x > -0.2 && p.x < 2.5) minAfter = Math.min(minAfter, p.z)
   return rideZ - minAfter
 }
 
@@ -472,7 +474,7 @@ describe('guardRuns merge conditions', () => {
   // run suppresses every non-owner member. So a phantom wall deletes the real guard butted against it (owner =
   // the phantom) or extends it as an invisible wall across the neighbour's bed (owner = the real one), and cargo
   // walks off a bed the author never touched. The two sides share one rule for which links exist
-  // (core/rigGuards.ts rigLinkEmitsBody), which is what these pin; each fails without it.
+  // (core/rig/rigGuards.ts rigLinkEmitsBody), which is what these pin; each fails without it.
   it('a visual-only guard link (collision: none) is not a wall - it must not suppress a real neighbour', () => {
     const ghost = loadVariant('roller-conveyor', 'test-guard-nocollision', (geo) => {
       for (const l of geo.links) if (l.sideGuard) l.collision = 'none'

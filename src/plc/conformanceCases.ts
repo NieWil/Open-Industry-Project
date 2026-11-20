@@ -1004,7 +1004,7 @@ seen := Level;`,
       },
       {
         name: 'a missing statement separator is rejected',
-        // (not after END_IF: a program here may leave that one out, a tolerated input form - parser.ts `blockEnd`)
+        // (not after END_IF: a program here may leave that one out, a tolerated input form - parserStmt.ts `blockEnd`)
         src: 'VAR a : INT; END_VAR\nIF TRUE THEN a := 1 END_IF;\na := 2;',
         steps: [],
         rejects: /expected ';'/,

@@ -44,8 +44,7 @@ definePart({
   params: {
     maxRange: { type: 'number', default: 4, min: 0.1, max: 10, step: 0.05, label: 'Max range (m)', desc: 'How far down the beam a target is still measured. The beam is cast along local +Z, so aim the sensor by rotating it.' },
     showBeam: { type: 'boolean', default: true, label: 'Show beam', desc: 'Draw the beam line in the viewport. A viewing aid only - hiding it does not change what the sensor measures.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
-    distanceTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Distance tag (m)', group: 'Comms', desc: 'Where the measured distance to the target is published, in metres. With nothing in range it reads the max range rather than 0, so compare against that to detect an empty beam.' },
+    distanceTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Distance tag', unit: 'm', group: 'Comms', desc: 'Where the measured distance to the target is published, in metres. With nothing in range it reads the max range rather than 0, so compare against that to detect an empty beam.' },
   },
   // The housing, drawn: a body with two mounting holes and a label panel on each flank, a dark front cap with
   // the window and four screws, a top panel with a display and two status LEDs, and an M12 plug underneath.
@@ -85,11 +84,11 @@ definePart({
       Object.assign({ desc: g.merge(...leds), material: 'gray' }, both),
     ]
   },
-  step(ctx) {
+  react(ctx) {
     const s = ctx.sense('lens')
     const inRange = s.hit && s.distance <= ctx.params.maxRange
     const dist = inRange ? s.distance : ctx.params.maxRange
     ctx.lamps.led = inRange
-    if (ctx.params.enableComms && ctx.params.distanceTag) ctx.writeNumber(ctx.params.distanceTag, dist)
+    if (ctx.params.distanceTag) ctx.writeNumber(ctx.params.distanceTag, dist)
   },
 })

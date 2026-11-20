@@ -8,7 +8,7 @@ describe('the part update prompt words', () => {
   })
 
   it('Update all says what changes, and names the parts that lose this project\'s own changes', () => {
-    expect(updateAllQuestion(['Diverter'], [])).toBe("Update Diverter to the app's new version? Every placed copy changes.")
+    expect(updateAllQuestion(['Diverter'], [])).toBe('Update Diverter to its newer version? Every placed copy changes.')
     const q = updateAllQuestion(['Diverter', 'Belt Conveyor', 'Photo Eye'], ['Belt Conveyor'])
     expect(q).toContain('Update 3 parts')
     expect(q).toContain('Belt Conveyor was changed in this project, and those changes are discarded.')

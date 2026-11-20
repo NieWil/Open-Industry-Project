@@ -1,6 +1,6 @@
 // SHA-256, synchronous. The browser's own (crypto.subtle.digest) is async, and the decision that needs it is
 // synchronous: the room's code-trust gate (collab/codeTrust.ts) admits each package as it arrives, and part of that
-// answer is whether its code is one this app shipped (editor/shippedBehaviors.ts). It is a cryptographic hash, not a
+// answer is whether its code is one this app shipped (editor/parts/shippedBehaviors.ts). It is a cryptographic hash, not a
 // fast one, because a matching fingerprint makes code trusted, so it must not be forgeable. FIPS 180-4; sha256.test.ts
 // pins it against node:crypto.
 

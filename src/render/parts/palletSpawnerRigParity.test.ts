@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
 import { examplePart, type RigGeo } from './examplePart'
 const { behavior: PALLET_SPAWNER_BEHAVIOR, geometry: PALLET_SPAWNER_RIG } = examplePart<RigGeo>('oip.pallet-spawner')
 

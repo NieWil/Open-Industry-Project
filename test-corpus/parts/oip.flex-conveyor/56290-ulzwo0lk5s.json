@@ -1,0 +1,3170 @@
+{
+  "format": 6,
+  "id": "oip.flex-conveyor",
+  "name": "Flex Conveyor",
+  "params": {
+    "points": {
+      "type": "numberList",
+      "columns": [
+        "x m",
+        "z m"
+      ],
+      "arity": 2,
+      "default": [
+        [
+          3,
+          0
+        ],
+        [
+          6,
+          0
+        ],
+        [
+          8,
+          0
+        ]
+      ],
+      "label": "Path points",
+      "group": "Shape",
+      "handle": {
+        "kind": "flexPath",
+        "lengthParam": "length",
+        "sections": 16,
+        "maxHingeDeg": 40,
+        "infeedBrakeParam": "infeedBrakes",
+        "dischargeBrakeParam": "dischargeBrakes",
+        "scissor": {
+          "widthParam": "width",
+          "rollers": 8
+        }
+      },
+      "desc": "The bed runs from its infeed (the part origin, heading +X) along a smooth curve through these points, part-local metres, the last one being the discharge end. Drag the dots in the viewport to pull it into shape: S-curves, a turn through a door, a loop. The length follows."
+    },
+    "length": {
+      "type": "number",
+      "default": 8,
+      "min": 7.43,
+      "max": 24,
+      "step": 0.01,
+      "hidden": true,
+      "label": "Length (m)",
+      "group": "Shape",
+      "desc": "The bed length along its sections, written by the path drag: it sets how far each section is stretched."
+    },
+    "infeedBrakes": {
+      "type": "boolean",
+      "default": false,
+      "label": "Infeed brakes",
+      "group": "Shape",
+      "desc": "The caster brakes under the infeed end are on. Walking, a braked end cannot be pulled, and pulling the other end further than the bed reaches stops there instead of rolling the unit after you. The editor places it wherever you drag it."
+    },
+    "dischargeBrakes": {
+      "type": "boolean",
+      "default": false,
+      "label": "Discharge brakes",
+      "group": "Shape",
+      "desc": "The caster brakes under the discharge end are on. Walking, a braked end cannot be pulled, and pulling the other end further than the bed reaches stops there instead of rolling the unit after you. The editor places it wherever you drag it."
+    },
+    "width": {
+      "type": "number",
+      "default": 0.6,
+      "min": 0.3,
+      "max": 1.2,
+      "step": 0.05,
+      "label": "Width (m)",
+      "group": "Size",
+      "desc": "Roller width between the scissor sides."
+    },
+    "sideGuides": {
+      "type": "boolean",
+      "default": false,
+      "label": "Side guides",
+      "group": "Size",
+      "desc": "Low rails along both edges that keep product on the bed through a tight bend. Off, as a flex usually ships: a gentle bed carries without them, and a hard bend or a U-turn wants them on."
+    },
+    "standHeight": {
+      "type": "number",
+      "default": 0.8,
+      "min": 0.4,
+      "max": 1.6,
+      "step": 0.01,
+      "label": "Stand height (m)",
+      "desc": "Height of the roller tops above the floor. The legs under every hinge reach down to their casters."
+    },
+    "fpmUnits": {
+      "type": "boolean",
+      "default": true,
+      "whenAbsent": false,
+      "imperialUnits": true,
+      "label": "PLC speed in FPM",
+      "desc": "The unit the PLC commands this conveyor in. On: feet per minute. Off: metres per second. The speed tag is a REAL either way, so switching changes what its value means and never how the program declares it. Set by the scene Units (Scene Properties), which switch every conveyor together, so the Inspector does not show it. A conveyor saved before this switch existed is in metres per second."
+    },
+    "speedFpm": {
+      "type": "number",
+      "default": 197,
+      "min": -600,
+      "max": 600,
+      "step": 1,
+      "unit": "FPM",
+      "label": "Speed",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "Surface speed in feet per minute. Negative runs it backwards. A program can command this through the FPM speed tag below."
+    },
+    "speed": {
+      "type": "number",
+      "unit": "m/s",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "default": 1,
+      "min": -3,
+      "max": 3,
+      "step": 0.1,
+      "label": "Speed",
+      "desc": "Surface speed along the bed. Negative runs it back toward the infeed."
+    },
+    "speedTag": {
+      "type": "tag",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "dir": "in",
+      "stType": "REAL",
+      "setpointFor": "speed",
+      "default": "",
+      "label": "Speed tag (m/s)",
+      "group": "Comms",
+      "desc": "The program commands the bed speed here, replacing the Speed field above. Once bound it takes over even if no program drives it, and an undriven tag reads 0."
+    },
+    "speedFpmTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "REAL",
+      "setpointFor": "speedFpm",
+      "default": "",
+      "label": "Speed tag (FPM)",
+      "group": "Comms",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0."
+    },
+    "runTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Run tag (rollers run while true)",
+      "group": "Comms",
+      "desc": "Start/stop gate: while a program drives this tag false the bed stands still, and true it runs at its speed. Until a program actually drives it the bed runs, so a merely-typed tag does not stop it."
+    },
+    "accumulate": {
+      "type": "boolean",
+      "default": false,
+      "label": "Zone accumulation",
+      "group": "Accumulation",
+      "desc": "Zero-pressure accumulation: each section is a zone with its own photo-eye, and a zone holding a case stops while the zone ahead is full, so product queues with gaps and never pushes. Off, the whole bed runs as one. Sections must be longer than the product."
+    },
+    "releaseTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Release tag (discharge zone runs while true)",
+      "group": "Accumulation",
+      "desc": "With accumulation on: the discharge zone lets its case go only while a program drives this true, so the line takes product when it wants it. Unbound, or not driven by a program, the discharge zone always releases."
+    },
+    "meterGap": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 10,
+      "step": 0.1,
+      "label": "Release spacing (s)",
+      "group": "Accumulation",
+      "desc": "With accumulation on: the least time between two cases leaving the discharge end. A queue released all at once goes out a zone apart; this meters it wider, to the spacing the line downstream is set up for."
+    },
+    "fullTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Full tag (first zone eye covered)",
+      "group": "Accumulation",
+      "desc": "True while the first zone eye is covered: the last case has not cleared it, or the queue has backed up to it. Put the next case down (a case length and a gap behind that eye) only while this is false, and cases can never land on each other."
+    },
+    "showBeam": {
+      "type": "boolean",
+      "default": false,
+      "label": "Show beams",
+      "group": "Accumulation",
+      "desc": "Draw each zone photo-eye beam across the bed: green where the zone is clear, red from the eye to the case it sees."
+    }
+  },
+  "behavior": "// Flex Conveyor — an expandable powered roller conveyor: 16 sections on a scissor truss, hinged end to end.\n//\n// Its shape is a smooth path from the infeed (heading +X) through the control points in 'points', the sections\n// fitted along it with equal chords; every hinge is posed from that fit each tick, and ctx.setSurfaceSpeed runs each\n// section's deck along its own direction, so product follows every bend. flexStations below MIRRORS\n// core/flexPath.ts line for line (a part cannot import core); src/sim/flexConveyor.test.ts holds them together.\n//\n// It is built the way the real one is - the kind a dock reaches into a trailer with and people pull into whatever\n// shape the floor needs: a chain of SECTIONS, each a short roller bed on a scissor-frame truss with a caster leg under\n// its hinge, and every hinge free to angle on its own. The bed LENGTH is the fitted chord x the section count, a\n// hidden param the editor writes as the points are dragged (the `flexPath` handle): it is what sizes each section, so\n// it is the accordion, stretched or compressed. Each section's deck is its own conveying link riding its hinge.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` / `rig()` left out) and rig.json (the manifest, with the\n// rig compiled from rig()).\n\n// Part frame: the origin is the INFEED end of the conveying surface, on its centreline (y = 0 is the roller tops).\n\n// ---- from examples/parts/_shared/conveyorUnits.js ----\n/** metres per second in one foot per minute */\nconst FPM_MS = 0.00508\n\n/** `{ group }` to spread into a param, or nothing when there is no group */\nconst paramGroup = (group) => (group ? { group } : {})\n\n/** Spread into the part's own m/s `speed` and `speedTag` params: shown only while the PLC speaks metres per second. */\nconst METRIC_ONLY = { visibleWhen: { param: 'fpmUnits', is: false } }\n\n/** Params to stand BEFORE the part's own `speed`: the unit switch, and the speed in the other unit. */\nfunction speedUnitParams(speedMs) {\n  return {\n    fpmUnits: { type: 'boolean', default: true, whenAbsent: false, imperialUnits: true, label: 'PLC speed in FPM', desc: 'The unit the PLC commands this conveyor in. On: feet per minute. Off: metres per second. The speed tag is a REAL either way, so switching changes what its value means and never how the program declares it. Set by the scene Units (Scene Properties), which switch every conveyor together, so the Inspector does not show it. A conveyor saved before this switch existed is in metres per second.' },\n    speedFpm: { type: 'number', default: Math.round(speedMs / FPM_MS), min: -600, max: 600, step: 1, unit: 'FPM', label: 'Speed', visibleWhen: { param: 'fpmUnits', is: true }, desc: 'Surface speed in feet per minute. Negative runs it backwards. A program can command this through the FPM speed tag below.' },\n  }\n}\n\n/** The param to stand right AFTER the part's own `speedTag`: the same setpoint, in FPM. */\nfunction speedFpmTagParam(group) {\n  return {\n    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag (FPM)', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },\n  }\n}\n\n/** In step(): the Inspector readout of whichever speed field is in use. `v` is the effective m/s. */\nfunction reportSpeed(ctx, fpm, v) {\n  if (fpm) ctx.report('speedFpm', Math.round(v / FPM_MS)); else ctx.report('speed', v)\n}\n\nconst N = 16 //                 sections (hinges): a real unit has a fixed number of truss bays\nconst SAMPLES = 24\nconst ROLLERS = 8 //            rollers per section: FIXED, on the scissor pivots, so they bunch and spread with the bed\nconst ROLLER_R = 0.024 //       roller radius: the common 1.9\" (48 mm) flex roller\n// Fully COMPRESSED is where the rollers nearly touch: one diameter plus a working clearance between centres (~2.3\",\n// where real units close up). Every roller rides a pivot at an even spacing, so the bed can be no shorter than all\n// N x ROLLERS of those; any shorter and the rollers would stand inside each other.\nconst ROLLER_CLOSED = 2 * ROLLER_R + 0.01\nconst LEN_DEFAULT = 8\nconst LEN_MIN = Math.ceil(N * ROLLERS * ROLLER_CLOSED * 100) / 100 // 7.43 m, 0.46 m a section\nconst LEN_MAX = 24 //           fully extended, 1.5 m a section and ~7.4\" roller centres (real units open to 7-9\"), a\n//                               ~3:1 stretch like theirs: the long trailer-loading units run to ~80 ft\n// The scissor LINKS are one fixed length, as a real unit's are: as the rollers spread the X's flatten and the truss gets\n// shallower, and it is the links that stop the stretch (a scissor opens no further than flat). They are made as long\n// as leaves the truss TRUSS_MIN_DEPTH deep fully extended, so full stretch is the flattest the truss goes.\nconst TRUSS_MIN_DEPTH = 0.07\nconst SCISSOR_LINK = +Math.hypot(LEN_MAX / (N * ROLLERS), TRUSS_MIN_DEPTH).toFixed(4) // ~0.2 m\nconst WIDTH_DEFAULT = 0.6\nconst STAND_DEFAULT = 0.8\nconst POINTS_DEFAULT = [[3, 0], [6, 0], [LEN_DEFAULT, 0]]\nconst GUIDE_H = 0.06 //         side guides: how far they stand above the roller tops\nconst GUIDE_T = 0.04 //         ...and their thickness\nconst GUIDE_Z = 0.025 //        guide centre, out from the roller ends\nconst EYE_AT = 0.8 //           each zone's photo-eye, as a fraction of its section: a held case waits with its nose here\nconst EYE_Y = 0.025 //          beam height over the roller tops: LOW, as zone eyes are (15-25 mm), so a tote, a thin carton\n//                               or a bag is seen too - an eye at case-middle height lets anything shorter pass under it\nconst EYE_OUT = 0.018 //        the eye's lens, this far outside the roller ends: its housing is tucked in against the -z\n\n// ONE SIDE OF THE SCISSOR TRUSS: lazy tongs. Its top pivots are the roller axles, level at y = top and at x = xs[j] along\n// the side; every link is `link` long; and a bottom pivot hangs under every roller, joined to the rollers either side\n// of it, so it sits under their midpoint as deep as a link that long reaches. Rollers close together stand the X's up\n// (a deep truss), spread apart they flatten it (a shallow one), and on the inside of a bend, where the rollers close\n// up, the truss stands taller than on the outside: the links never stretch. xs runs from the roller before this\n// stretch to the one after it, so the result is a bottom pivot under each roller between.\nfunction scissorBottoms(xs, top, link) {\n  const out = []\n  for (let j = 1; j < xs.length - 1; j++) {\n    const half = (xs[j + 1] - xs[j - 1]) / 2\n    out.push([(xs[j + 1] + xs[j - 1]) / 2, top - Math.sqrt(Math.max(0, link * link - half * half))])\n  }\n  return out\n}\n\nfunction flexPolyline(points) {\n  const ctrl = [[0, 0]]\n  for (const p of points || []) if (Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1])) ctrl.push([p[0], p[1]])\n  if (ctrl.length < 2) ctrl.push([1, 0])\n  const d0 = Math.hypot(ctrl[1][0], ctrl[1][1]) || 1\n  const last = ctrl[ctrl.length - 1], prev = ctrl[ctrl.length - 2]\n  const ext = [[ctrl[1][0] - 2 * d0, ctrl[1][1]], ...ctrl, [2 * last[0] - prev[0], 2 * last[1] - prev[1]]]\n  const out = [[0, 0]]\n  for (let i = 1; i < ext.length - 2; i++) {\n    const p0 = ext[i - 1], p1 = ext[i], p2 = ext[i + 1], p3 = ext[i + 2]\n    for (let k = 1; k <= SAMPLES; k++) {\n      const t = k / SAMPLES, t2 = t * t, t3 = t2 * t\n      const c = (a, b, cc, d) => 0.5 * (2 * b + (-a + cc) * t + (2 * a - 5 * b + 4 * cc - d) * t2 + (-a + 3 * b - 3 * cc + d) * t3)\n      out.push([c(p0[0], p1[0], p2[0], p3[0]), c(p0[1], p1[1], p2[1], p3[1])])\n    }\n  }\n  return out\n}\n\nfunction stepChord(poly, from, seg, d) {\n  for (let i = seg; i < poly.length - 1; i++) {\n    const a = poly[i], b = poly[i + 1]\n    if (Math.hypot(b[0] - from[0], b[1] - from[1]) < d) continue\n    const dx = b[0] - a[0], dz = b[1] - a[1], fx = a[0] - from[0], fz = a[1] - from[1]\n    const A = dx * dx + dz * dz, B = 2 * (fx * dx + fz * dz), C = fx * fx + fz * fz - d * d\n    const disc = Math.max(0, B * B - 4 * A * C)\n    const t = A > 0 ? Math.min(1, Math.max(0, (-B + Math.sqrt(disc)) / (2 * A))) : 0\n    return { at: [a[0] + t * dx, a[1] + t * dz], seg: i }\n  }\n  return null\n}\n\nfunction flexStations(points, n) {\n  const poly = flexPolyline(points)\n  const end = poly[poly.length - 1]\n  let arc = 0\n  for (let i = 1; i < poly.length; i++) arc += Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1])\n  let lo = Math.hypot(end[0], end[1]) / n, hi = arc / n\n  let best = []\n  for (let iter = 0; iter < 48; iter++) {\n    const d = (lo + hi) / 2\n    const st = [[0, 0]]\n    let seg = 0\n    let ok = true\n    for (let k = 0; k < n; k++) {\n      const s = stepChord(poly, st[st.length - 1], seg, d)\n      if (!s) { ok = false; break }\n      st.push(s.at)\n      seg = s.seg\n    }\n    if (!ok) { hi = d; continue }\n    best = st\n    const lastSt = st[st.length - 1]\n    if (Math.hypot(end[0] - lastSt[0], end[1] - lastSt[1]) > 1e-9 && seg < poly.length - 1) lo = d\n    else hi = d\n  }\n  if (best.length !== n + 1) {\n    best = []\n    for (let k = 0; k <= n; k++) best.push([(end[0] * k) / n, (end[1] * k) / n])\n  }\n  const headings = []\n  for (let k = 0; k < n; k++) headings.push(Math.atan2(-(best[k + 1][1] - best[k][1]), best[k + 1][0] - best[k][0]))\n  return { stations: best, headings, pitch: Math.hypot(best[1][0] - best[0][0], best[1][1] - best[0][1]) }\n}\n\n// the fit only changes when the points do: cache it on their JSON\nlet fitKey = ''\nlet fit = null\n// accumulation state: the part's own clock, and when a case last left the discharge eye (for the release spacing)\nlet clock = 0\nlet lastExit = -1e9\nlet lastEye = false\n\ndefinePart({\n  joints: Array.from({ length: N }, (_, i) => 'h' + i),\n  params: {\n    points: { type: 'numberList', columns: ['x m', 'z m'], arity: 2, default: POINTS_DEFAULT, label: 'Path points', group: 'Shape', handle: { kind: 'flexPath', lengthParam: 'length', sections: N, maxHingeDeg: 40, infeedBrakeParam: 'infeedBrakes', dischargeBrakeParam: 'dischargeBrakes', scissor: { widthParam: 'width', rollers: ROLLERS } }, desc: 'The bed runs from its infeed (the part origin, heading +X) along a smooth curve through these points, part-local metres, the last one being the discharge end. Drag the dots in the viewport to pull it into shape: S-curves, a turn through a door, a loop. The length follows.' },\n    length: { type: 'number', default: LEN_DEFAULT, min: LEN_MIN, max: LEN_MAX, step: 0.01, hidden: true, label: 'Length (m)', group: 'Shape', desc: 'The bed length along its sections, written by the path drag: it sets how far each section is stretched.' },\n    infeedBrakes: { type: 'boolean', default: false, label: 'Infeed brakes', group: 'Shape', desc: 'The caster brakes under the infeed end are on. Walking, a braked end cannot be pulled, and pulling the other end further than the bed reaches stops there instead of rolling the unit after you. The editor places it wherever you drag it.' },\n    dischargeBrakes: { type: 'boolean', default: false, label: 'Discharge brakes', group: 'Shape', desc: 'The caster brakes under the discharge end are on. Walking, a braked end cannot be pulled, and pulling the other end further than the bed reaches stops there instead of rolling the unit after you. The editor places it wherever you drag it.' },\n    width: { type: 'number', default: WIDTH_DEFAULT, min: 0.3, max: 1.2, step: 0.05, label: 'Width (m)', group: 'Size', desc: 'Roller width between the scissor sides.' },\n    sideGuides: { type: 'boolean', default: false, label: 'Side guides', group: 'Size', desc: 'Low rails along both edges that keep product on the bed through a tight bend. Off, as a flex usually ships: a gentle bed carries without them, and a hard bend or a U-turn wants them on.' },\n    standHeight: { type: 'number', default: STAND_DEFAULT, min: 0.4, max: 1.6, step: 0.01, label: 'Stand height (m)', desc: 'Height of the roller tops above the floor. The legs under every hinge reach down to their casters.' },\n    ...speedUnitParams(1),\n    speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 1, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'Surface speed along the bed. Negative runs it back toward the infeed.' },\n    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands the bed speed here, replacing the Speed field above. Once bound it takes over even if no program drives it, and an undriven tag reads 0.' },\n    ...speedFpmTagParam('Comms'),\n    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Run tag (rollers run while true)', group: 'Comms', desc: 'Start/stop gate: while a program drives this tag false the bed stands still, and true it runs at its speed. Until a program actually drives it the bed runs, so a merely-typed tag does not stop it.' },\n    accumulate: { type: 'boolean', default: false, label: 'Zone accumulation', group: 'Accumulation', desc: 'Zero-pressure accumulation: each section is a zone with its own photo-eye, and a zone holding a case stops while the zone ahead is full, so product queues with gaps and never pushes. Off, the whole bed runs as one. Sections must be longer than the product.' },\n    releaseTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Release tag (discharge zone runs while true)', group: 'Accumulation', desc: 'With accumulation on: the discharge zone lets its case go only while a program drives this true, so the line takes product when it wants it. Unbound, or not driven by a program, the discharge zone always releases.' },\n    meterGap: { type: 'number', default: 0, min: 0, max: 10, step: 0.1, label: 'Release spacing (s)', group: 'Accumulation', desc: 'With accumulation on: the least time between two cases leaving the discharge end. A queue released all at once goes out a zone apart; this meters it wider, to the spacing the line downstream is set up for.' },\n    fullTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Full tag (first zone eye covered)', group: 'Accumulation', desc: 'True while the first zone eye is covered: the last case has not cleared it, or the queue has backed up to it. Put the next case down (a case length and a gap behind that eye) only while this is false, and cases can never land on each other.' },\n    showBeam: { type: 'boolean', default: false, label: 'Show beams', group: 'Accumulation', desc: 'Draw each zone photo-eye beam across the bed: green where the zone is clear, red from the eye to the case it sees.' },\n  },\n  // Everything drawn rides its SECTION (link 's<i>'), in that section's own frame: x from 0 (its infeed hinge) to the\n  // pitch (the next hinge). As on the real unit: a fixed set of rollers whose axles ride the scissor pivots, so their\n  // spacing IS the stretch; each side a zig-zag of flat galvanised links, an X between every pair of rollers; black\n  // H-stands on casters under every other hinge. The rollers are the top of the bed (no side channel stands proud of\n  // them) unless the side guides are on. Two draws a section: galvanised steel, and the black stands and tyres.\n  geometry(g, p) {\n    var num = function (v, d) { return typeof v === 'number' && isFinite(v) ? v : d }\n    var L = Math.max(num(p.length, LEN_DEFAULT), 0.5)\n    var W = num(p.width, WIDTH_DEFAULT)\n    var H = num(p.standHeight, STAND_DEFAULT)\n    var P = L / N\n    var hw = W / 2\n    var RR = ROLLER_R // roller radius: tops at y = 0\n    var K = ROLLERS\n    var S = P / K // roller spacing\n    var ZP = hw + 0.012 // the scissor plates' plane, just outside the roller ends\n    var TOP = -RR // the scissor's top pivots: the roller axles (its bottom pivots hang from them, scissorBottoms)\n    var LINK = SCISSOR_LINK // every scissor link, pivot to pivot\n    var ZL = hw + 0.06 // the stands' legs, outside the scissors\n    var box = function (list, x0, x1, y0, y1, z0, z1) {\n      list.push(g.bevelBox([Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0)], [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2], 0.003))\n    }\n    var bar = function (list, axis, center, rad, from, to, seg) {\n      list.push(g.lathe([[0, from], [rad, from], [rad, to], [0, to]], { axis: axis, center: center, segments: seg || 10 }))\n    }\n    // one flat scissor link, pivot to pivot in the side plane\n    var link = function (list, x0, y0, x1, y1, z) {\n      var len = Math.hypot(x1 - x0, y1 - y0), a = Math.atan2(y1 - y0, x1 - x0)\n      list.push(g.transform(g.box([len + 0.03, 0.03, 0.005], [0, 0, 0]), { rotate: [0, 0, Math.sin(a / 2), Math.cos(a / 2)], translate: [(x0 + x1) / 2, (y0 + y1) / 2, z] }))\n    }\n    // an H-stand: two telescoping legs outside the scissors, a cross tie, and a caster under each. Its top hangs from\n    // the truss's bottom pivots, one side each (bot[0] the -z side, bot[1] the +z), which rise as the bed opens and\n    // stand lower on the inside of a bend: the legs telescope to meet them, and the cross member between sits level\n    // at the lower of the two, so neither side floats above it\n    var stand = function (steel, dark, x, bot) {\n      for (var s = -1; s <= 1; s += 2) {\n        var b = bot[s < 0 ? 0 : 1]\n        box(dark, x - 0.022, x + 0.022, -H + 0.16, b + 0.01, s * ZL - 0.022, s * ZL + 0.022)\n        box(steel, x - 0.017, x + 0.017, -H + 0.45, b - 0.05, s * ZL - 0.017, s * ZL + 0.017) // the inner tube\n        box(steel, x - 0.05, x + 0.05, -H + 0.145, -H + 0.16, s * ZL - 0.05, s * ZL + 0.05) // the caster plate\n        box(steel, x - 0.012, x + 0.012, -H + 0.08, -H + 0.145, s * ZL - 0.03, s * ZL + 0.03) // the fork\n        bar(dark, 'z', [x, -H + 0.075, s * ZL], 0.075, -0.022, 0.022, 16) // the tyre\n      }\n      var low = Math.min(bot[0], bot[1])\n      box(dark, x - 0.015, x + 0.015, -H + 0.3, -H + 0.33, -ZL, ZL)\n      box(dark, x - 0.02, x + 0.02, low - 0.01, low + 0.02, -ZL, ZL) // the top cross member the scissors hang from\n    }\n    // THE ROLLERS FAN. On the real unit every roller rides its own scissor pivots, so a bend is spread over all of\n    // them, each a little askew of the next, the scissors closing on the inside of the curve and opening on the\n    // outside. Here the sections are rigid between hinges, so each section's rollers are turned by a share of the\n    // hinges at either end of it: from half the turn at its infeed hinge (back) to half the one at its discharge\n    // hinge (forward). Every gap then takes an even share of the bend, never a whole hinge's worth at one pair, which\n    // is what put two rollers inside each other. The pull keeps that share where the rollers cannot touch (the\n    // handle's scissor limit, core flexPull).\n    var turn = []\n    var fitHeadings = flexStations(p.points, N).headings\n    for (var h = 0; h <= N; h++) {\n      var d = h === N ? 0 : fitHeadings[h] - (h === 0 ? 0 : fitHeadings[h - 1])\n      while (d > Math.PI) d -= 2 * Math.PI\n      while (d < -Math.PI) d += 2 * Math.PI\n      turn.push(d)\n    }\n    // roller k of section i: its yaw off the section, and where its end on side z sits along the section\n    var fan = function (i, k) { var f = (k + 0.5) / K; return -turn[i] / 2 + (turn[i] / 2 + turn[i + 1] / 2) * f }\n    var endX = function (i, k, z) { return (k + 0.5) * S + z * Math.sin(fan(i, k)) }\n    // where roller k's end on side z sits along section i, for k one past either end of the section too: a neighbour\n    // section's roller, brought into this section's frame across the hinge between (the SDK yaw: (x, z) turned by t is\n    // (x cos t + z sin t, -x sin t + z cos t)); past either end of the bed, carried on at the spacing\n    var sideX = function (i, k, z) {\n      if (k >= 0 && k < K) return endX(i, k, z)\n      if (k >= K) {\n        if (i === N - 1) return 2 * sideX(i, k - 1, z) - sideX(i, k - 2, z)\n        var t = turn[i + 1], o1 = fan(i + 1, k - K), x1 = (k - K + 0.5) * S + z * Math.sin(o1), z1 = z * Math.cos(o1)\n        return P + x1 * Math.cos(t) + z1 * Math.sin(t)\n      }\n      if (i === 0) return 2 * sideX(i, k + 1, z) - sideX(i, k + 2, z)\n      var tb = turn[i], ob = fan(i - 1, K + k), xb = (K + k + 0.5) * S + z * Math.sin(ob) - P, zb = z * Math.cos(ob)\n      return xb * Math.cos(tb) - zb * Math.sin(tb)\n    }\n    // one side plane's truss for section i: its top pivots from the roller before the section to the one after the\n    // next section's first (k = -1 .. K + 1), and the bottom pivots under rollers 0 .. K (scissorBottoms)\n    var truss = function (i, z) {\n      var xs = []\n      for (var k = -1; k <= K + 1; k++) xs.push(sideX(i, k, z))\n      return { tops: xs.slice(1), bottoms: scissorBottoms(xs, TOP, LINK) }\n    }\n    var out = []\n    for (var i = 0; i < N; i++) {\n      var steel = [], dark = [], eyes = []\n      for (var k = 0; k < K; k++) {\n        var xr = (k + 0.5) * S\n        var o = fan(i, k)\n        steel.push(g.transform(g.lathe([[0, -hw], [RR, -hw], [RR, hw], [0, hw]], { axis: 'z', center: [0, -RR, 0], segments: 12 }), { rotate: [0, Math.sin(o / 2), 0, Math.cos(o / 2)], translate: [xr, 0, 0] }))\n      }\n      // THE SCISSORS, two plates a side. Each X joins a roller's axle to the bottom pivot under the next roller, and\n      // that bottom pivot up to the axle after it (lazy tongs, scissorBottoms): every link LINK long, so the truss\n      // deepens as the bed closes and flattens as it opens, and stands taller on the inside of a bend than the outside.\n      // The last X of the section reaches the next section's first roller.\n      var bots = [[0, 0], [0, 0]]\n      for (var sd = -1; sd <= 1; sd += 2) {\n        var z0 = sd * ZP, z1 = sd * (ZP + 0.006)\n        var a = truss(i, z0), b = truss(i, z1)\n        for (var j = 0; j < K; j++) {\n          link(steel, a.tops[j], TOP, a.bottoms[j + 1][0], a.bottoms[j + 1][1], z0)\n          link(steel, b.bottoms[j][0], b.bottoms[j][1], b.tops[j + 1], TOP, z1)\n        }\n        bots[sd < 0 ? 0 : 1] = [a.bottoms[0][1], a.bottoms[K][1]]\n      }\n      if (i % 2 === 0) stand(steel, dark, 0, [bots[0][0], bots[1][0]])\n      if (i === N - 1) stand(steel, dark, P, [bots[0][1], bots[1][1]])\n      if (i === 0) box(dark, 0.08, 0.3, -0.26, -0.1, -0.12, 0.12) // the drive, under the infeed section\n      // the zone's photo-eye, when the bed accumulates: a dark eye housing on the -z side on a small bracket, a\n      // reflector opposite, both at the beam's height and clear of the scissor plates\n      if (p.accumulate === true) {\n        // lens face at the beam origin; the housing reaches back over the scissor plates, clipped to them at roller level\n        var xe = EYE_AT * P, ye = EYE_Y, ze = hw + EYE_OUT\n        box(eyes, xe - 0.016, xe + 0.016, ye - 0.018, ye + 0.02, -ze - 0.026, -ze)\n        box(steel, xe - 0.007, xe + 0.007, -0.05, ye - 0.018, -ze - 0.02, -ze - 0.012)\n        box(eyes, xe - 0.018, xe + 0.018, ye - 0.016, ye + 0.018, ze, ze + 0.008)\n        box(steel, xe - 0.007, xe + 0.007, -0.05, ye - 0.016, ze + 0.002, ze + 0.008)\n      }\n      if (p.sideGuides === true) {\n        for (var gs = -1; gs <= 1; gs += 2) box(steel, 0, P, -0.02, GUIDE_H, gs * (hw + GUIDE_Z) - GUIDE_T / 2, gs * (hw + GUIDE_Z) + GUIDE_T / 2)\n      }\n      out.push({ desc: g.merge.apply(g, steel), material: 'steel', link: 's' + i })\n      out.push({ desc: g.merge.apply(g, dark), material: 'dark', link: 's' + i })\n      if (eyes.length) out.push({ desc: g.merge.apply(g, eyes), material: 'eye', link: 's' + i })\n    }\n    return out\n  },\n  step(ctx) {\n    const p = ctx.params\n    const key = JSON.stringify(p.points)\n    if (key !== fitKey || !fit) { fit = flexStations(p.points, N); fitKey = key }\n    // each hinge turns by the change of heading between its two sections; the first sets the bed off the infeed\n    let prev = 0\n    for (let i = 0; i < N; i++) {\n      let d = fit.headings[i] - prev\n      while (d > Math.PI) d -= 2 * Math.PI\n      while (d < -Math.PI) d += 2 * Math.PI\n      ctx.setJoint('h' + i, d)\n      prev = fit.headings[i]\n    }\n    const fpm = p.fpmUnits === true\n    const setpointTag = fpm ? p.speedFpmTag : p.speedTag\n    const setpointMs = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? p.speedFpm : p.speed) * (fpm ? FPM_MS : 1)\n    const setpoint = setpointMs\n    // the run gate belongs to the program only while it drives the tag (ctx.tagDriven), never to a typed name\n    const running = !ctx.tagDriven(p.runTag) || ctx.readTag(p.runTag)\n    const commanded = running ? setpoint : 0\n    ctx.report('speed', commanded) // the rollers turn on 'speed' (m/s) whichever unit the Inspector shows\n    reportSpeed(ctx, fpm, commanded)\n    clock += ctx.dt\n    // FULL = the first zone's eye is covered: the case put on last has not yet cleared the load spot's far edge, or the\n    // queue has backed up to it. A loader puts the next case down BEHIND that eye (a case length and a gap back), so\n    // one waiting on a clear eye can never land on the one before it.\n    const loadCovered = ctx.sense('e0').hit\n    if (p.fullTag) ctx.writeTag(p.fullTag, loadCovered)\n    if (!p.accumulate) {\n      ctx.setSurfaceSpeed(commanded)\n      return\n    }\n    // ZERO-PRESSURE ACCUMULATION, zone i = section i. A zone is FULL when its eye sees a case and it is stopped; a zone\n    // runs unless it holds a case (its eye) and the zone ahead is full. The discharge zone is full while it holds a\n    // case it has not been told to release, so a queue backs up from the discharge end, one case a zone, never touching.\n    const eye = []\n    for (let i = 0; i < N; i++) eye.push(ctx.sense('e' + i).hit)\n    const released = !ctx.tagDriven(p.releaseTag) || ctx.readTag(p.releaseTag)\n    // the release is metered: a case that has just left the discharge eye holds the next one for meterGap seconds\n    if (lastEye && !eye[N - 1]) lastExit = clock\n    lastEye = eye[N - 1]\n    const metered = clock - lastExit >= (p.meterGap || 0)\n    const run = new Array(N)\n    run[N - 1] = !eye[N - 1] || (released && metered)\n    for (let i = N - 2; i >= 0; i--) run[i] = !(eye[i] && eye[i + 1] && !run[i + 1])\n    ctx.setSurfaceSpeed(run.map((r) => (r ? commanded : 0)))\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "s0",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "d0",
+        "parent": "s0",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g0L",
+        "parent": "s0",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g0R",
+        "parent": "s0",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e0",
+        "parent": "s0",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s1",
+        "parent": "s0",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d1",
+        "parent": "s1",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g1L",
+        "parent": "s1",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g1R",
+        "parent": "s1",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e1",
+        "parent": "s1",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s2",
+        "parent": "s1",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d2",
+        "parent": "s2",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g2L",
+        "parent": "s2",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g2R",
+        "parent": "s2",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e2",
+        "parent": "s2",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s3",
+        "parent": "s2",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d3",
+        "parent": "s3",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g3L",
+        "parent": "s3",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g3R",
+        "parent": "s3",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e3",
+        "parent": "s3",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s4",
+        "parent": "s3",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d4",
+        "parent": "s4",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g4L",
+        "parent": "s4",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g4R",
+        "parent": "s4",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e4",
+        "parent": "s4",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s5",
+        "parent": "s4",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d5",
+        "parent": "s5",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g5L",
+        "parent": "s5",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g5R",
+        "parent": "s5",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e5",
+        "parent": "s5",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s6",
+        "parent": "s5",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d6",
+        "parent": "s6",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g6L",
+        "parent": "s6",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g6R",
+        "parent": "s6",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e6",
+        "parent": "s6",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s7",
+        "parent": "s6",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d7",
+        "parent": "s7",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g7L",
+        "parent": "s7",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g7R",
+        "parent": "s7",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e7",
+        "parent": "s7",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s8",
+        "parent": "s7",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d8",
+        "parent": "s8",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g8L",
+        "parent": "s8",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g8R",
+        "parent": "s8",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e8",
+        "parent": "s8",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s9",
+        "parent": "s8",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d9",
+        "parent": "s9",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g9L",
+        "parent": "s9",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g9R",
+        "parent": "s9",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e9",
+        "parent": "s9",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s10",
+        "parent": "s9",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d10",
+        "parent": "s10",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g10L",
+        "parent": "s10",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g10R",
+        "parent": "s10",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e10",
+        "parent": "s10",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s11",
+        "parent": "s10",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d11",
+        "parent": "s11",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g11L",
+        "parent": "s11",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g11R",
+        "parent": "s11",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e11",
+        "parent": "s11",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s12",
+        "parent": "s11",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d12",
+        "parent": "s12",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g12L",
+        "parent": "s12",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g12R",
+        "parent": "s12",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e12",
+        "parent": "s12",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s13",
+        "parent": "s12",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d13",
+        "parent": "s13",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g13L",
+        "parent": "s13",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g13R",
+        "parent": "s13",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e13",
+        "parent": "s13",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s14",
+        "parent": "s13",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d14",
+        "parent": "s14",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g14L",
+        "parent": "s14",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g14R",
+        "parent": "s14",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e14",
+        "parent": "s14",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      },
+      {
+        "name": "s15",
+        "parent": "s14",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.5,
+          0,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.0625
+          }
+        ]
+      },
+      {
+        "name": "d15",
+        "parent": "s15",
+        "hidden": true,
+        "conveys": true,
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.05,
+            0.6
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            },
+            {
+              "axis": 2,
+              "param": "width",
+              "scale": 1
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          -0.025,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          }
+        ]
+      },
+      {
+        "name": "g15L",
+        "parent": "s15",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          -0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.025
+          }
+        ]
+      },
+      {
+        "name": "g15R",
+        "parent": "s15",
+        "hidden": true,
+        "showParam": "sideGuides",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.62,
+            0.06,
+            0.04
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "length",
+              "scale": 0.0625,
+              "add": 0.12
+            }
+          ]
+        },
+        "offset": [
+          0.25,
+          0.03,
+          0.325
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.03125
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": 0.5,
+            "add": 0.025
+          }
+        ]
+      },
+      {
+        "name": "e15",
+        "parent": "s15",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0.4,
+          0.025,
+          -0.318
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "length",
+            "scale": 0.05
+          },
+          {
+            "axis": 2,
+            "param": "width",
+            "scale": -0.5,
+            "add": -0.018
+          }
+        ],
+        "beam": {
+          "range": 0.6,
+          "rangeParam": "width",
+          "showParam": "showBeam"
+        }
+      }
+    ],
+    "joints": [
+      {
+        "name": "h0",
+        "link": "s0",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h1",
+        "link": "s1",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h2",
+        "link": "s2",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h3",
+        "link": "s3",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h4",
+        "link": "s4",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h5",
+        "link": "s5",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h6",
+        "link": "s6",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h7",
+        "link": "s7",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h8",
+        "link": "s8",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h9",
+        "link": "s9",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h10",
+        "link": "s10",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h11",
+        "link": "s11",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h12",
+        "link": "s12",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h13",
+        "link": "s13",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h14",
+        "link": "s14",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      },
+      {
+        "name": "h15",
+        "link": "s15",
+        "type": "revolute",
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "min": -1.2,
+        "max": 1.2,
+        "cosmetic": true
+      }
+    ],
+    "bounds": {
+      "length": 8.15,
+      "width": 0.82,
+      "top": 0.12,
+      "bottom": -0.8,
+      "params": [
+        {
+          "field": "length",
+          "param": "length",
+          "add": 0.15
+        },
+        {
+          "field": "width",
+          "param": "width",
+          "add": 0.22
+        },
+        {
+          "field": "bottom",
+          "param": "standHeight",
+          "scale": -1
+        }
+      ]
+    }
+  },
+  "category": "Equipment",
+  "materials": [
+    {
+      "id": "steel",
+      "color": [
+        0.552,
+        0.5841,
+        0.624
+      ],
+      "metalness": 0.7,
+      "roughness": 0.32
+    },
+    {
+      "id": "dark",
+      "color": [
+        0.011,
+        0.0123,
+        0.0144
+      ],
+      "metalness": 0.1,
+      "roughness": 0.7
+    },
+    {
+      "id": "eye",
+      "color": [
+        0.8879,
+        0.4735,
+        0.0015
+      ],
+      "metalness": 0.1,
+      "roughness": 0.5
+    }
+  ],
+  "conveyor": {
+    "surface": "roller",
+    "speedParam": "speed"
+  },
+  "sdk": {
+    "level": 6,
+    "of": "v2:50321:1yf0h9qmd5u"
+  }
+}

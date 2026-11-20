@@ -15,7 +15,7 @@
     "dist": "npm run licenses && electron-builder"
   },
   "devDependencies": {
-    "electron": "^42.5.0",
+    "electron": "^45.2.3",
     "electron-builder": "^26.15.3"
   },
   "dependencies": {

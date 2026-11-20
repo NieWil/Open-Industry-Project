@@ -2,7 +2,7 @@
 // `guardOpenings` param means the same thing on both conveyor families (rows measured from the tail).
 // Three things must hold:
 //   1. render - an authored row splits the rig guard link into the kept spans (1 box → 2), and a full-length
-//      row clears that wall entirely. The sim reads the same resolved openings (core/sceneResolve.ts runs
+//      row clears that wall entirely. The sim reads the same resolved openings (core/scene/sceneResolve.ts runs
 //      computeSceneOpenings for both consumers), so the collider follows by construction.
 //   2. frame - the rows are tail-relative on a centre-origin bed: a row at [0, 1] must cut the upstream end,
 //      not the middle. A wrong shift would get this backwards without any error.
@@ -37,7 +37,7 @@ async function until(page, probe, want, what) {
 }
 
 // live guard boxes per wall: the rig guard-split pool keeps one child per kept span, and collapses the
-// last survivor to zero scale when a wall is fully open (render/parts/sdk/rig.ts guardSplitLinks).
+// last survivor to zero scale when a wall is fully open (render/parts/sdk/rigLayout.ts layoutGuardSplit).
 const probeGuards = (page) =>
   page.evaluate(() => {
     if (!window.__oip?.view) return null // the page reloaded under us (see RELOADED below)

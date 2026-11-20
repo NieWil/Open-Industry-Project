@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { evalPartGeometry } from '../core/geometryEval'
-import { partSandboxActive } from '../core/partSandbox'
-import { instantiatePartScript, resolvePartParams } from '../core/partScript'
+import { evalPartGeometry } from '../core/geometry/geometryEval'
+import { partSandboxActive } from '../core/parts/partSandbox'
+import { instantiatePartScript, resolvePartParams } from '../core/parts/partScript'
 import { buildPackage } from '../sim/buildPackage'
-import { bundledBehaviors, bundledPartById } from './bundledExamples'
+import { bundledBehaviors, bundledPartById } from './parts/bundledExamples'
 
 // The part sandbox (docs/part-sandbox.md): this project runs locked down (core/lockdown.testSetup.ts), as the page and
 // the sim worker do, so every script below compiles inside an SES Compartment through the one seam all hosts use.

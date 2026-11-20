@@ -1,0 +1,139 @@
+From c664be41caca244fb7182e7ca1f543e9b6c7b5b9 Mon Sep 17 00:00:00 2001
+From: ryevdokimov <105675984+ryevdokimov@users.noreply.github.com>
+Date: Sun, 16 Aug 2026 23:47:11 -0400
+Subject: [PATCH 2/4] ConveyorContactListener: gate conveying on a declared
+ running-surface normal
+
+Surface velocity is a property of the surface cargo rides, not of the whole
+solid, but the listener applied it to every contact a registered body made. A
+box that rammed a deck's FLANK was therefore dragged along the flow instead of
+walled - and the four ghost thresholds could only DISABLE a contact, never keep
+its collision while dropping its conveying, so the consuming app had to work
+around it in geometry: every conveying deck became a thin inset slab over a
+proud plain-collision housing, at two bodies per deck.
+
+Each facet slot now carries its running-surface normal (stride 8 -> 12), and a
+contact is conveyed only where its outward normal is within SetSurfaceGateCos()
+of it. A rejected contact still RESOLVES - it simply carries no surface velocity
+and no friction coupling - which is the "keep collision, drop conveying" case
+the ghost gates could not express.
+
+The normal is BODY-LOCAL and rotated by the body's orientation at contact time,
+so a deck carried on a moving rig link (a chain transfer's lift, a slewing
+turntable) stays correct without the app rewriting the table as it moves. A zero
+normal means undeclared and is never gated, and the gate defaults to -1 (accept
+everything), so a caller that does neither is bit-identical to before.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ JoltJS.h   | 48 +++++++++++++++++++++++++++++++++++++++++++++---
+ JoltJS.idl |  1 +
+ 2 files changed, 46 insertions(+), 3 deletions(-)
+
+diff --git a/JoltJS.h b/JoltJS.h
+index 267200c..6d7d2cb 100644
+--- a/JoltJS.h
++++ b/JoltJS.h
+@@ -885,11 +885,21 @@ public:
+ /// pthread job threads, whose isolated JS realms don't hold the listener object).
+ ///
+ /// Contract with JS:
+-/// - The listener owns a fixed-capacity facet table (8 doubles per slot:
+-///   [kind (0 unused / 1 linear / 2 arc), vx, vy, vz, omega, cx, cz, reserved]).
++/// - The listener owns a fixed-capacity facet table (12 doubles per slot:
++///   [kind (0 unused / 1 linear / 2 arc), vx, vy, vz, omega, cx, cz, nx, ny, nz, reserved]).
+ ///   JS allocates slots itself and writes velocities through a Float64Array view over
+ ///   GetFacetTablePtr(); writes must happen outside PhysicsSystem::Update (the app writes
+ ///   between steps on its physics thread). The listener only reads.
++/// - (nx, ny, nz) is the facet's RUNNING-SURFACE normal in BODY-LOCAL space, and gates which
++///   contacts are conveyed: surface velocity is a property of the surface cargo rides, not of
++///   the whole solid, so a box that rams a deck's FLANK must be walled rather than dragged
++///   along the flow. A contact whose outward normal is further from the declared surface
++///   normal than SetSurfaceGateCos() allows still RESOLVES - it simply contributes no surface
++///   velocity and no friction coupling. Body-local (rotated by the body's orientation here)
++///   so a deck carried on a moving rig link - a chain transfer's lift, a slewing turntable -
++///   keeps a valid normal without JS re-writing the table as it moves.
++///   A zero normal means undeclared and is never gated, so a table written by an older caller
++///   behaves exactly as it did before this field existed.
+ /// - A conveyor body advertises its facets in its (32-bit) user data:
+ ///   bit 31 = conveyor tag, bits 12..30 = base slot, bits 0..11 = entry count.
+ ///   count == 0 participates in ghost filtering only (e.g. conveying rigs' frame rails).
+@@ -932,6 +942,14 @@ public:
+ 		mFrictionCoupling = inCoupling;
+ 	}
+ 
++	/// Minimum cos(angle) between a contact's outward normal and the facet's declared
++	/// running-surface normal for that facet to convey the contact. -1 accepts everything,
++	/// which is the default and reproduces the behavior of a table without normals.
++	void					SetSurfaceGateCos(float inCos)
++	{
++		mSurfaceGateCos = inCos;
++	}
++
+ 	virtual void			OnContactAdded(const Body &inBody1, const Body &inBody2, const ContactManifold &inManifold, ContactSettings &ioSettings) override
+ 	{
+ 		HandleContact(inBody1, inBody2, inManifold, ioSettings);
+@@ -943,9 +961,21 @@ public:
+ 	}
+ 
+ private:
+-	static constexpr size_t	cStride = 8;
++	static constexpr size_t	cStride = 12;
+ 	static constexpr uint64	cConveyorTag = 0x80000000ull;
+ 
++	/// Does a contact land on the running surface this facet declares? `inOutward` is the
++	/// contact normal pointing out of the conveyor body, already signed for it.
++	inline bool				OnRunningSurface(const Body &inBody, const double *inFacet, Vec3Arg inOutward) const
++	{
++		double nx = inFacet[7], ny = inFacet[8], nz = inFacet[9];
++		if (nx == 0.0 && ny == 0.0 && nz == 0.0)
++			return true; // facet declares no running surface: ungated, as before this field existed
++		// declared body-local, so a deck riding a moving rig link stays correct without JS rewrites
++		Vec3 surface = inBody.GetRotation() * Vec3((float)nx, (float)ny, (float)nz);
++		return surface.Dot(inOutward) >= mSurfaceGateCos;
++	}
++
+ 	inline const double *	ResolveFacet(const Body &inBody, uint64 inUserData, const SubShapeID &inSubShapeID) const
+ 	{
+ 		uint32 count = (uint32)(inUserData & 0xfffull);
+@@ -990,6 +1020,17 @@ private:
+ 		if (e1 == nullptr && e2 == nullptr)
+ 			return;
+ 
++		// Drop the facets this contact does not reach across their running surface. Unlike the
++		// ghost gates above this does NOT disable the contact: a flank stays solid, it just
++		// stops conveying. If that leaves nothing driven, the contact resolves as plain
++		// collision (and, like an undriven registered body, without friction coupling).
++		if (e1 != nullptr && !OnRunningSurface(inBody1, e1, inManifold.mWorldSpaceNormal))
++			e1 = nullptr;
++		if (e2 != nullptr && !OnRunningSurface(inBody2, e2, -inManifold.mWorldSpaceNormal))
++			e2 = nullptr;
++		if (e1 == nullptr && e2 == nullptr)
++			return;
++
+ 		double vx = 0.0, vy = 0.0, vz = 0.0, wy = 0.0, c1x = 0.0, c1z = 0.0;
+ 		if ((e1 != nullptr && e1[0] == 2.0) || (e2 != nullptr && e2[0] == 2.0))
+ 		{
+@@ -1032,6 +1073,7 @@ private:
+ 	float					mGhostRamDepth;
+ 	float					mGhostRamUpDot;
+ 	float					mFrictionCoupling = 0.0f;
++	float					mSurfaceGateCos = -1.0f;
+ };
+ 
+ /// Batched body-state snapshot (OIP fork addition): one WASM call fills a flat float buffer with
+diff --git a/JoltJS.idl b/JoltJS.idl
+index 72b1a2a..a843613 100644
+--- a/JoltJS.idl
++++ b/JoltJS.idl
+@@ -2218,6 +2218,7 @@ interface ConveyorContactListener {
+ 	unsigned long GetFacetCapacity();
+ 	unsigned long GetFacetTablePtr();
+ 	void SetFrictionCoupling(float inCoupling);
++	void SetSurfaceGateCos(float inCos);
+ };
+ 
+ ConveyorContactListener implements ContactListener;
+-- 
+2.53.0.windows.2
+

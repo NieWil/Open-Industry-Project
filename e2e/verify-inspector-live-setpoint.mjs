@@ -1,7 +1,7 @@
 // Verify the Inspector shows the live PLC-commanded conveyor speed, not the authored `speed` param.
 //
 // The bug: a conveyor's `speedTag` replaces its `speed` param in the behavior
-// (`comms && tag ? readNumber(tag) : params.speed`), so while a program commanded 0.5 m/s the Inspector
+// (`tag ? readNumber(tag) : params.speed`), so while a program commanded 0.5 m/s the Inspector
 // went on reading 1, a number nothing in the running scene obeyed. The fix is the schema link
 // `setpointFor: 'speed'` on the tag param + the host swapping the live value into that field.
 //
@@ -13,7 +13,7 @@
 //   3. A program drives the setpoint to 0.5: the field reads 0.5 and is read-only.
 //   4. Re-commanded to 2.5: the field tracks it live, with no reselect.
 //   5. Commanded to 0.25 then detached: the authored 1 comes back, editable and unbadged.
-//   6. A conveyor with comms off is never taken over, even with the same tag typed in.
+//   6. A conveyor with an empty speed tag is not connected, so the program never takes it over.
 // Run: node e2e/verify-inspector-live-setpoint.mjs [--headed]
 /* global process, console, window, localStorage, document */
 import { startServer } from './_server.mjs'
@@ -80,7 +80,7 @@ async function main() {
     await waitForApp()
     await page.waitForTimeout(800)
 
-    // Two roller conveyors on the same tag: one with comms on (PLC-commanded), one with comms off (hand).
+    // Two roller conveyors: one wired to tag 'Rate' (PLC-commanded), one with its speed tag empty (hand).
     // Authored speed 1 on both - the value a readout of the param alone shows no matter what the program commands.
     const havePkg = await page.evaluate(() => {
       const st = window.__oip.store
@@ -89,9 +89,9 @@ async function main() {
       if (!pkg) return false
       const parts = [
         { id: 'conv_auto', type: 'part', packageId: 'oip.roller-conveyor', position: [0, 0, 0], rotationY: 0,
-          params: { length: 4, speed: 1, standHeight: 1, enableComms: true, speedTag: 'Rate' } },
+          params: { length: 4, speed: 1, standHeight: 1, speedTag: 'Rate' } },
         { id: 'conv_hand', type: 'part', packageId: 'oip.roller-conveyor', position: [0, 0, 3], rotationY: 0,
-          params: { length: 4, speed: 1, standHeight: 1, enableComms: false, speedTag: 'Rate' } },
+          params: { length: 4, speed: 1, standHeight: 1, speedTag: '' } },
       ]
       st.loadScene({ ...scene, parts, packages: [...(scene.packages ?? []).filter((p) => p.id !== pkg.id), pkg] })
       return true
@@ -128,10 +128,10 @@ async function main() {
     check('tooltip names the driving tag and keeps the authored value visible',
       /Rate/.test(row?.tooltip ?? '') && /Authored: 1/.test(row?.tooltip ?? ''), JSON.stringify(row?.tooltip))
 
-    // the comms-off twin on the same tag is untouched: it really is running on its authored speed
+    // the unwired twin is untouched: it really is running on its authored speed
     await page.evaluate(() => window.__oip.store.select('conv_hand'))
     const handRow = await awaitSpeed('1.0')
-    check('comms-OFF conveyor on the same tag keeps its authored 1.0, editable',
+    check('a conveyor with an empty speed tag keeps its authored 1.0, editable',
       handRow?.text === '1.0' && handRow.disabled === false && handRow.plc === false, JSON.stringify(handRow))
     await page.evaluate(() => window.__oip.store.select('conv_auto'))
     await page.waitForTimeout(600)
@@ -188,7 +188,7 @@ async function main() {
       st.loadScene({
         ...scene,
         parts: [{ id: 'blade', type: 'part', packageId: 'oip.blade-stop', position: [0, 0.9, 0], rotationY: 0,
-          params: { width: 0.5, active: false, enableComms: true, tag: 'Raise' } }],
+          params: { width: 0.5, active: false, tag: 'Raise' } }],
         packages: [...(scene.packages ?? []).filter((p) => p.id !== pkg.id), pkg],
       })
       return true

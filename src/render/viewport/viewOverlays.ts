@@ -18,7 +18,7 @@ import {
 } from 'three'
 import { Group } from 'three'
 import type { Material } from 'three'
-import { formatLength, formatSpeed } from '../../core/units'
+import { formatLength, formatSpeed, METRIC_DISPLAY } from '../../core/units'
 import type { DisplayUnits } from '../../core/units'
 import { worldPerPixel } from './editorCamera'
 import type { Flash } from './viewTypes'
@@ -61,7 +61,7 @@ export class ViewOverlayState {
   rulerEnds: { a: Vector3; b: Vector3 } | null = null
   rulerShift = false
   // the scene's Units, for the measure tool's read-out (setDisplayUnits)
-  displayUnits: DisplayUnits = 'metric'
+  displayUnits: DisplayUnits = METRIC_DISPLAY
   // freelook's fly speed, shown for a moment after the wheel changes it (showFlySpeed)
   flySpeedTimer = 0
   // built by build(): the DOM labels, then the ruler meshes

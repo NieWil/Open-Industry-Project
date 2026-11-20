@@ -54,7 +54,7 @@ async function main() {
     // Load two separated boxes, select A, and return the screen coords of one corner
     // of each (A's source + B's target) plus the pre-drag world corner sets.
     const setup = await page.evaluate(async () => {
-      const cg = await import('/src/core/collisionGeometry.ts')
+      const cg = await import('/src/core/geometry/collisionGeometry.ts')
       const { store, view } = window.__oip
 
       // column-major mat4 (THREE .elements) applied to a point (w=1)
@@ -147,7 +147,7 @@ async function main() {
 
     // Read back the committed scene and re-derive A's world corners.
     const after = await page.evaluate(async () => {
-      const cg = await import('/src/core/collisionGeometry.ts')
+      const cg = await import('/src/core/geometry/collisionGeometry.ts')
       const { store, view } = window.__oip
       const applyMat4 = (e, x, y, z) => ({
         x: e[0] * x + e[4] * y + e[8] * z + e[12],
@@ -190,7 +190,7 @@ async function main() {
 
     // --- Scenario 2: Origin mode (click a vertex; the selection's origin jumps onto it) ---
     const origin = await page.evaluate(async () => {
-      const cg = await import('/src/core/collisionGeometry.ts')
+      const cg = await import('/src/core/geometry/collisionGeometry.ts')
       const { store, view } = window.__oip
       const applyMat4 = (e, x, y, z) => ({
         x: e[0] * x + e[4] * y + e[8] * z + e[12],

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { effectivelyHiddenSet } from '../../core/hierarchy'
+import { effectivelyHiddenSet } from '../../core/scene/hierarchy'
 import { annotationGlyph } from '../../core/types'
 import type { AnnotationPart, PartInstance } from '../../core/types'
 import type { IRenderView } from '../../render/api'
@@ -9,8 +9,8 @@ import { chipViews, chipsKey, readoutText } from '../annotationChips'
 import type { ChipProjection, ChipView } from '../annotationChips'
 import type { EditorController } from '../controller'
 import { focusViewScene } from '../controller/viewScene'
-import { editTarget, editTargetFocusId } from '../store'
-import type { EditorState, EditorStore } from '../store'
+import { editTarget, editTargetFocusId } from '../store/store'
+import type { EditorState, EditorStore } from '../store/store'
 
 /**
  * Scene annotations, drawn as screen-space chips over the viewport - the icon + caption a person pins to a
@@ -75,9 +75,11 @@ export function AnnotationOverlay({ store, view, controller, show }: AnnotationO
   const [revealed, setRevealed] = useState(false)
   useEffect(() => {
     let alive = true
-    void whenCoverHidden().then(() => {
-      if (alive) setRevealed(true)
-    })
+    void whenCoverHidden()
+      .then(() => {
+        if (alive) setRevealed(true)
+      })
+      .catch((e: unknown) => console.warn('[oip] annotation reveal failed', e))
     return () => {
       alive = false
     }
@@ -174,7 +176,8 @@ export function AnnotationOverlay({ store, view, controller, show }: AnnotationO
               view.pointerDownThrough(e.nativeEvent)
             }
           }}
-          onClick={() => store.select(chip.id)}
+          // a display link (locked Present) shows notes but does not select them
+          onClick={() => !store.getState().presentLocked && store.select(chip.id)}
         >
           {chip.glyph && <span className="note-chip-icon">{chip.glyph}</span>}
           <span className="note-chip-text">{chip.text}</span>

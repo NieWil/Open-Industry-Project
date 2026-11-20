@@ -29,13 +29,12 @@ interface DockSlotProps {
   active: DockPanelId | null
   onActivate: (panel: DockPanelId) => void
   /**
-   * Left-click on a tab, when it should do more than activate - the bottom dock passes
-   * its collapse toggle here. Defaults to `onActivate`, which is what the
-   * side docks want. Kept apart from `onActivate` so the right-click path (which
-   * activates before opening the move menu) can't collapse the dock under the menu.
+   * Left-click on a tab, when it should do more than activate - every dock passes its
+   * fold toggle here. Defaults to `onActivate`. Kept apart from `onActivate` so the right-click
+   * path (which activates before opening the move menu) can't collapse the dock under the menu.
    */
   onTabClick?: (panel: DockPanelId) => void
-  /** the slot is rolled up: render the tab strip only (bottom dock; see dockLayout) */
+  /** the slot is folded: render the tab strip only (a rolled-up bottom dock or a side rail; see dockLayout) */
   collapsed?: boolean
   /** blow the front panel up to fill the shell below the toolbar (omit to hide the ⛶) */
   onMaximize?: (panel: DockPanelId) => void
@@ -164,7 +163,7 @@ export function DockSlot({
   if (!front) return null
 
   const targets = SLOT_ORDER.filter((s) => s !== slot)
-  // a slot given its own click handler is one that toggles (the bottom dock)
+  // a slot given its own click handler is one that toggles
   const collapsible = onTabClick !== undefined
   const clickTab = onTabClick ?? onActivate
 

@@ -33,7 +33,7 @@ function speedUnitParams(speedMs) {
 /** The param to stand right AFTER the part's own `speedTag`: the same setpoint, in FPM. */
 function speedFpmTagParam(group) {
   return {
-    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag (FPM)', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },
+    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },
   }
 }
 
@@ -62,7 +62,7 @@ function driveFeedbackParams(speedMs, group) {
     velocityTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Velocity tag (30 at the speed above)', ...g, desc: 'Drive feedback the program reads: the effective speed as a share of the speed at 30 revolutions, times 30. Stopped reads 0, and a run tag holding the conveyor still counts as stopped.' },
     inchesPerPulse: { type: 'number', default: 1, min: 0.05, max: 100, step: 0.05, label: 'Travel per pulse (in)', ...g, desc: 'How far the surface travels between pulses on the pulse tag. A pulse cannot be finer than one simulation step, so a fast conveyor at a fine pitch needs a higher project simHz.' },
     pulseTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Pulse tag (one per pitch)', ...g, desc: 'An encoder for the program to count: TRUE for one simulation step each time the surface has travelled the inches above, in either direction, and FALSE otherwise.' },
-    encoderTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Encoder tag (travel, m)', ...g, desc: 'Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station.' },
+    encoderTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Encoder tag (travel)', unit: 'm', ...g, desc: 'Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station.' },
   }
 }
 
@@ -76,14 +76,14 @@ function conveyorDrive() {
   }
 }
 
-/** In step(): the unit the conveyor is set up in and the commanded speed, `{ comms, fpm, setpointTag, commanded }`.
+/** In step(): the unit the conveyor is set up in and the commanded speed, `{ fpm, setpointTag, commanded }`.
  *  `commanded` is always m/s, so everything after this call is m/s. */
-function commandedSpeed(ctx, comms) {
+function commandedSpeed(ctx) {
   const fpm = ctx.params.fpmUnits === true
   const setpointTag = fpm ? ctx.params.speedFpmTag : ctx.params.speedTag
   const unit = fpm ? FPM_MS : 1
-  const commanded = (comms && setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * unit
-  return { comms, fpm, setpointTag, commanded }
+  const commanded = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * unit
+  return { fpm, setpointTag, commanded }
 }
 
 /** In step(), after commandedSpeed(): the speed the surface actually runs at (m/s), `target` (the command, gates
@@ -98,7 +98,7 @@ function rampedSpeed(ctx, drive, cmd, target) {
   if (!drive.rampStarted) {
     drive.rampStarted = true
     // no program commands this conveyor: its authored speed is a belt that is running, not one being started
-    if (!(cmd.comms && (cmd.setpointTag || (ctx.params.runTag && ctx.tagDriven(ctx.params.runTag))))) drive.driven = want
+    if (!(cmd.setpointTag || (ctx.params.runTag && ctx.tagDriven(ctx.params.runTag)))) drive.driven = want
   }
   if (want * drive.driven < 0) { if (ctx.params.decelTime > 0) want = 0; else drive.driven = 0 } // reversing: stop first
   const rampTime = Math.abs(want) > Math.abs(drive.driven) ? ctx.params.accelTime : ctx.params.decelTime
@@ -108,18 +108,62 @@ function rampedSpeed(ctx, drive, cmd, target) {
 
 /** In step(): the velocity feedback, the pulse and the encoder, from the effective speed `v` (m/s). */
 function publishDrive(ctx, drive, cmd, v) {
-  const comms = cmd.comms
   // the velocity as a share of the speed at 30
   const at30 = cmd.fpm ? ctx.params.speedAt30Fpm * FPM_MS : ctx.params.speedAt30
-  if (comms && ctx.params.velocityTag) ctx.writeNumber(ctx.params.velocityTag, at30 > 0 ? (v / at30) * 30 : 0)
+  if (ctx.params.velocityTag) ctx.writeNumber(ctx.params.velocityTag, at30 > 0 ? (v / at30) * 30 : 0)
   // the encoder pulse
   const pitch = ctx.params.inchesPerPulse > 0 ? ctx.params.inchesPerPulse : 1
   drive.pulseTravel += (Math.abs(v) * ctx.dt) / 0.0254
   const pulse = drive.pulseTravel >= pitch - 1e-9 // (a hair of tolerance: twelve twelfths of an inch do not sum to exactly one)
   if (pulse) drive.pulseTravel = Math.max(0, drive.pulseTravel - pitch * Math.max(1, Math.floor(drive.pulseTravel / pitch + 1e-9)))
-  if (comms && ctx.params.pulseTag) ctx.writeTag(ctx.params.pulseTag, pulse)
+  if (ctx.params.pulseTag) ctx.writeTag(ctx.params.pulseTag, pulse)
   drive.odo += v * ctx.dt
-  if (comms && ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)
+  if (ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)
+}
+
+/** In react(), last: ask for the next tick while the drive has work of its own. It has while it ramps toward
+ *  `target` (the command, gates applied, as handed to rampedSpeed), and while it runs with a pulse or an encoder tag
+ *  to count travel on. A conveyor at its commanded speed with neither waits for a tag to change, and its surface
+ *  keeps the speed it was last given. */
+function driveAgain(ctx, drive, target) {
+  if (drive.driven !== target || (drive.driven !== 0 && (ctx.params.pulseTag || ctx.params.encoderTag))) ctx.again()
+}
+
+// ---- from examples/parts/_shared/conveyorFriction.js ----
+/** The `friction` param, with the surface's default grip against a carton. */
+function frictionParam(carton) {
+  return {
+    friction: { type: 'number', default: carton, min: 0, step: 0.01, label: 'Friction', desc: 'Grip between the running surface and a standard carton, the figure a belt datasheet quotes. A smooth PVC belt is about 0.4, a rough-top incline belt about 0.9 and a low-friction plastic modular belt about 0.2, made for product to slide while it accumulates. Bare steel rollers are about 0.4. Other cargo grips by its own friction against the same surface.' },
+  }
+}
+
+// ---- from examples/parts/_shared/guardGaps.js ----
+/** the hidden, host-fed `guardGaps` param */
+function guardGapsParam(group) {
+  return { guardGaps: { type: 'numberList', arity: 3, default: [], hidden: true, label: 'Guard gaps [x0 m, x1 m, side ±1]', group, desc: 'Where the guards are opened, for a device whose arms cross them. Worked out by the host from the scene; not for editing.' } }
+}
+
+/**
+ * The solid runs of one side's guard: [lo, hi] with that side's gaps taken out, ascending. With no gap it is the
+ * whole run. Build each run as its own collision part, so its collider stops at the gap as the mesh does.
+ */
+function guardGapRuns(p, sign, lo, hi) {
+  var rows = Array.isArray(p.guardGaps) ? p.guardGaps : []
+  var gaps = []
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i]
+    if (r[2] !== sign) continue
+    var a = Math.max(r[0], lo), b = Math.min(r[1], hi)
+    if (b - a > 1e-4) gaps.push([a, b])
+  }
+  gaps.sort(function (x, y) { return x[0] - y[0] })
+  var runs = [], cur = lo
+  for (var k = 0; k < gaps.length; k++) {
+    if (gaps[k][0] - cur > 1e-4) runs.push([cur, gaps[k][0]])
+    cur = Math.max(cur, gaps[k][1])
+  }
+  if (hi - cur > 1e-4) runs.push([cur, hi])
+  return runs
 }
 
 // ---- from examples/parts/_shared/guardHolePanel.js ----
@@ -334,8 +378,9 @@ definePart({
     ...speedUnitParams(2),
     speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 2, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'Surface speed carried along the bed. Negative runs it backwards, which is the ONLY way to reverse flow - rotating the part 180 degrees moves its ends and their splay instead. A program can command this through the speed tag below.' },
     ...driveRampParams(0.5, 0.5),
-    angleFrontDeg: { type: 'number', default: 30, min: -60, max: 60, step: 5, label: 'Front angle (°)', group: 'Ends', desc: 'Splay angle of the DISCHARGE end face. This is what makes the part a spur: an angled face merges flush onto the side of a straight conveyor instead of butting square against it. 0 leaves the end square.' },
-    angleBackDeg: { type: 'number', default: 0, min: -60, max: 60, step: 5, label: 'Back angle (°)', group: 'Ends', desc: 'Splay angle of the INFEED end face. Leave it at 0 for a spur fed square from behind; angle it too when the piece has to sit between two angled neighbours.' },
+    ...frictionParam(0.59),
+    angleFrontDeg: { type: 'number', default: 30, min: -60, max: 60, step: 1, label: 'Front angle (°)', group: 'Ends', desc: 'Splay angle of the DISCHARGE end face. This is what makes the part a spur: an angled face merges flush onto the side of a straight conveyor instead of butting square against it. 0 leaves the end square.' },
+    angleBackDeg: { type: 'number', default: 0, min: -60, max: 60, step: 1, label: 'Back angle (°)', group: 'Ends', desc: 'Splay angle of the INFEED end face. Leave it at 0 for a spur fed square from behind; angle it too when the piece has to sit between two angled neighbours.' },
     // parallel belt strips fanning across the splay — more = smoother sheared edges.
     conveyorCount: { type: 'number', default: 20, min: 1, max: 20, step: 1, label: 'Belt strips', desc: 'How many narrow parallel belt loops fan across the width. More strips give a smoother angled face, since each one is clipped to the splay and the end staircases in steps of one strip.' },
     beltColor: { type: 'color', default: '#ffffff', label: 'Belt color', desc: 'Tint multiplied into the belt weave. White leaves the fabric at full brightness; a dark tint multiplies it down toward black.' },
@@ -359,13 +404,13 @@ definePart({
     guardExtents: { type: 'numberList', hidden: true, arity: 3, default: [], label: 'Rail extents [side ±1, back m, front m]', group: 'Guards', desc: 'Where the rails and guards STOP on each side, in bed-local X. Normally written by the host: when this spur merges flush onto another conveyor, this retracts the rails to its outer wall instead of running them through its frame. Worked out by the host from the scene; not for editing.' },
     // mitred guard ends as [x m, c, side ±1] rows (_shared/guardMitre.js). HOST-FED at a side merge, so hidden.
     ...guardMitresParam('Guards'),
+    ...guardGapsParam('Guards'),
     ...railCutsParam('Guards'),
     // deck height above the floor — drives the LEG length; host auto-fills it from the surface beneath at drop/snap.
     standHeight: { type: 'number', default: 2.0, min: 0.1, max: 3, step: 0.01, rest: 'surfaceBelow', label: 'Stand height (m)', desc: 'Height of the deck above whatever is beneath it, which sets the leg length. The host fills this in when you drop or snap the conveyor, so the legs reach the floor - or a platform crossing underneath - without you measuring. Pin it by hand when you want a deliberate height.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this conveyor to a PLC program. Its tags appear once this is on.' },
-    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed.' },
+    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag', group: 'Comms', desc: 'The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed.' },
     ...speedFpmTagParam('Comms'),
-    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Run tag (belt runs while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the belt.' },
+    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (belt runs while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the belt.' },
     runningTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Running tag (true while moving)', group: 'Comms', desc: 'Feedback the conveyor publishes for the program to read: true whenever it is actually moving. This is the EFFECTIVE speed, gates included, so a run tag holding it at zero reads false here.' },
     ...driveFeedbackParams(2, 'Comms'),
   },
@@ -564,31 +609,37 @@ definePart({
       var on = g_sign < 0 ? p.leftGuard !== false : p.rightGuard !== false
       if (!on) continue
       var run = railRuns[s2 === 0 ? 0 : 1]
-      // SENSOR-BEAM HOLES (host-fed rows [x, y, side], guardHoles.ts): the sheet is split around a panel-long gap
-      // at each hole inside this guard's run, and a sheet panel with the hole cut through fills it (the top return
-      // below runs on unbroken over it). The pieces stay ONE collision part, so its AABB collider is the same
-      // whole wall; the sim never sees the holes anyway.
-      var gLo = run.cx - run.len / 2, gHi = run.cx + run.len / 2, gCuts = []
-      for (var hi = 0; hi < holes.length; hi++) {
-        var hrow = holes[hi], h0 = hrow[0] - HOLE_PANEL / 2, h1 = hrow[0] + HOLE_PANEL / 2
-        if (hrow[2] !== g_sign || h0 < gLo || h1 > gHi) continue
-        gCuts.push([h0, h1])
-        var hKey = hrow[1].toFixed(4)
-        if (!holePanels[hKey]) holePanels[hKey] = { y: hrow[1], descs: [] }
-        // the panel's frame: outward +z from the sheet's inner face; the −Z side is it yawed 180°, never mirrored
-        holePanels[hKey].descs.push({ x: hrow[0], sign: g_sign })
+      // GUARD GAPS (host-fed rows [x0, x1, side], _shared/guardGaps.js): where the host opens this guard, for a
+      // diverter whose arms cross it. Each solid run between gaps is its own collision part, so the collider stops
+      // at the gap as the mesh does. With no gap there is one run, the whole guard.
+      var gRuns = guardGapRuns(p, g_sign, run.cx - run.len / 2, run.cx + run.len / 2)
+      for (var gr = 0; gr < gRuns.length; gr++) {
+        // SENSOR-BEAM HOLES (host-fed rows [x, y, side], guardHoles.ts): the sheet is split around a panel-long gap
+        // at each hole inside this guard's run, and a sheet panel with the hole cut through fills it (the top return
+        // below runs on unbroken over it). A run's pieces stay ONE collision part, so its AABB collider is the same
+        // whole wall; the sim never sees the holes anyway.
+        var gLo = gRuns[gr][0], gHi = gRuns[gr][1], gCuts = []
+        for (var hi = 0; hi < holes.length; hi++) {
+          var hrow = holes[hi], h0 = hrow[0] - HOLE_PANEL / 2, h1 = hrow[0] + HOLE_PANEL / 2
+          if (hrow[2] !== g_sign || h0 < gLo || h1 > gHi) continue
+          gCuts.push([h0, h1])
+          var hKey = hrow[1].toFixed(4)
+          if (!holePanels[hKey]) holePanels[hKey] = { y: hrow[1], descs: [] }
+          // the panel's frame: outward +z from the sheet's inner face; the −Z side is it yawed 180°, never mirrored
+          holePanels[hKey].descs.push({ x: hrow[0], sign: g_sign })
+        }
+        gCuts.sort(function (a, b) { return a[0] - b[0] })
+        var gPieces = [], gCur = gLo
+        for (var gc = 0; gc < gCuts.length; gc++) { if (gCuts[gc][0] - gCur > 1e-4) gPieces.push([gCur, gCuts[gc][0]]); gCur = Math.max(gCur, gCuts[gc][1]) }
+        if (gHi - gCur > 1e-4) gPieces.push([gCur, gHi])
+        var gboxes = gPieces.map(function (pc) { return guardBand(g, pc[0], pc[1], mitreAt(g_sign, pc[0]), mitreAt(g_sign, pc[1]), 0, GT, RAIL_TOP, GH, g_sign, hw + FWT) })
+        if (gboxes.length) guardParts.push({ desc: gboxes.length === 1 ? gboxes[0] : g.merge.apply(g, gboxes), finish: 'guard', collision: 'box', sideGuard: g_sign < 0 ? 'left' : 'right' })
+        // the guard's formed top: a 20 mm OUTWARD return along its top edge (as every conveyor guard has). Its own
+        // part with NO collision: the host's collider is this guard part's AABB, and the return would widen it off
+        // the one guard cross-section every family shares - the one butted guards merge on (core/guardRuns.ts).
+        var lip = guardBand(g, gLo, gHi, mitreAt(g_sign, gLo), mitreAt(g_sign, gHi), GT, GT + 0.02, GH - GT, GH, g_sign, hw + FWT)
+        guardParts.push({ desc: lip, finish: 'guard' })
       }
-      gCuts.sort(function (a, b) { return a[0] - b[0] })
-      var gPieces = [], gCur = gLo
-      for (var gc = 0; gc < gCuts.length; gc++) { if (gCuts[gc][0] - gCur > 1e-4) gPieces.push([gCur, gCuts[gc][0]]); gCur = Math.max(gCur, gCuts[gc][1]) }
-      if (gHi - gCur > 1e-4) gPieces.push([gCur, gHi])
-      var gboxes = gPieces.map(function (pc) { return guardBand(g, pc[0], pc[1], mitreAt(g_sign, pc[0]), mitreAt(g_sign, pc[1]), 0, GT, RAIL_TOP, GH, g_sign, hw + FWT) })
-      if (gboxes.length) guardParts.push({ desc: gboxes.length === 1 ? gboxes[0] : g.merge.apply(g, gboxes), finish: 'guard', collision: 'box', sideGuard: g_sign < 0 ? 'left' : 'right' })
-      // the guard's formed top: a 20 mm OUTWARD return along its top edge (as every conveyor guard has). Its own
-      // part with NO collision: the host's collider is this guard part's AABB, and the return would widen it off
-      // the one guard cross-section every family shares - the one butted guards merge on (core/guardRuns.ts).
-      var lip = guardBand(g, gLo, gHi, mitreAt(g_sign, gLo), mitreAt(g_sign, gHi), GT, GT + 0.02, GH - GT, GH, g_sign, hw + FWT)
-      guardParts.push({ desc: lip, finish: 'guard' })
     }
 
     // 5. SUPPORT LEGS — real floor supports (_shared/legs.js), built leg-local with their floor at
@@ -678,22 +729,23 @@ definePart({
     if (railFills.length) parts.push({ desc: g.merge.apply(g, railFills), finish: 'frame' })
     return parts
   },
-  step(ctx) {
-    // Comms precedence: speedTag (REAL in) replaces the speed param; runTag (BOOL) gates the commanded speed to 0
+  react(ctx) {
+    // Tag precedence: speedTag (REAL in) replaces the speed param; runTag (BOOL) gates the commanded speed to 0
     // only while a controller DRIVES it (ctx.tagDriven — undriven, the authored speed rules); runningTag (BOOL out)
     // = effective speed ≠ 0.
-    const comms = ctx.params.enableComms
     // the unit the conveyor is set up in: everything below this line is m/s
-    const cmd = commandedSpeed(ctx, comms)
+    const cmd = commandedSpeed(ctx)
     const fpm = cmd.fpm, commanded = cmd.commanded
-    const running = comms && ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true
+    const running = ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true
     const s = rampedSpeed(ctx, drive, cmd, running ? commanded : 0)
     // the readout the Inspector shows for 'speed' while a setpoint tag owns it: the EFFECTIVE value,
     // gates and all, not the raw setpoint (a runTag holding this at 0 must not read as the commanded rate)
     reportSpeed(ctx, fpm, s)
-    if (comms && ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, s !== 0)
+    if (ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, s !== 0)
     // drive feedback: the velocity as a share of the speed at 30, an encoder pulse and the odometer
     publishDrive(ctx, drive, cmd, s)
     ctx.setSurfaceVelocity({ x: ctx.forward.x * s, y: 0, z: ctx.forward.z * s })
+    // the next tick is needed only while the drive ramps or counts travel (conveyorDrive.js)
+    driveAgain(ctx, drive, running ? commanded : 0)
   },
 })

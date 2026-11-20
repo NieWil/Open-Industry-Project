@@ -5,11 +5,12 @@
 // handle (unbound), and which scene tags does the program never declare (unwired) - surfaced by the ST
 // editor. See src/plc/DEVICE-IO.md.
 
+import { controllerOf } from '../core/io/controllerTag'
 import { packageParamSpecs, switchValue, visibleWhenHolds } from '../core/packageParams'
 import type { VisibleWhen } from '../core/types'
-import { commsOn } from '../core/conveyorDirection'
-import { getPackage } from '../core/partRegistry'
-import type { PlcLink } from './plcLink'
+import { commsOn } from '../core/conveyor/conveyorDirection'
+import { getPackage, registryRevision } from '../core/parts/partRegistry'
+import type { PlcLink } from './link/plcLink'
 
 /** A scene part with its params, for reading the per-part device-IO tag wiring. */
 export interface TaggedPart {
@@ -69,6 +70,8 @@ export interface DeviceTagField {
   label: string
   section: 'VAR_INPUT' | 'VAR_OUTPUT' | null
   type: 'BOOL' | 'INT' | 'DINT' | 'REAL' | null
+  /** the unit of the value it carries (TagRefParamSpec.unit), absent when it has none */
+  unit?: string
   /** the tag name wired in, `''` when unbound */
   value: string
 }
@@ -80,6 +83,9 @@ export interface DeviceTags {
   /** the package's display name (`Belt Conveyor`), what a tree groups by */
   kind: string
   enabled: boolean
+  /** the package declares a comms switch (`commsParam`), so `enabled` can be off; a part without one is connected
+   *  whenever a field names a tag */
+  switchable: boolean
   fields: DeviceTagField[]
 }
 
@@ -100,11 +106,12 @@ export function deviceTags(parts: readonly TaggedPart[]): DeviceTags[] {
         label: spec.label,
         section: spec.dir === 'in' ? 'VAR_OUTPUT' : spec.dir === 'out' ? 'VAR_INPUT' : null,
         type: spec.stType ?? null,
+        ...(spec.unit ? { unit: spec.unit } : {}),
         value: typeof v === 'string' ? v.trim() : '',
       })
     }
     if (fields.length === 0) continue
-    out.push({ id: p.id, name: p.name ?? p.id, kind: pkg.name, enabled: isCommsEnabled(p), fields })
+    out.push({ id: p.id, name: p.name ?? p.id, kind: pkg.name, enabled: isCommsEnabled(p), switchable: pkg.commsParam !== undefined, fields })
   }
   return out
 }
@@ -139,6 +146,18 @@ export function devicesForTag(devices: readonly DeviceTags[], name: string): Dev
  *  `includeDisabled` lists tags on parts with comms off too (flagged `enabled: false`), for a message that can
  *  say "the part names it, but comms is off" instead of "undeclared". */
 export function sceneTags(parts: readonly TaggedPart[], opts: { includeDisabled?: boolean } = {}): SceneTag[] {
+  // Kept for the parts they were worked out from: a scene's parts are a new array whenever one changes, and a
+  // ladder sheet asks once per rung on every redraw, which on a 420-part line was a quarter of a second each time.
+  const rev = registryRevision()
+  let kept = tagsOf.get(parts)
+  if (!kept || kept.rev !== rev) tagsOf.set(parts, (kept = { rev }))
+  const which = opts.includeDisabled ? 'all' : 'enabled'
+  return (kept[which] ??= Object.freeze(sceneTagsOf(parts, opts)) as SceneTag[])
+}
+// (frozen above, so a caller that tried to change the shared list fails where it does so)
+const tagsOf = new WeakMap<readonly TaggedPart[], { rev: number; enabled?: SceneTag[]; all?: SceneTag[] }>()
+
+function sceneTagsOf(parts: readonly TaggedPart[], opts: { includeDisabled?: boolean }): SceneTag[] {
   const out = new Map<string, SceneTag>()
   for (const p of parts) {
     if (p.type !== 'part') continue
@@ -189,7 +208,7 @@ export function unhandledProgramTags(
     // A display is a consumer too. An annotation reading a tag onto the layout handles it as surely as a
     // device driving one - so without this, every scene carrying a readout note reports that note's tag as
     // `unbound`, a false warning on the one feature whose entire job is to make a tag visible. It has no
-    // `enableComms` (there is no device to switch on) and its tag is a plain param, so it needs its own arm
+    // comms switch (there is no device to switch on) and its tag is a plain param, so it needs its own arm
     // rather than falling through the comms-enabled walk below.
     if (p.type === 'annotation') {
       const t = typeof paramsOf(p)['tag'] === 'string' ? (paramsOf(p)['tag'] as string).trim() : ''
@@ -217,6 +236,7 @@ export function unhandledProgramTags(
     return true
   })
   const declared = new Set([...link.inputs, ...link.outputs])
-  const unwired = commsTags(parts).filter((t) => !declared.has(t))
+  // a tag on another controller (`Cell2::Eye`, core/io/controllerTag.ts) is not this program's to declare
+  const unwired = commsTags(parts).filter((t) => !declared.has(t) && controllerOf(t) === null)
   return { unbound, unwired }
 }

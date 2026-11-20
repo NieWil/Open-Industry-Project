@@ -41,6 +41,9 @@ if (files.length !== 1) fail(USAGE)
 
 const input = resolve(files[0])
 if (!existsSync(input)) fail(`no file ${input}`)
+// The USD reader runs only in a browser (a Web Worker, image decoding), so USD imports through the app instead
+if (/^\.(usd|usda|usdc|usdz)$/i.test(extname(input)))
+  fail(`${basename(input)} is USD, which converts in the app: the Inspector's Import model... on a rig node, or the desktop app's agent tool import_model`)
 if (!/^\.(step|stp)$/i.test(extname(input))) fail(`${basename(input)} is not a .step or .stp file (a GLB needs no conversion: npm run inspect-glb)`)
 const detail = flags.get('--detail') ?? 'normal'
 if (detail !== 'normal' && detail !== 'coarse') fail(`--detail is normal or coarse, not ${detail}`)

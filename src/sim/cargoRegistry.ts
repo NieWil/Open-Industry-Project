@@ -5,10 +5,10 @@
 import type Jolt from 'jolt-physics'
 import { CARGO_CAP_HEAVY, CARGO_CAP_SEPARATE_CONTACTS, CARGO_KIND_PALLET, CARGO_KIND_TOTE, capsOfKind, cargoKindProduct } from '../core/frame'
 import type { CargoShapeRef, FrameDressing } from '../core/frame'
-import type { ParamValue } from '../core/partApi'
+import type { ParamValue } from '../core/parts/partApi'
 import type { WrapBody } from '../core/cargoWrap'
-import { qApply, qConjugate, qMul } from '../core/rigPose'
-import type { Quat, Vec3 } from '../core/rigPose'
+import { qApply, qConjugate, qMul } from '../core/rig/rigPose'
+import type { Quat, Vec3 } from '../core/rig/rigPose'
 import { buildPalletShape, buildPartCargoShape, buildToteShape, destroyBody, makeCargoBody } from './bodyFactory'
 import type { CargoPiece } from '../core/cargoBody'
 import type { BodyHolds } from './bodyHolds'
@@ -44,10 +44,12 @@ export class CargoRegistry {
   private snapOut: Float32Array | null = null
   /** the stock-build snapshot buffer (see snapshotBoxes) */
   private snapJs: Float32Array | null = null
-  /** (step, boxesRev) the cached beam snapshot was taken at - see beamSnapshot() */
-  private beamSnapStep = -1
-  private beamSnapRev = -1
-  private beamSnap: Float32Array | null = null
+  /** (step, boxesRev) the cached step snapshot was taken at - see stepSnapshot() */
+  private stepSnapStep = -1
+  private stepSnapRev = -1
+  private stepSnap: Float32Array | null = null
+  /** a step is running (beginStep..endStep): a pose write then leaves the step's snapshot as it is (placeBody) */
+  private stepping = false
   /** the pallet colliders (bodyFactory buildPalletShape), built once per footprint (mm) and shared by every pallet body
    *  of that size */
   private readonly palletShapes = new Map<string, Jolt.Shape>()
@@ -118,7 +120,7 @@ export class CargoRegistry {
     caps: number = capsOfKind(kind),
   ): number {
     if (own && !this.shapeRefs.has(own.key)) {
-      if (own.pieces) this.partShapes.set(own.key, buildPartCargoShape(this.J, own.pieces))
+      if (own.pieces) this.partShapes.set(own.key, this.keep(buildPartCargoShape(this.J, own.pieces)))
       this.shapeRefs.set(own.key, { packageId: own.product, params: own.params })
     }
     const body = makeCargoBody(this.J, this.bodyInterface, this.axisY, this.cargoShape(kind, hx, hy, hz, own?.key), x, y, z, rotation, mass, friction, (caps & CARGO_CAP_HEAVY) !== 0, (caps & CARGO_CAP_SEPARATE_CONTACTS) !== 0)
@@ -129,11 +131,19 @@ export class CargoRegistry {
     return id
   }
 
+  /** Take a reference for the cache on a shape it is about to share. Jolt frees a shape with the last body that
+   *  uses it. Without a reference of its own the cache would hand the freed shape to the next body once every
+   *  body of that shape had been removed, and that body is then built on memory Jolt has given to something else. */
+  private keep(shape: Jolt.Shape): Jolt.Shape {
+    shape.AddRef()
+    return shape
+  }
+
   private palletShape(hx: number, hz: number): Jolt.Shape {
     const key = `${Math.round(hx * 2000)}x${Math.round(hz * 2000)}`
     let shape = this.palletShapes.get(key)
     if (!shape) {
-      shape = buildPalletShape(this.J, hx * 2, hz * 2)
+      shape = this.keep(buildPalletShape(this.J, hx * 2, hz * 2))
       this.palletShapes.set(key, shape)
     }
     return shape
@@ -143,7 +153,7 @@ export class CargoRegistry {
     const key = `${Math.round(hx * 2000)}x${Math.round(hy * 2000)}x${Math.round(hz * 2000)}`
     let shape = this.toteShapes.get(key)
     if (!shape) {
-      shape = buildToteShape(this.J, hx * 2, hy * 2, hz * 2)
+      shape = this.keep(buildToteShape(this.J, hx * 2, hy * 2, hz * 2))
       this.toteShapes.set(key, shape)
     }
     return shape
@@ -329,7 +339,31 @@ export class CargoRegistry {
 
   /** every live cargo body as the load measure sees it (core/cargoWrap), row for row with this.boxes */
   wrapBodies(): WrapBody[] {
-    return wrapBodies(this.boxes, this.beamSnapshot())
+    return wrapBodies(this.boxes, this.stepSnapshot())
+  }
+
+  /**
+   * Set a cargo body's position, rotation or both, and wake it: a gizmo drag, a gripper carrying its load, the pilot
+   * turning what it holds. Every cargo pose write outside the solver goes through here (eslint bans the raw calls
+   * elsewhere in src/sim). A write between steps makes the cached snapshot stale, so the next step fills afresh (see
+   * frameSnapshot). A write during a step leaves it as it is: the step's consumers all read the poses the step began
+   * with.
+   */
+  placeBody(id: Jolt.BodyID, pos: Jolt.RVec3 | null, rot: Jolt.Quat | null): void {
+    const J = this.J
+    if (pos && rot) this.bodyInterface.SetPositionAndRotation(id, pos, rot, J.EActivation_Activate)
+    else if (pos) this.bodyInterface.SetPosition(id, pos, J.EActivation_Activate)
+    else if (rot) this.bodyInterface.SetRotation(id, rot, J.EActivation_Activate)
+    if (!this.stepping) this.stepSnapStep = -1
+  }
+
+  /** SimWorld.step brackets the step with these, so placeBody knows which side of one a write is on */
+  beginStep(): void {
+    this.stepping = true
+  }
+
+  endStep(): void {
+    this.stepping = false
   }
 
   /** grow-on-demand accessors for the native snapshot's shared buffers; null on a stock build */
@@ -377,16 +411,30 @@ export class CargoRegistry {
     return out
   }
 
-  /** per-step cached snapshot shared by every per-box consumer that runs before the solver - cull, beam
-   *  casts, zone counts/despawns, the gripper's grab search; invalidated by boxesRev so a spawn/despawn
-   *  mid-tick can't leave a consumer reading stale rows for shifted boxes */
-  beamSnapshot(): Float32Array | null {
-    if (this.beamSnapStep !== this.clock.step || this.beamSnapRev !== this.boxesRev) {
-      this.beamSnap = this.snapshotBoxes()
-      this.beamSnapStep = this.clock.step
-      this.beamSnapRev = this.boxesRev
-    }
-    return this.beamSnap
+  /**
+   * The snapshot every per-box consumer before the solver shares in one step: cull, beam casts, zone counts and
+   * despawns, load cells, cargo ops, flow facts, the gripper's grab search. Keyed by (step, boxesRev), so a spawn or
+   * despawn mid-step re-reads rows for the shifted list, and a pose written between steps re-reads them (placeBody).
+   */
+  stepSnapshot(): Float32Array | null {
+    if (this.stepSnapStep !== this.clock.step || this.stepSnapRev !== this.boxesRev) this.keepAsStepSnapshot(this.snapshotBoxes())
+    return this.stepSnap
+  }
+
+  /**
+   * The frame's snapshot, taken after the solver. The step counter has already moved on, so these are the poses the
+   * next step begins with, unless something moves a body (placeBody) or changes the list (boxesRev) first. Kept as
+   * that step's snapshot, which saves the next step a second fill of every body.
+   */
+  frameSnapshot(): Float32Array | null {
+    return this.keepAsStepSnapshot(this.snapshotBoxes())
+  }
+
+  private keepAsStepSnapshot(snap: Float32Array | null): Float32Array | null {
+    this.stepSnap = snap
+    this.stepSnapStep = this.clock.step
+    this.stepSnapRev = this.boxesRev
+    return snap
   }
 
   ensureRowGrid(snap: Float32Array): void {
@@ -435,10 +483,15 @@ export class CargoRegistry {
 
   /** free the snapshot reader; after the world's JoltInterface is gone */
   dispose(): void {
+    // the cache's own references (keep): the bodies are gone, so this frees the shapes
+    for (const shapes of [this.palletShapes, this.toteShapes, this.partShapes]) {
+      for (const shape of shapes.values()) shape.Release()
+      shapes.clear()
+    }
     if (this.bodySnapshot) {
       this.J.destroy(this.bodySnapshot)
       this.bodySnapshot = null
-      this.snapIds = this.snapOut = this.beamSnap = null
+      this.snapIds = this.snapOut = this.stepSnap = null
     }
   }
 }

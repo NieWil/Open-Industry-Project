@@ -203,7 +203,7 @@ async function loadEyedCopies(page, n) {
       parts.push({ id: `e${i}`, type: 'part', packageId: 'oip.diffuse-sensor', position: [x, -0.02, z + hw + 0.057], rotationY: Math.PI, name: `eye ${i}`, params: { ...eye, maxRange: bed.width + 0.04 } })
     }
     store.loadScene({ version: 4, parts, packages: [] })
-    const gh = await import('/src/core/guardHoles.ts')
+    const gh = await import('/src/core/guards/guardHoles.ts')
     let h = 0
     for (const v of gh.computeSceneGuardHoles(store.getState().scene.parts).values()) h += v.left.length + v.right.length
     return h
@@ -270,7 +270,7 @@ async function main() {
     }
 
     // ---- 4. a conveyor with an eye on it ----
-    // A sensor's beam cuts a hole in each guard it crosses (core/guardHoles.ts): the guard splits around it and a
+    // A sensor's beam cuts a hole in each guard it crosses (core/guards/guardHoles.ts): the guard splits around it and a
     // holed panel fills the gap. Sections 2-3 duplicate bare conveyors, so they cannot see what a hole costs; on
     // the roller rig, unpooled split pieces and panels cost 2 draws per hole.
     // Holes must add no draws per copy: a bed-plus-eye pair may cost no more than a bed and an eye apart.

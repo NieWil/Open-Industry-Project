@@ -1,4 +1,4 @@
-// Verifies that a phone which would open on an empty scene opens on the demo instead (src/editor/phoneDemo.ts).
+// Verifies that a phone which would open on an empty scene opens on the demo instead (src/editor/demo/phoneDemo.ts).
 //
 // A phone can't author (no catalog, no transform tools, no tour), so an empty scene there is a dead end. The boot
 // opens the same ephemeral demo view as the landing CTA instead, with `?scene=demo` in the address bar so

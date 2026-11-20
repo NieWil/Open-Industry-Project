@@ -2,7 +2,6 @@
   "id": "oip.color-sensor",
   "name": "Color Sensor",
   "category": "Devices",
-  "commsParam": "enableComms",
   "snap": {
     "mounts": [
       {

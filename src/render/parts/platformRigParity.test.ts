@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import type { RigLink } from '../../core/partPackage'
-import { arrayInstanceDeltas, linkHalfExtents, resolvedOffset } from '../../core/rigPose'
-import { instantiatePartScript } from '../../core/partScript'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import type { RigLink } from '../../core/parts/partPackage'
+import { arrayInstanceDeltas, linkHalfExtents, resolvedOffset } from '../../core/rig/rigPose'
+import { instantiatePartScript } from '../../core/parts/partScript'
 import { examplePart, type RigGeo } from './examplePart'
-import { linkFinish } from '../../core/rigFinish'
-import { checkGeometryRefs } from '../../core/partAuthoringChecks'
-import type { ParamSchema } from '../../core/partApi'
+import { linkFinish } from '../../core/rig/rigFinish'
+import { checkGeometryRefs } from '../../core/parts/partAuthoringChecks'
+import type { ParamSchema } from '../../core/parts/partApi'
 
 /** a link's instances as the host resolves them: its array (a single instance without one), none while its
  *  showParam is off */

@@ -10,14 +10,14 @@
 //
 // Findings (dev server, msedge, real GPU, ?scene=demo):
 //   * cold profile, WebGPU: a 1.4-2.2 s window with zero presented frames and zero rAF ticks,
-//     inside phase1Await (8 pipelines submitted at once, each resolving ~1.7-1.9 s), while the main
+//     inside phase 1's pipeline wait (8 pipelines submitted at once, each resolving ~1.7-1.9 s), while the main
 //     thread is idle (no long task spans it). So this is the GPU process compiling shaders, not JS.
 //     While it compiles, Chrome presents no frame at all, so a composited animation freezes too.
 //   * control: a deliberate 1500 ms main-thread block on a bare spinner page drops no frame
 //     (207 frames, largest gap 121 ms). Main-thread blocking is not the mechanism.
 //   * phase 2 mints more pipelines (31) yet only stutters (gaps 230-380 ms): its submissions are
 //     spread across 1.7 s of codegen, so the GPU keeps getting slots. The freeze comes from the burst.
-//   * ?serialphase1 does not fix it (still 1.46 s): three's serial loop refills Dawn immediately.
+//   * feeding phase 1 one pipeline at a time does not fix it (still 1.46 s): Dawn is refilled immediately.
 //   * warm profile (--profile=<dir>, second launch, Dawn's on-disk cache primed): no freeze, largest
 //     in-cover gap ~380 ms. This is a cold-cache cost: every first-time visitor, and every dev whose
 //     render/shader edits invalidate the cache.
@@ -37,7 +37,7 @@
 // Open: the WebGL stall has no announce point. It fires before whenBuildingReady, so there is no
 // verified point to announce ahead of; it needs attribution first (e2e/probes/cover-profile.mjs).
 //
-// Usage: node e2e/probes/spinner-hitch.mjs [--webgl] [--slow] [--flags=serialphase1] [--profile=<dir>]
+// Usage: node e2e/probes/spinner-hitch.mjs [--webgl] [--slow] [--flags=serialcompile] [--profile=<dir>]
 //        --slow delays /models/ + /textures/ so the model-download leg is not swallowed by a warm
 //        disk cache; pass the same --profile twice to compare a cold vs warm Dawn pipeline cache.
 /* global process, console, window, document, performance, requestAnimationFrame, PerformanceObserver, setTimeout */

@@ -5,7 +5,8 @@
 // pallet pitch, the forks go back in (into the second pallet), and the carriage lifts the stack clear — leaving the
 // bottom pallet on the conveyor.
 //
-// Every pallet in the magazine is a REAL pallet, held by the gripper of the magazine position it stands in (p0..p9).
+// Every pallet in the magazine is a REAL pallet, held by the gripper of the magazine position it stands in (a copy of
+// the posable gripper array `pos`, one per position the capacity allows).
 // Nothing is deleted and nothing is made to stand in for it: a pallet a truck loads is the pallet that comes out, with
 // its tint, mass and marks. A dispense opens the bottom position's gripper as the forks come out of it; the rest stay
 // held, so the stack never stands on its own and the conveyor under it may keep running.
@@ -129,8 +130,8 @@ const SET_GAP = 0.012
 const CLEAR = 0.01
 const SPAWN_BATCH = 8 // the host's ctx.spawn limit per tick (sim/embeddedBehavior MAX_SPAWNS_PER_TICK)
 
-// The magazine positions, p0 (bottom) up: a gripper link each (see rig()).
-const POSITIONS = Array.from({ length: MAX }, (_, i) => `p${i}`)
+// The magazine positions, bottom first: the copies of the gripper array `pos` (see rig()), named `pos#i`
+const POSITIONS = Array.from({ length: MAX }, (_, i) => `pos#${i}`)
 
 let phase = 'start' // start | idle | lower | release | index | engage | separate | takeup | raise | refill
 let lift = HOLD // the underside of the pallet the forks are in (the carriage datum)
@@ -162,7 +163,6 @@ definePart({
     id: 'oip.pallet-dispenser',
     name: 'Pallet Dispenser',
     category: 'Equipment',
-    commsParam: 'enableComms',
     // what it stores: pallets, one per magazine position, bottom first. Authored at those positions (the Inspector's
     // Fill), they are the stock a run starts with, and the stopped scene shows it
     holds: { part: 'oip.pallet', positions: POSITIONS, limitParam: 'capacity', params: { size: 'palletSize' } },
@@ -176,15 +176,17 @@ definePart({
     ],
   },
   rig(p) {
-    // The magazine positions: a gripper each, its link origin the underside of the pallet it holds. The pickup volume
-    // is one pallet high about that pallet's centre (a grip takes cargo by its CENTRE), narrower than the pallet so it
-    // cannot reach one standing beside the machine, and loose enough in y for a stack settled a few mm into itself.
-    const pallets = POSITIONS.map((name, i) => ({
-      name,
+    // The magazine positions: a posable gripper array, one copy per position the capacity allows, each at rest at the
+    // underside of the pallet it holds. The pickup volume is one pallet high about that pallet's centre (a grip takes
+    // cargo by its CENTRE), narrower than the pallet so it cannot reach one standing beside the machine, and loose
+    // enough in y for a stack settled a few mm into itself.
+    const positions = {
+      name: 'pos',
       shape: { kind: 'frame' },
-      offset: [0, r8(HOLD + i * PITCH), 0],
+      offset: [0, HOLD, 0],
       grip: { zone: { size: [0.6, r8(PITCH * 0.8), 0.5], offset: [0, r8(PITCH / 2), 0] } },
-    }))
+      array: { count: 'capacity', step: [0, PITCH, 0], posable: true },
+    }
     // the columns collide (hidden boxes, dressed by geometry()): floor to frame top, however high the conveyor
     const columns = []
     for (const sx of [-1, 1]) {
@@ -205,7 +207,7 @@ definePart({
         { name: 'carriage', shape: { kind: 'frame' }, offset: [0, HOLD, 0] },
         { name: 'forkW', parent: 'carriage', shape: { kind: 'frame' }, offset: [0, 0, 0] },
         { name: 'forkE', parent: 'carriage', shape: { kind: 'frame' }, offset: [0, 0, 0] },
-        ...pallets,
+        positions,
         ...columns,
         // the bay: where a dispensed pallet stands. The machine will not set a stack down on a pallet still in it.
         { name: 'bay', hidden: true, collision: 'none', shape: { kind: 'box', size: [1.0, 0.16, 0.8] }, offset: [0, 0.08, 0], zone: { size: [1.0, 0.16, 0.8] } },
@@ -227,14 +229,14 @@ definePart({
         { name: 'forkW', link: 'forkW', type: 'prismatic', axis: [-1, 0, 0], min: 0, max: r8(STROKE + 0.01) },
         { name: 'forkE', link: 'forkE', type: 'prismatic', axis: [1, 0, 0], min: 0, max: r8(STROKE + 0.01) },
       ],
-      // footprint: in x the fork cylinders, which stand furthest out; in z the base plates. bottom is the underside at
-      // the default conveyor height, so a bare-floor drop stands the columns on the floor.
-      bounds: { length: 2.56, width: 1.66, top: r8(TOPY + 0.2), bottom: -STAND_DEFAULT },
+      // footprint: in x the fork cylinders, which stand furthest out; in z the -Z base plates (0.83 out) to the rain hood
+      // of the operator station on the +Z column (0.215 past its centre). bottom is the underside at the default
+      // conveyor height, so a bare-floor drop stands the columns on the floor.
+      bounds: { length: 2.56, width: r8(0.83 + COL_Z + 0.215), centerZ: r8((COL_Z + 0.215 - 0.83) / 2), top: r8(TOPY + 0.2), bottom: -STAND_DEFAULT },
     }
   },
   interactive: true, // Use dispenses one pallet (by hand, when no program owns the dispense tag)
   joints: ['lift', 'forkW', 'forkE'],
-  grippers: POSITIONS,
   lamps: ['ready', 'low'],
   params: {
     capacity: { type: 'number', default: MAX, min: 1, max: MAX, step: 1, label: 'Magazine capacity', desc: 'How many empty pallets a full magazine holds: the positions it grips, from the bottom up. A stack loaded taller than this keeps the pallets above the top position, standing loose on the stack.' },
@@ -255,9 +257,8 @@ definePart({
     },
     palletColor: { type: 'color', default: '#ffffff', label: 'Pallet color', group: 'Pallet', desc: 'Tint over the pallet wood of the new pallets it is filled with (Pallets at start, Reload by itself). White leaves them untinted, like a hand-placed pallet. A pallet loaded into it keeps its own.' },
     mass: { type: 'number', default: 25, min: 1, max: 200, step: 1, label: 'Mass (kg)', group: 'Pallet', desc: 'Mass of the new pallets it is filled with. A pallet loaded into it keeps its own.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
     dispenseTag: { type: 'tag', dir: 'in', stType: 'BOOL', autoWhenDriven: true, default: '', label: 'Dispense tag (rising edge)', group: 'Comms', desc: 'Each rising edge dispenses ONE pallet; holding it true does not dispense more. While a program drives this tag it owns the machine: Use and Auto dispense stand aside.' },
-    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Enable tag', group: 'Comms', desc: 'The dispenser moves only while this is true. Drop it and the carriage and forks stop where they are, holding the stack; raise it and the cycle carries on from there. A request while it is false is refused. Wire it to the line running, so a Stop or a trip holds the dispense and a Start finishes it. Leave it empty and the dispenser is always enabled.' },
+    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Enable tag', group: 'Comms', desc: 'The dispenser moves only while this is true. Drop it and the carriage and forks stop where they are, holding the stack; raise it and the cycle carries on from there. A request while it is false is refused. Wire it to the line running, so a Stop or a trip holds the dispense and a Start finishes it. Until a program drives it, or with it empty, the dispenser is always enabled, so a merely-typed tag does not hold it.' },
     busyTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Busy tag', group: 'Comms', desc: 'True from a dispense request until the stack is lifted clear of the pallet it set down. Hold the conveyor under the magazine until it falls.' },
     bayTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Pallet in bay tag', group: 'Comms', desc: 'The bay photo-eye: true while a pallet stands under the magazine. A line that keeps one pallet waiting dispenses whenever this is false and it is not busy.' },
     countTag: { type: 'tag', dir: 'out', stType: 'DINT', default: '', label: 'Dispensed count tag', group: 'Comms', desc: 'Running total of pallets set down.' },
@@ -454,8 +455,8 @@ definePart({
       else if (stock > 0) { lift = HOLD; fork = 0; stackY = HOLD; fill(stock); phase = 'idle' }
       else { lift = 0; fork = STROKE; phase = 'idle' }
     }
-    const driven = p.enableComms && ctx.tagDriven(p.dispenseTag)
-    const enabled = !p.enableComms || !p.enableTag || ctx.readTag(p.enableTag) === true
+    const driven = ctx.tagDriven(p.dispenseTag)
+    const enabled = !ctx.tagDriven(p.enableTag) || ctx.readTag(p.enableTag) === true
     const bayClear = ctx.zone('bay') === 0
     const left = Math.max(0, cap - bottom)
 
@@ -509,8 +510,8 @@ definePart({
       // Lost = seen gripping, then not: a gripper that has never reported a hold (the stopped editor's preview, which
       // has no sim to grip in, or one a tick after it closed) is not taken for an empty position
       const got = ctx.measured && ctx.measured.grips
-      if (got) for (let i = 0; i < MAX; i++) if (got['p' + i]) gripped[i] = true
-      while (held && got && bottom < cap && gripped[bottom] && !got['p' + bottom]) { gripped[bottom] = false; bottom++ }
+      if (got) for (let i = 0; i < cap; i++) if (got[POSITIONS[i]]) gripped[i] = true
+      while (held && got && bottom < cap && gripped[bottom] && !got[POSITIONS[bottom]]) { gripped[bottom] = false; bottom++ }
       if (pending && cap - bottom > 0 && bayClear) { pending = false; phase = 'lower' }
     } else if (phase === 'lower') {
       lift = ctx.approach(lift, SET_GAP, v)
@@ -561,10 +562,10 @@ definePart({
     // the stack is held where it stood, eased CLEAR of the pallet under it
     const between = phase === 'release' || phase === 'index' || phase === 'engage'
     stackY = between ? ctx.approach(stackY, setAt + PITCH + CLEAR, v) : lift
-    for (let i = 0; i < MAX; i++) {
+    for (let i = 0; i < ctx.arrayCount('pos'); i++) {
       const inUse = i >= bottom && i < cap
-      ctx.setSubPose('p' + i, { position: [0, inUse ? stackY + (i - bottom) * PITCH : PARK, 0] })
-      ctx.grips['p' + i] = held && inUse
+      ctx.setSubPose('pos', { position: [0, inUse ? stackY + (i - bottom) * PITCH : PARK, 0] }, i)
+      ctx.setGrip('pos', held && inUse, i)
     }
 
     const nowLeft = Math.max(0, cap - bottom)
@@ -572,11 +573,9 @@ definePart({
     blink = (blink + ctx.dt) % 1
     ctx.lamps.ready = !busy && nowLeft > 0
     ctx.lamps.low = nowLeft === 0 ? blink < 0.5 : nowLeft <= 2
-    if (p.enableComms) {
-      if (p.busyTag) ctx.writeTag(p.busyTag, busy)
-      if (p.bayTag) ctx.writeTag(p.bayTag, !bayClear)
-      if (p.countTag) ctx.writeNumber(p.countTag, dispensed)
-      if (p.levelTag) ctx.writeNumber(p.levelTag, nowLeft)
-    }
+    if (p.busyTag) ctx.writeTag(p.busyTag, busy)
+    if (p.bayTag) ctx.writeTag(p.bayTag, !bayClear)
+    if (p.countTag) ctx.writeNumber(p.countTag, dispensed)
+    if (p.levelTag) ctx.writeNumber(p.levelTag, nowLeft)
   },
 })

@@ -1,5 +1,5 @@
 /**
- * HAND-OVER: a browser's project, moved to the desktop app (editor/desktopLink.ts sends, editor/desktopHandoff.ts
+ * HAND-OVER: a browser's project, moved to the desktop app (editor/desktop/desktopLink.ts sends, editor/desktop/desktopHandoff.ts
  * receives). A link cannot carry a project, so the browser puts the project's `.oip` bytes - the full project, every
  * scene, program, test and authored part, in the format File > Export writes - into a private document on the collab
  * server, and the link carries only that document's edit secret. The desktop reads the bytes, imports them like a

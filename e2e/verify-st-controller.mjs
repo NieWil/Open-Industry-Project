@@ -1,8 +1,8 @@
 // The controller's tasks and programs, end to end through the real editor: the Tasks section of the PLC panel's
-// organizer (components/PlcOrganizer.tsx) and its two dialogs (ControllerPropertiesDialogs.tsx).
+// organizer (components/plc/PlcOrganizer.tsx) and its two dialogs (ControllerPropertiesDialogs.tsx).
 //
 // Unit tests cover the edits (plc/controllerEdits.ts), the default table (plc/controller.ts), the tree over it
-// (plc/taskTree.ts), the scene rewire (editor/controllerRewire.ts) and the named add (editor/controllerCommit.ts). Only
+// (plc/taskTree.ts), the scene rewire (editor/program/controllerRewire.ts) and the named add (editor/program/controllerCommit.ts). Only
 // a browser run can check that the panel connects them: that the tasks sit beside the code, where an edit to one is
 // read back from the other, that a program with no table shows the default one, that retiming it sets the scan time
 // and stores no table, that "New program" asks for a name and adds a PROGRAM beside the top-level code without

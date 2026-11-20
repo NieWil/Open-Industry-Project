@@ -15,15 +15,15 @@ duplicate it.
   consumer after that carries only those fields: a box shape, or the pallet's and tote's compounds
   (sim/cargoRegistry.ts `cargoShape`); one instanced batch for boxes and one per pallet footprint and tote size
   (render/viewport/boxes.ts); sensing against each body's oriented box.
-- **A cargo part with its own body** is a `rig` with a `cargo` declaration (`CargoDecl` in core/partPackage.ts:
+- **A cargo part with its own body** is a `rig` with a `cargo` declaration (`CargoDecl` in core/parts/partPackage.ts:
   `friction`, `massParam`, `colorParam`). It is kind `CARGO_KIND_PART`.
 
 ## How a part's own body works
 
 - **Recognised once.** `cargoView` returns a part-bodied view through `partCargoView`, and `isCargoPackage`
-  (core/partPackage.ts) is the package-level test the sim, the frame, the scaffold and the product dropdown share.
+  (core/parts/partPackage.ts) is the package-level test the sim, the frame, the scaffold and the product dropdown share.
 - **Collider** (core/cargoBody.ts `cargoPieces`): the rig's colliding links at rest pose, by the same rule machine rigs
-  use (core/rigLinkBody.ts `rigLinkEmitsBody`). A box link is a box; a cylinder link stays a cylinder (a machine rig's
+  use (core/rig/rigLinkBody.ts `rigLinkEmitsBody`). A box link is a box; a cylinder link stays a cylinder (a machine rig's
   cylinder collides as its bounding box). The sim builds one Jolt compound per shape key
   (sim/bodyFactory.ts `buildPartCargoShape`, cached in the cargo registry) and shares it between bodies. A body keeps
   its `shapeKey`, so a unit join or split rebuilds it.
@@ -38,8 +38,12 @@ duplicate it.
 - **Rendering** (render/parts/partCargoMesh.ts): the part's own visual built once per shape, baked into part-local
   space and merged per material, so every body of that shape draws in one instanced batch per material. The visual is
   built with the colour param white and again black; a material that differs is tinted per body, the rest keep their
-  colour. A late-loading model moves the visual's structure version, and the batches rebuild. The builder loads on
-  the first part-bodied row (a scene without one never loads it); the row draws nothing until then.
+  colour. Every attribute is copied out as floats before the bake: a model's can be quantized integers, which a
+  matrix baked in place would wrap. A late-loading model moves the visual's structure version, and the batches
+  rebuild. An edit to the part's package applies the kept visuals again and rebuilds the batches too
+  (`SimBoxes.refreshPackage`): an edit that keeps the colliders keeps the shape's key, so nothing else would replace
+  them. The builder loads on the first part-bodied row (a scene without one never loads it); the row draws nothing
+  until then.
 - **Spawning and promotion:** a Spawner whose Product is such a part spawns it as its shape (sim/cargoFlow.ts
   `spawnProduct`). A pick of a part-bodied body reports its product, so selecting a spawned drum makes it a drum, not
   a box (editor/controller/liveCargo.ts `promotedAs`).
@@ -48,8 +52,10 @@ duplicate it.
 
 Tests: src/sim/cargoBodies.test.ts (a drum on its side rolls several times as far as a box of its size slides, it
 stands on its end, one collider per shape, and the validation), src/sim/frameWire.test.ts, src/editor/controller/liveCargo.test.ts,
+src/render/parts/partCargoMesh.test.ts (quantized, interleaved and multi-material geometry bakes to floats and merges),
 and e2e/verify-cargo-bodies.mjs (drums draw as their own visual stopped and running, a Spawner makes drums, 200 drums
-cost the draws of 2).
+cost the draws of 2, a model-drawn part draws its model, and an edit to the part's look reaches the bodies already
+drawn).
 
 ## Capabilities, not kinds
 
@@ -86,7 +92,7 @@ their standard sizes (an enum param, `'1200x800'`) to drive link sizes, which a 
 textured meshes (the cardboard and wood atlases) ported to models, a visual risk to every scene for no change in what
 they do. Because the engine names none of them, any of them can move to a library like any other part.
 
-What still names them, in src/core/partIdCoupling.test.ts: a kind-only spawn's product (`kindSpawnRef`) and a stored
+What still names them, in src/core/parts/partIdCoupling.test.ts: a kind-only spawn's product (`kindSpawnRef`) and a stored
 unit load that names no pieces (`unitPiecesOf`), both for stored part versions.
 
 ## Limits

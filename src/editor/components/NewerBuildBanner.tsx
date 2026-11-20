@@ -1,11 +1,11 @@
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('newerBuild', {
-  title: '⚠ Newer version in this room',
+  title: '⚠ Newer version in this shared project',
   bodyDesktop:
-    'Someone joined this room with a newer version of the app, so this window is view-only: its older version could overwrite what it cannot read. Update the desktop app to keep editing here.',
+    'Someone joined this shared project with a newer version of the app, so this window is view-only: its older version could overwrite what it cannot read. Update the desktop app to keep editing here.',
   bodyBrowser:
-    'Someone joined this room with a newer version of the app, so this tab is view-only: its older version could overwrite what it cannot read. Reload to get the new version and keep editing.',
+    'Someone joined this shared project with a newer version of the app, so this tab is view-only: its older version could overwrite what it cannot read. Reload to get the new version and keep editing.',
   getUpdate: 'Get the update',
   reload: 'Reload',
 })

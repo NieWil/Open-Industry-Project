@@ -2,7 +2,7 @@
 // documents (a VS Code or Claude Code edit of a project folder can be checked without launching
 // the app):
 //
-//   npm run validate-project -- <path> [--strict]
+//   npm run validate-project -- <path> [--strict] [--write]
 //
 // <path> is one of:
 //   • a project FOLDER   (project.json + scene.json + plc/ + parts/ - the Electron "Save Project to Folder" layout)
@@ -12,7 +12,11 @@
 // A document that loads can still have been REPAIRED to load: an out-of-range number clamped, a param key
 // that names nothing (a typo) dropped, a parent link to a missing part cut. The app applies those silently,
 // so this is where they are read: each is printed as a warning, and --strict fails on them, for a pre-commit
-// hook or an agent that wants "what the file says is what runs".
+// hook or an agent that wants "what the file says is what runs". --write (a project folder only) removes from the
+// folder's scene file the param keys loading drops, such as one a part's newer version no longer declares, and no other
+// value, in it or in any other file. It writes the file back in the app's own layout (two-space JSON): a file the app
+// saved comes back unchanged but for those keys, and one laid out by hand is reformatted, which it says. Rewriting the
+// whole scene as the app saves it would also write out every default, which pins the project to today's defaults.
 //
 // A scene whose program is written for a dialect this version does not have (core/dialect.ts) loads, since the app
 // keeps it unchanged, but cannot run: it is listed with the reason and fails the check.
@@ -21,7 +25,7 @@
 // SSR module loader (the repo's programmatic-vite pattern, see build-embedded-plc.mjs), so there is
 // no second validator implementation to drift from the app.
 
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
@@ -31,9 +35,10 @@ import { readProjectFolder } from './lib/projectFolderFiles.mjs'
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const strict = args.includes('--strict')
+const write = args.includes('--write')
 const target = args.find((a) => !a.startsWith('--'))
 if (!target) {
-  console.error('usage: npm run validate-project -- <project-folder | project.oip | scene.json> [--strict]')
+  console.error('usage: npm run validate-project -- <project-folder | project.oip | scene.json> [--strict] [--write]')
   process.exit(2)
 }
 
@@ -60,14 +65,14 @@ const vite = await createServer({
 try {
   // the app's built-in parts: a format-3 project names them by id and keeps no copy (scripts/lib/builtIns.mjs)
   await declareBuiltIns(vite)
-  const { folderFilesToProject, unreferencedProjectFiles } = await vite.ssrLoadModule('/src/core/projectFolder.ts')
-  const { isZipData, oipBytesToProject } = await vite.ssrLoadModule('/src/core/projectArchive.ts')
-  const { validateProject } = await vite.ssrLoadModule('/src/core/project.ts')
-  const { validateScene } = await vite.ssrLoadModule('/src/core/scene.ts')
+  const { folderFilesToProject, unreferencedProjectFiles } = await vite.ssrLoadModule('/src/core/project/projectFolder.ts')
+  const { isZipData, oipBytesToProject } = await vite.ssrLoadModule('/src/core/project/projectArchive.ts')
+  const { validateProject } = await vite.ssrLoadModule('/src/core/project/project.ts')
+  const { validateScene } = await vite.ssrLoadModule('/src/core/scene/scene.ts')
   const { dialectRefusal, isKnownDialect } = await vite.ssrLoadModule('/src/core/dialect.ts')
   const { wrappedProgramWarning } = await vite.ssrLoadModule('/src/plc/sceneProgram.ts')
-  const { builtInPackage } = await vite.ssrLoadModule('/src/core/partRegistry.ts')
-  const { summarizeLibrary, describeLibraryEntry } = await vite.ssrLoadModule('/src/core/partLibrarySummary.ts')
+  const { builtInPackage } = await vite.ssrLoadModule('/src/core/parts/partRegistry.ts')
+  const { summarizeLibrary, describeLibraryEntry } = await vite.ssrLoadModule('/src/core/parts/partLibrarySummary.ts')
   // The part baker: rebuilds each parts/<id>/ folder by RUNNING its behavior.js (under the core
   // determinism sandbox) through the canonical validator - so an edited script's syntax/determinism/
   // param errors fail validation here instead of surfacing at sim time in the app.
@@ -133,7 +138,7 @@ try {
   }
   const p = result.project
   // The project, and - for a document from before a project held one scene - the projects its other scenes become
-  // when the app opens it (core/project.ts `splitOff`). Each is checked below as the project it will be.
+  // when the app opens it (core/project/project.ts `splitOff`). Each is checked below as the project it will be.
   const machines = [p, ...(result.splitOff ?? [])]
   if (kind === 'scene') {
     console.log(`✓ valid scene - ${p.scene.parts.length} part(s)`)
@@ -203,11 +208,60 @@ try {
   if (repairs.length > 0) {
     console.log(`  warning: loading changed ${repairs.length} thing(s) the file says, so what runs is not what it says:`)
     for (const r of repairs) console.log(`    - ${r}`)
-    if (strict) {
-      console.error(`✗ --strict: ${repairs.length} repair(s) on load`)
+    // what loading still repairs after --write, read from the folder again rather than counted: a removed key and a
+    // repair message are not one to one
+    let remaining = repairs
+    if (write && stats.isDirectory()) {
+      const w = dropUnknownParams(p.scene.parts)
+      if (w.error) {
+        console.error(`  ✗ --write: ${w.error}`)
+        process.exitCode = 1
+      } else if (w.dropped > 0) {
+        const again = folderFilesToProject(readProjectFolder(target), { bakePart })
+        remaining = again.ok ? (again.repairs ?? []) : repairs
+        console.log(`  --write: removed ${w.dropped} param key(s) from the scene file; ${remaining.length} repair(s) remain`)
+      }
+    }
+    if (strict && remaining.length > 0) {
+      console.error(`✗ --strict: ${remaining.length} repair(s) on load`)
       process.exitCode = 1
     }
   }
+  if (write && !stats.isDirectory()) console.log('  note: --write saves a project folder only, so nothing was written')
 } finally {
   await vite.close()
+}
+
+/**
+ * --write: delete from the folder's scene file each param key the loaded part does not have. Returns how many, or why
+ * nothing was written: a folder from before a project held one scene names several scene files (`scenes`), which the
+ * app converts on open, and this edits only the one-scene layout.
+ */
+function dropUnknownParams(loaded) {
+  const manifest = JSON.parse(readFileSync(join(target, 'project.json'), 'utf8'))
+  if (typeof manifest.scene !== 'string') return { dropped: 0, error: 'this folder lists several scenes (a project from before one scene per project). Open it in the app and save it, then run --write again' }
+  const file = join(target, manifest.scene)
+  let raw
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return { dropped: 0, error: `could not read ${manifest.scene}` }
+  }
+  const byId = new Map(loaded.map((part) => [part.id, part]))
+  let dropped = 0
+  for (const part of Array.isArray(raw.parts) ? raw.parts : []) {
+    const kept = byId.get(part?.id)?.params
+    if (!kept || !part.params || typeof part.params !== 'object') continue
+    for (const key of Object.keys(part.params)) {
+      if (key in kept) continue
+      delete part.params[key]
+      dropped++
+    }
+  }
+  if (dropped === 0) return { dropped }
+  const text = readFileSync(file, 'utf8')
+  const layoutKept = text === JSON.stringify(JSON.parse(text), null, 2) + '\n'
+  writeFileSync(file, JSON.stringify(raw, null, 2) + '\n')
+  if (!layoutKept) console.log(`  note: ${manifest.scene} was not in the app's layout, so --write reformatted it (two-space JSON) as well`)
+  return { dropped }
 }

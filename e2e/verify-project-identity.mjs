@@ -26,7 +26,7 @@ import { chromium } from 'playwright'
 const { port: PORT, vite } = await startServer()
 
 const APP_TITLE = 'Open Industry Project'
-const DEMO_SCENE_NAME = 'Palletizing demo' // src/editor/demoScenes.ts
+const DEMO_SCENE_NAME = 'Palletizing demo' // src/editor/demo/demoScenes.ts
 
 let failures = 0
 function expect(cond, msg) {

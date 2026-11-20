@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import { evalPartGeometry } from '../../core/geometryEval'
-import type { MeshPart } from '../../core/partApi'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import type { MeshPart } from '../../core/parts/partApi'
 import { examplePart, type FuncGeo } from './examplePart'
 const { behavior: CURVED_ROLLER_BEHAVIOR, geometry: CURVED_ROLLER_GEO } = examplePart<FuncGeo>('oip.curved-roller-conveyor')
 
@@ -10,7 +11,7 @@ const { behavior: CURVED_ROLLER_BEHAVIOR, geometry: CURVED_ROLLER_GEO } = exampl
 // steel frame + side guards along a horizontal arc (SDK convention: entry at local +X, sweeping toward −Z),
 // yaws trestle legs to the sweep, and draws its own roller banks (examples/parts/_shared/rollerBed.js): the roller tube
 // as a lathe template instanced around the arc, plus its axle stubs, both spinning (MeshPart.spin on a bank).
-// Realized here through core/geometryEval, render's in-layer evaluator.
+// Realized here through core/geometry/geometryEval, render's in-layer evaluator.
 
 const geo = CURVED_ROLLER_GEO
 const realize = (params: Record<string, unknown>): MeshPart[] => {

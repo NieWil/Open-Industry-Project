@@ -11,8 +11,8 @@ import { parseStructure, type ProgramStructure } from './structure'
 import { findInCode, skipText } from '../core/sourceText'
 import { tokenAt } from './sourceFacts'
 import { identKey } from './program'
-import { SCALAR_TYPES, USER_FB_TYPES } from './types'
-import type { Ast, Decl, Token, VarSection } from './types'
+import { SCALAR_TYPES, USER_FB_TYPES, isStruct, isUserFb } from './types'
+import type { Ast, DataType, Decl, FbDef, MethodDef, Token, VarSection } from './types'
 import type { Controller } from '../core/controller'
 import type { TagRename } from './controllerEdits'
 
@@ -344,6 +344,11 @@ function topLevelSpans(toks: readonly Token[]): TextSpan[] {
   return out
 }
 
+/** The declaration of key `k` that `decls` makes itself. A VAR_EXTERNAL is not one: it names the controller's tag. */
+function ownDecl(decls: readonly Decl[], k: string): Decl | undefined {
+  return decls.find((d) => identKey(d.name) === k && d.section !== 'VAR_EXTERNAL')
+}
+
 /** Is token `i` a use of the variable it spells? Not when it names a member (`Zone.Count`), or a formal parameter or a
  *  field being given a value (`T(Count := n)`, `(Count := 3)`): those name something of the callee's or the type's. */
 function spellsVariable(toks: readonly Token[], i: number): boolean {
@@ -377,7 +382,6 @@ export function renameTag(source: string, scope: TagScope, from: string, to: str
   const spans = topLevelSpans(toks)
   const spanOf = (name: string): TextSpan | undefined => spans.find((s) => s.kind === 'pou' && identKey(s.name) === identKey(name))
   const within = (s: TextSpan, offset: number): boolean => offset >= s.start && offset < s.end
-  const ownDecl = (decls: readonly Decl[], k: string): Decl | undefined => decls.find((d) => identKey(d.name) === k && d.section !== 'VAR_EXTERNAL')
   // the offsets of a CONFIGURATION's VAR blocks: its globals are the controller's tags; the rest of it is tasks and
   // program lines, which name tasks and instances
   const configVars: Array<[number, number]> = []
@@ -430,6 +434,137 @@ export function renameTag(source: string, scope: TagScope, from: string, to: str
     out = out.slice(0, t.pos.offset) + to + out.slice(t.pos.offset + t.value.length)
   }
   return { source: out, error: null }
+}
+
+/** What a name resolved to: where its declaration's name is written, and what its members are looked up in. */
+interface Definition {
+  at: number
+  /** a variable's or a field's type: its members are the block's or the struct's */
+  type?: DataType
+  /** a FUNCTION's or a METHOD's declarations: a formal argument of a call to it names one of these */
+  decls?: readonly Decl[]
+}
+
+/**
+ * Where the name at `offset` is declared: the offset of the declaration's name, or null when `offset` is on no name the
+ * program declares (a keyword, a standard block, a library block's member, a half-written program).
+ *
+ * A name resolves the way the engine resolves it, innermost first: a METHOD's variables, its POU's, what a function
+ * block inherits, the controller's (which is where a VAR_EXTERNAL points), then the program's POUs and types. A member
+ * (`Zone.Count`) and a formal argument (`T(PT := ...)`) are looked up in the instance's or the callee's declarations.
+ * Library blocks merged in from the motion prelude have no text in `source`, so nothing resolves into them.
+ */
+export function definitionAt(source: string, offset: number): number | null {
+  const parsed = ast(source)
+  if (!parsed) return null
+  const { ast: a, toks } = parsed
+  // the name token the offset is in or just after (a caret at a word's end is on that word)
+  let lo = 0
+  let hi = toks.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (toks[mid]!.pos.offset <= offset) lo = mid + 1
+    else hi = mid
+  }
+  let at = lo - 1
+  const onName = (t: Token | undefined): boolean => t?.kind === 'ident' && offset <= t.pos.offset + t.value.length
+  // a token starting right at the caret (`;` after a name) loses to the name the caret ends
+  if (!onName(toks[at]) && toks[at]?.pos.offset === offset) at--
+  if (!onName(toks[at])) return null
+
+  const fbs = a.fbDefs.filter((f) => !f.library)
+  const fbNamed = (name: string): FbDef | undefined => fbs.find((f) => identKey(f.name) === identKey(name))
+  // a POU's or type's pos may be its keyword: its name is the first token after it that spells the name
+  const nameFrom = (pos: number, name: string): number => {
+    const k = identKey(name)
+    for (let j = tokenAt(toks, pos); j >= 0 && j < toks.length && toks[j]!.pos.offset < pos + 200; j++) {
+      if (toks[j]!.kind === 'ident' && identKey(toks[j]!.value) === k) return toks[j]!.pos.offset
+    }
+    return pos
+  }
+  const ofDecl = (d: Decl): Definition => ({ at: d.pos.offset, type: d.type })
+  const ofMethod = (m: MethodDef): Definition => ({ at: nameFrom(m.pos.offset, m.name), type: m.ret ?? undefined, decls: m.decls })
+  // a function block and every block it EXTENDS, itself first (a cycle is the checker's to report, so it stops one)
+  const chain = (fb: FbDef | undefined): FbDef[] => {
+    const out: FbDef[] = []
+    for (let f = fb; f && !out.includes(f); f = f.extends ? fbNamed(f.extends.name) : undefined) out.push(f)
+    return out
+  }
+  const inBlock = (fb: FbDef | undefined, k: string): Definition | null => {
+    for (const f of chain(fb)) {
+      const d = ownDecl(f.decls, k)
+      if (d) return ofDecl(d)
+      const m = f.methods?.find((x) => identKey(x.name) === k && !x.bodyless)
+      if (m) return ofMethod(m)
+    }
+    return null
+  }
+  const member = (of: Definition | null, k: string): Definition | null => {
+    if (!of) return null
+    if (of.decls) {
+      const d = ownDecl(of.decls, k)
+      if (d) return ofDecl(d)
+    }
+    // the parser leaves every named type as `{ fb }` (the checker sorts blocks from structs), so the name is tried as both
+    const typeName = of.type && isUserFb(of.type) ? of.type.fb : of.type && isStruct(of.type) ? of.type.struct : null
+    if (typeName === null) return null
+    const fb = fbNamed(typeName)
+    if (fb) return inBlock(fb, k)
+    const f = a.typeDefs.find((t) => !t.library && identKey(t.name) === identKey(typeName))?.fields.find((x) => identKey(x.name) === k)
+    return f ? { at: f.pos.offset, type: f.type } : null
+  }
+  // `variables` false inside a TYPE block, where a name is a field's or a type's, never a variable's
+  const global = (k: string, variables: boolean): Definition | null => {
+    const d = variables ? ownDecl([...a.globals, ...a.decls], k) : undefined
+    if (d) return ofDecl(d)
+    const fn = a.funcDefs.find((f) => !f.library && identKey(f.name) === k)
+    if (fn) return { at: nameFrom(fn.pos.offset, fn.name), type: fn.ret, decls: fn.decls }
+    const named = [...fbs, ...a.programDefs, ...a.interfaceDefs, ...a.typeDefs, ...a.enumDefs, ...a.subrangeDefs, ...a.aliasDefs]
+      .filter((t) => !('library' in t && t.library) && !('inline' in t && t.inline))
+      .find((t) => identKey(t.name) === k)
+    if (named) return { at: nameFrom(named.pos.offset, named.name) }
+    const value = a.enumDefs.filter((e) => !e.library).flatMap((e) => e.members).find((m) => identKey(m.name) === k)
+    return value ? { at: value.pos.offset } : null
+  }
+  // a name standing alone, seen from where it is written
+  const plain = (i: number): Definition | null => {
+    const k = identKey(toks[i]!.value)
+    const where = toks[i]!.pos.offset
+    const span = topLevelSpans(toks).find((s) => where >= s.start && where < s.end)
+    if (span?.kind === 'pou') {
+      const fb = fbNamed(span.name)
+      const method = fb?.methods?.find((m) => m.start !== undefined && m.end !== undefined && where >= m.start && where < m.end)
+      const mine = method && ownDecl(method.decls, k)
+      if (mine) return ofDecl(mine)
+      const pou = [...a.programDefs, ...a.funcDefs].find((p) => identKey(p.name) === identKey(span.name))
+      const own = pou && ownDecl(pou.decls, k)
+      if (own) return ofDecl(own)
+      const inherited = inBlock(fb, k)
+      if (inherited) return inherited
+    }
+    return global(k, span?.kind !== 'type')
+  }
+  const resolve = (i: number): Definition | null => {
+    const prev = toks[i - 1]
+    if (prev?.kind === 'op' && prev.value === '.') return toks[i - 2]?.kind === 'ident' ? member(resolve(i - 2), identKey(toks[i]!.value)) : null
+    const next = toks[i + 1]
+    if (next?.kind === 'op' && (next.value === ':=' || next.value === '=>') && prev?.kind === 'op' && (prev.value === '(' || prev.value === ',')) {
+      // a formal argument: the callee is the name before the bracket this argument list opened with
+      let depth = 0
+      for (let j = i - 1; j > 0; j--) {
+        const t = toks[j]!
+        if (t.kind !== 'op') continue
+        if (t.value === ')' || t.value === ']') depth++
+        else if (t.value === '(' || t.value === '[') {
+          if (depth > 0) depth--
+          else return t.value === '(' && toks[j - 1]?.kind === 'ident' ? member(resolve(j - 1), identKey(toks[i]!.value)) : null
+        }
+      }
+      return null
+    }
+    return plain(i)
+  }
+  return resolve(at)?.at ?? null
 }
 
 /**

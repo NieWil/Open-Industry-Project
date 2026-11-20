@@ -478,5 +478,5 @@ definePart({
     if (rails) out.splice(1, 0, { desc: handrails(g, n, width), material: 'stairSteel', colorParam: 'color', link: 'railFrame' })
     return out
   },
-  step() {},
+  react() {},
 })

@@ -1,0 +1,355 @@
+{
+  "format": 6,
+  "id": "oip.spur-roller-conveyor",
+  "name": "Spur Roller Conveyor",
+  "params": {
+    "length": {
+      "type": "number",
+      "default": 2,
+      "min": 0.5,
+      "step": 0.1,
+      "label": "Length (m)",
+      "group": "Size",
+      "handle": {
+        "kind": "face",
+        "axis": "x",
+        "angleFrontParam": "angleFrontDeg",
+        "angleBackParam": "angleBackDeg"
+      },
+      "desc": "Bed length along travel, measured down the centreline. The end faces stay splayed at the angles below as it grows, so the short side and long side keep their difference."
+    },
+    "width": {
+      "type": "number",
+      "default": 1.524,
+      "min": 0.2,
+      "step": 0.05,
+      "label": "Width (m)",
+      "group": "Size",
+      "handle": {
+        "kind": "face",
+        "axis": "z"
+      },
+      "desc": "Bed width across travel. Drag the dot on either side face to resize in the viewport."
+    },
+    "frameHeight": {
+      "type": "number",
+      "default": 0.17,
+      "min": 0.1,
+      "max": 0.6,
+      "step": 0.01,
+      "label": "Frame height (m)",
+      "group": "Size",
+      "desc": "Depth of the side frame channel below the rollers. Set it to the Frame height of the conveyor this bed butts against so the two frames line up at the joint. The legs shorten or lengthen to meet the frame bottom; the deck height does not move."
+    },
+    "fpmUnits": {
+      "type": "boolean",
+      "default": true,
+      "whenAbsent": false,
+      "imperialUnits": true,
+      "label": "PLC speed in FPM",
+      "desc": "The unit the PLC commands this conveyor in. On: feet per minute. Off: metres per second. The speed tag is a REAL either way, so switching changes what its value means and never how the program declares it. Set by the scene Units (Scene Properties), which switch every conveyor together, so the Inspector does not show it. A conveyor saved before this switch existed is in metres per second."
+    },
+    "speedFpm": {
+      "type": "number",
+      "default": 197,
+      "min": -600,
+      "max": 600,
+      "step": 1,
+      "unit": "FPM",
+      "label": "Speed",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "Surface speed in feet per minute. Negative runs it backwards. A program can command this through the FPM speed tag below."
+    },
+    "speed": {
+      "type": "number",
+      "unit": "m/s",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "default": 1,
+      "min": -3,
+      "max": 3,
+      "step": 0.1,
+      "label": "Speed",
+      "desc": "Surface speed carried along the bed. Negative runs it backwards, which is the ONLY way to reverse flow - rotating the part 180 degrees moves its ends and their splay instead. A program can command this through the speed tag below."
+    },
+    "accelTime": {
+      "type": "number",
+      "unit": "s",
+      "default": 0.2,
+      "min": 0,
+      "max": 30,
+      "step": 0.1,
+      "label": "Accel time",
+      "desc": "How long the drive takes to bring the conveyor from stopped up to its rated speed (the speed that reads 30, under Comms > Feedback), like the acceleration time set on a VFD. A smaller change takes proportionally less. 0 starts instantly."
+    },
+    "decelTime": {
+      "type": "number",
+      "unit": "s",
+      "default": 0.2,
+      "min": 0,
+      "max": 30,
+      "step": 0.1,
+      "label": "Decel time",
+      "desc": "How long the drive takes to bring the conveyor from rated speed down to a stop. Cargo keeps travelling while it does, so a box stopped at a photo-eye ends up past it. 0 stops instantly."
+    },
+    "angleFrontDeg": {
+      "type": "number",
+      "default": 30,
+      "min": -60,
+      "max": 60,
+      "step": 5,
+      "label": "Front angle (°)",
+      "group": "Ends",
+      "desc": "Splay angle of the DISCHARGE end face. This is what makes the part a spur: an angled face merges flush onto the side of a straight conveyor instead of butting square against it. 0 leaves the end square."
+    },
+    "angleBackDeg": {
+      "type": "number",
+      "default": 0,
+      "min": -60,
+      "max": 60,
+      "step": 5,
+      "label": "Back angle (°)",
+      "group": "Ends",
+      "desc": "Splay angle of the INFEED end face. Leave it at 0 for a spur fed square from behind; angle it too when the piece has to sit between two angled neighbours."
+    },
+    "rollerClass": {
+      "type": "enum",
+      "default": "light",
+      "label": "Roller class",
+      "group": "Size",
+      "desc": "Duty rating, which sets how thick the rollers are and how closely they are pitched: light 24 mm at 75 mm centres, medium 30 at 100, heavy 40 at 130. Heavier rollers sit further apart, so small product needs the lighter class to stay supported.",
+      "options": [
+        {
+          "value": "light",
+          "label": "Light"
+        },
+        {
+          "value": "medium",
+          "label": "Medium"
+        },
+        {
+          "value": "heavy",
+          "label": "Heavy"
+        }
+      ]
+    },
+    "leftGuard": {
+      "type": "boolean",
+      "default": true,
+      "label": "Left guard",
+      "group": "Guards",
+      "desc": "Guard wall down the left side, looking along travel. A real barrier, so turning it off lets cargo leave the bed sideways - which on a spur is usually the point."
+    },
+    "rightGuard": {
+      "type": "boolean",
+      "default": true,
+      "label": "Right guard",
+      "group": "Guards",
+      "desc": "Guard wall down the right side, looking along travel. A real barrier, so turning it off lets cargo leave the bed sideways."
+    },
+    "guardHoles": {
+      "type": "numberList",
+      "arity": 3,
+      "default": [],
+      "hidden": true,
+      "label": "Guard holes [x m, y m, side ±1]",
+      "group": "Guards",
+      "desc": "Where sensor beams cross the side guards. Worked out by the host from the scene; not for editing."
+    },
+    "guardExtents": {
+      "type": "numberList",
+      "hidden": true,
+      "arity": 3,
+      "default": [],
+      "label": "Rail extents [side ±1, back m, front m]",
+      "group": "Guards",
+      "desc": "Where the rails and guards STOP on each side, in bed-local X. Normally written by the host: when this spur merges flush onto another conveyor, this retracts the rails to its outer wall instead of running them through its frame. Worked out by the host from the scene; not for editing."
+    },
+    "guardMitres": {
+      "type": "numberList",
+      "arity": 3,
+      "default": [],
+      "hidden": true,
+      "label": "Guard mitres [x m, c, side ±1]",
+      "group": "Guards",
+      "desc": "Where a guard end is cut at an angle to meet the guard of the conveyor this one merges with. Worked out by the host from the scene; not for editing."
+    },
+    "guardGaps": {
+      "type": "numberList",
+      "arity": 3,
+      "default": [],
+      "hidden": true,
+      "label": "Guard gaps [x0 m, x1 m, side ±1]",
+      "group": "Guards",
+      "desc": "Where the guards are opened, for a device whose arms cross them. Worked out by the host from the scene; not for editing."
+    },
+    "railCuts": {
+      "type": "numberList",
+      "arity": 3,
+      "default": [],
+      "hidden": true,
+      "label": "Rail cuts [x m, c, side ±1]",
+      "group": "Guards",
+      "desc": "Where a frame rail end is cut to fit against the frame of the conveyor this one merges onto. Worked out by the host from the scene; not for editing."
+    },
+    "standHeight": {
+      "type": "number",
+      "default": 2,
+      "min": 0.1,
+      "max": 3,
+      "step": 0.01,
+      "rest": "surfaceBelow",
+      "label": "Stand height (m)",
+      "desc": "Height of the deck above whatever is beneath it, which sets the leg length. The host fills this in when you drop or snap the conveyor, so the legs reach the floor - or a platform crossing underneath - without you measuring. Pin it by hand when you want a deliberate height."
+    },
+    "speedTag": {
+      "type": "tag",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "dir": "in",
+      "stType": "REAL",
+      "setpointFor": "speed",
+      "default": "",
+      "label": "Speed tag (m/s)",
+      "group": "Comms",
+      "desc": "The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed."
+    },
+    "speedFpmTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "REAL",
+      "setpointFor": "speedFpm",
+      "default": "",
+      "label": "Speed tag (FPM)",
+      "group": "Comms",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0."
+    },
+    "runTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "onlyWhenDriven": true,
+      "default": "",
+      "label": "Run tag (rollers run while true)",
+      "group": "Comms",
+      "desc": "Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the bed."
+    },
+    "runningTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Running tag (true while moving)",
+      "group": "Comms",
+      "desc": "Feedback the conveyor publishes for the program to read: true whenever it is actually moving. This is the EFFECTIVE speed, gates included, so a run tag holding it at zero reads false here."
+    },
+    "speedAt30": {
+      "type": "number",
+      "default": 1,
+      "min": 0.01,
+      "max": 10,
+      "step": 0.01,
+      "label": "Speed that reads 30 (m/s)",
+      "group": "Comms/Feedback",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": false
+      },
+      "desc": "The surface speed this conveyor reaches when its drive turns at 30. It scales the velocity tag: running at exactly this speed reads 30."
+    },
+    "speedAt30Fpm": {
+      "type": "number",
+      "default": 197,
+      "min": 1,
+      "max": 2000,
+      "step": 1,
+      "label": "Speed that reads 30 (FPM)",
+      "group": "Comms/Feedback",
+      "visibleWhen": {
+        "param": "fpmUnits",
+        "is": true
+      },
+      "desc": "The surface speed, in feet per minute, this conveyor reaches when its drive turns at 30. It scales the velocity tag: running at exactly this speed reads 30."
+    },
+    "velocityTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "REAL",
+      "default": "",
+      "label": "Velocity tag (30 at the speed above)",
+      "group": "Comms/Feedback",
+      "desc": "Drive feedback the program reads: the effective speed as a share of the speed at 30 revolutions, times 30. Stopped reads 0, and a run tag holding the conveyor still counts as stopped."
+    },
+    "inchesPerPulse": {
+      "type": "number",
+      "default": 1,
+      "min": 0.05,
+      "max": 100,
+      "step": 0.05,
+      "label": "Travel per pulse (in)",
+      "group": "Comms/Feedback",
+      "desc": "How far the surface travels between pulses on the pulse tag. A pulse cannot be finer than one simulation step, so a fast conveyor at a fine pitch needs a higher project simHz."
+    },
+    "pulseTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Pulse tag (one per pitch)",
+      "group": "Comms/Feedback",
+      "desc": "An encoder for the program to count: TRUE for one simulation step each time the surface has travelled the inches above, in either direction, and FALSE otherwise."
+    },
+    "encoderTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "REAL",
+      "default": "",
+      "label": "Encoder tag (travel, m)",
+      "group": "Comms/Feedback",
+      "desc": "Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station."
+    }
+  },
+  "behavior": "// Spur Roller Conveyor — a splayed merge roller bed (geometry-function tier). Its deck is a\n// parallelogram of spinning rollers clipped to independent front/back splay faces, framed by straight L-rails +\n// side guards + a trestle leg. The steel is emitted as instanced templates (MeshPart.instances) sharing the unit\n// templates (and pool buckets) the straight belt and belt spur use; only the two collision guard walls stay\n// per-part meshes. The behavior is a straight roller conveyor's: step(ctx) drives the surface velocity along the\n// flow axis (+X) at the set speed and the host both carries cargo on the flat deck and spins each roller about its\n// own axle. A negative speed reverses; a PLC comms trio gates/commands it. The rollers are clipped to the front/back\n// splay faces, each end roller shortened to the bevel (the per-instance roller `length`). Centred on the origin so the\n// host's flat conveying deck (length×width) lines up under the rollers.\n//\n// This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the\n// _shared/ modules it imports joined in and `manifest` left out) and rig.json (the manifest).\n\n// ---- from examples/parts/_shared/conveyorUnits.js ----\n/** metres per second in one foot per minute */\nconst FPM_MS = 0.00508\n\n/** `{ group }` to spread into a param, or nothing when there is no group */\nconst paramGroup = (group) => (group ? { group } : {})\n\n/** Spread into the part's own m/s `speed` and `speedTag` params: shown only while the PLC speaks metres per second. */\nconst METRIC_ONLY = { visibleWhen: { param: 'fpmUnits', is: false } }\n\n/** Params to stand BEFORE the part's own `speed`: the unit switch, and the speed in the other unit. */\nfunction speedUnitParams(speedMs) {\n  return {\n    fpmUnits: { type: 'boolean', default: true, whenAbsent: false, imperialUnits: true, label: 'PLC speed in FPM', desc: 'The unit the PLC commands this conveyor in. On: feet per minute. Off: metres per second. The speed tag is a REAL either way, so switching changes what its value means and never how the program declares it. Set by the scene Units (Scene Properties), which switch every conveyor together, so the Inspector does not show it. A conveyor saved before this switch existed is in metres per second.' },\n    speedFpm: { type: 'number', default: Math.round(speedMs / FPM_MS), min: -600, max: 600, step: 1, unit: 'FPM', label: 'Speed', visibleWhen: { param: 'fpmUnits', is: true }, desc: 'Surface speed in feet per minute. Negative runs it backwards. A program can command this through the FPM speed tag below.' },\n  }\n}\n\n/** The param to stand right AFTER the part's own `speedTag`: the same setpoint, in FPM. */\nfunction speedFpmTagParam(group) {\n  return {\n    speedFpmTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speedFpm', default: '', label: 'Speed tag (FPM)', ...paramGroup(group), visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The program commands surface speed here in feet per minute, replacing the Speed field above, which then shows the live value read-only. Once BOUND this takes over even if no program writes it, so an unwritten tag holds the conveyor at 0.' },\n  }\n}\n\n/** In step(): the Inspector readout of whichever speed field is in use. `v` is the effective m/s. */\nfunction reportSpeed(ctx, fpm, v) {\n  if (fpm) ctx.report('speedFpm', Math.round(v / FPM_MS)); else ctx.report('speed', v)\n}\n\n// ---- from examples/parts/_shared/conveyorDrive.js ----\n/** Params to stand right AFTER the part's own `speed`: the drive's ramp, in seconds from stopped to rated. */\nfunction driveRampParams(accelTime, decelTime) {\n  return {\n    accelTime: { type: 'number', unit: 's', default: accelTime, min: 0, max: 30, step: 0.1, label: 'Accel time', desc: 'How long the drive takes to bring the conveyor from stopped up to its rated speed (the speed that reads 30, under Comms > Feedback), like the acceleration time set on a VFD. A smaller change takes proportionally less. 0 starts instantly.' },\n    decelTime: { type: 'number', unit: 's', default: decelTime, min: 0, max: 30, step: 0.1, label: 'Decel time', desc: 'How long the drive takes to bring the conveyor from rated speed down to a stop. Cargo keeps travelling while it does, so a box stopped at a photo-eye ends up past it. 0 stops instantly.' },\n  }\n}\n\n/** Params to stand after the part's `runningTag`: the velocity feedback, the pulse and the encoder, in a\n *  `Feedback` section under `group`. */\nfunction driveFeedbackParams(speedMs, group) {\n  const fpm = Math.round(speedMs / FPM_MS)\n  const g = paramGroup(group ? `${group}/Feedback` : 'Feedback')\n  return {\n    speedAt30: { type: 'number', default: speedMs, min: 0.01, max: 10, step: 0.01, label: 'Speed that reads 30 (m/s)', ...g, visibleWhen: { param: 'fpmUnits', is: false }, desc: 'The surface speed this conveyor reaches when its drive turns at 30. It scales the velocity tag: running at exactly this speed reads 30.' },\n    speedAt30Fpm: { type: 'number', default: fpm, min: 1, max: 2000, step: 1, label: 'Speed that reads 30 (FPM)', ...g, visibleWhen: { param: 'fpmUnits', is: true }, desc: 'The surface speed, in feet per minute, this conveyor reaches when its drive turns at 30. It scales the velocity tag: running at exactly this speed reads 30.' },\n    velocityTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Velocity tag (30 at the speed above)', ...g, desc: 'Drive feedback the program reads: the effective speed as a share of the speed at 30 revolutions, times 30. Stopped reads 0, and a run tag holding the conveyor still counts as stopped.' },\n    inchesPerPulse: { type: 'number', default: 1, min: 0.05, max: 100, step: 0.05, label: 'Travel per pulse (in)', ...g, desc: 'How far the surface travels between pulses on the pulse tag. A pulse cannot be finer than one simulation step, so a fast conveyor at a fine pitch needs a higher project simHz.' },\n    pulseTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Pulse tag (one per pitch)', ...g, desc: 'An encoder for the program to count: TRUE for one simulation step each time the surface has travelled the inches above, in either direction, and FALSE otherwise.' },\n    encoderTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Encoder tag (travel, m)', ...g, desc: 'Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station.' },\n  }\n}\n\n/** What a conveyor remembers between steps for its ramp, its pulse and its encoder. Make one at the top level. */\nfunction conveyorDrive() {\n  return {\n    pulseTravel: 0, // surface travel since the last pulse (in)\n    odo: 0, // encoder odometer: surface travel (m), signed with the direction of travel\n    driven: 0, // what the drive is actually doing (m/s): the command, through the accel/decel ramp\n    rampStarted: false, // past the first step, from which every change of command ramps\n  }\n}\n\n/** In step(): the unit the conveyor is set up in and the commanded speed, `{ fpm, setpointTag, commanded }`.\n *  `commanded` is always m/s, so everything after this call is m/s. */\nfunction commandedSpeed(ctx) {\n  const fpm = ctx.params.fpmUnits === true\n  const setpointTag = fpm ? ctx.params.speedFpmTag : ctx.params.speedTag\n  const unit = fpm ? FPM_MS : 1\n  const commanded = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * unit\n  return { fpm, setpointTag, commanded }\n}\n\n/** In step(), after commandedSpeed(): the speed the surface actually runs at (m/s), `target` (the command, gates\n *  applied) through the drive's ramp. Away from 0 it accelerates at rated / accelTime; toward 0 it decelerates at\n *  rated / decelTime; a reversal runs down to 0 before it turns round.\n *  THE FIRST STEP: a conveyor whose speed or run gate a program owns starts from rest, because the program is\n *  starting the line; one running on its authored speed is already running at it, since nothing started it. */\nfunction rampedSpeed(ctx, drive, cmd, target) {\n  // rates are rated speed over the accel / decel time\n  const rated = cmd.fpm ? ctx.params.speedAt30Fpm * FPM_MS : ctx.params.speedAt30\n  let want = target\n  if (!drive.rampStarted) {\n    drive.rampStarted = true\n    // no program commands this conveyor: its authored speed is a belt that is running, not one being started\n    if (!(cmd.setpointTag || (ctx.params.runTag && ctx.tagDriven(ctx.params.runTag)))) drive.driven = want\n  }\n  if (want * drive.driven < 0) { if (ctx.params.decelTime > 0) want = 0; else drive.driven = 0 } // reversing: stop first\n  const rampTime = Math.abs(want) > Math.abs(drive.driven) ? ctx.params.accelTime : ctx.params.decelTime\n  drive.driven = rampTime > 0 && rated > 0 ? ctx.approach(drive.driven, want, (rated / rampTime) * ctx.dt) : want\n  return drive.driven\n}\n\n/** In step(): the velocity feedback, the pulse and the encoder, from the effective speed `v` (m/s). */\nfunction publishDrive(ctx, drive, cmd, v) {\n  // the velocity as a share of the speed at 30\n  const at30 = cmd.fpm ? ctx.params.speedAt30Fpm * FPM_MS : ctx.params.speedAt30\n  if (ctx.params.velocityTag) ctx.writeNumber(ctx.params.velocityTag, at30 > 0 ? (v / at30) * 30 : 0)\n  // the encoder pulse\n  const pitch = ctx.params.inchesPerPulse > 0 ? ctx.params.inchesPerPulse : 1\n  drive.pulseTravel += (Math.abs(v) * ctx.dt) / 0.0254\n  const pulse = drive.pulseTravel >= pitch - 1e-9 // (a hair of tolerance: twelve twelfths of an inch do not sum to exactly one)\n  if (pulse) drive.pulseTravel = Math.max(0, drive.pulseTravel - pitch * Math.max(1, Math.floor(drive.pulseTravel / pitch + 1e-9)))\n  if (ctx.params.pulseTag) ctx.writeTag(ctx.params.pulseTag, pulse)\n  drive.odo += v * ctx.dt\n  if (ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)\n}\n\n// ---- from examples/parts/_shared/guardGaps.js ----\n/** the hidden, host-fed `guardGaps` param */\nfunction guardGapsParam(group) {\n  return { guardGaps: { type: 'numberList', arity: 3, default: [], hidden: true, label: 'Guard gaps [x0 m, x1 m, side ±1]', group, desc: 'Where the guards are opened, for a device whose arms cross them. Worked out by the host from the scene; not for editing.' } }\n}\n\n/**\n * The solid runs of one side's guard: [lo, hi] with that side's gaps taken out, ascending. With no gap it is the\n * whole run. Build each run as its own collision part, so its collider stops at the gap as the mesh does.\n */\nfunction guardGapRuns(p, sign, lo, hi) {\n  var rows = Array.isArray(p.guardGaps) ? p.guardGaps : []\n  var gaps = []\n  for (var i = 0; i < rows.length; i++) {\n    var r = rows[i]\n    if (r[2] !== sign) continue\n    var a = Math.max(r[0], lo), b = Math.min(r[1], hi)\n    if (b - a > 1e-4) gaps.push([a, b])\n  }\n  gaps.sort(function (x, y) { return x[0] - y[0] })\n  var runs = [], cur = lo\n  for (var k = 0; k < gaps.length; k++) {\n    if (gaps[k][0] - cur > 1e-4) runs.push([cur, gaps[k][0]])\n    cur = Math.max(cur, gaps[k][1])\n  }\n  if (hi - cur > 1e-4) runs.push([cur, hi])\n  return runs\n}\n\n// ---- from examples/parts/_shared/guardHolePanel.js ----\n// A side guard's sensor-beam hole panel, drawn once for every function conveyor whose guard is a formed sheet\n// (belt, spur, spur roller, curved, curved roller). The rig roller draws the same plate from core (guardHoles.ts\n// guardHolePanelDescription), without the top return, which is its own link there.\n//\n// Where a beam crosses a guard, the host works out the hole (core/guardHoles.ts: the beams are facts of the scene,\n// not of a frame) and hands it to the conveyor as a `guardHoles` row [x, y, side]; its geometry() splits the guard\n// sheet around a HOLE_PANEL gap there and fills it with this panel.\n//\n// The panel is in the guard's own frame, the one its sheet is built in: x centred on the hole, y up from the running\n// surface, z from the sheet's inner face OUTWARD (0 .. the sheet, then the top return out to LIP). The sheet runs\n// from just under the surface (-0.005) to the guard top with a round hole at `holeY`; the top return runs over it\n// unbroken, so a guard with a hole in it still shows one continuous top edge. Mirror it onto the other side with a\n// 180 degree yaw, never a negative scale (a mirror turns the faces inside out).\n//\n// The numbers are the guard's own (GUARD_HEIGHT, GUARD_THICKNESS, the 20 mm return, GUARD_HOLE_RADIUS and\n// GUARD_HOLE_PANEL in core/types): keep them in sync.\n//\n// `lip`: draw the top return over the panel. A family whose guard SHEET carries its return (the belt's swept L\n// section, split around the hole with it) needs it; one whose return is its own continuous part (the spurs' lip\n// boxes) must not, or the two coincide face to face and z-fight.\nfunction holePanel(g, holeY, lip) {\n  var H = 0.15, T = 0.005, LIP = 0.025, LIP_T = 0.005, R = 0.02, PW = 0.1\n  var hole = []\n  for (var k = 0; k < 16; k++) { var a = (k * Math.PI) / 8; hole.push([R * Math.cos(a), holeY + R * Math.sin(a)]) }\n  var sheet = g.extrude([[-PW / 2, -0.005], [PW / 2, -0.005], [PW / 2, H], [-PW / 2, H]], 0, T, { axis: 'z', holes: [hole] })\n  if (!lip) return sheet\n  return g.merge(sheet, g.box([PW, LIP_T, LIP - T], [0, H - LIP_T / 2, T + (LIP - T) / 2]))\n}\n\n/** the panel's length along the guard (core GUARD_HOLE_PANEL) */\nconst HOLE_PANEL = 0.1\n\n// ---- from examples/parts/_shared/guardMitre.js ----\n/** the param, host-fed and hidden like guardHoles, in the part's guard group */\nfunction guardMitresParam(group) {\n  return { guardMitres: { type: 'numberList', arity: 3, default: [], hidden: true, label: 'Guard mitres [x m, c, side ±1]', group, desc: 'Where a guard end is cut at an angle to meet the guard of the conveyor this one merges with. Worked out by the host from the scene; not for editing.' } }\n}\n\n/** `mitreAt(sign, x)` for these params: the cut at a piece end (0 = square). */\nfunction mitreLookup(p) {\n  var mitreRows = Array.isArray(p.guardMitres) ? p.guardMitres : []\n  return function mitreAt(sign, x) {\n    for (var mr = 0; mr < mitreRows.length; mr++) if (mitreRows[mr][2] === sign && Math.abs(mitreRows[mr][0] - x) < 1e-3) return mitreRows[mr][1]\n    return 0\n  }\n}\n\n/** the RAIL twin of the param: [x, c, side ±1] rows (core/guardExtents.ts GuardExtents.railCuts), host-fed, hidden */\nfunction railCutsParam(group) {\n  return { railCuts: { type: 'numberList', arity: 3, default: [], hidden: true, label: 'Rail cuts [x m, c, side ±1]', group, desc: 'Where a frame rail end is cut to fit against the frame of the conveyor this one merges onto. Worked out by the host from the scene; not for editing.' } }\n}\n\n/**\n * Fitting a frame RAIL end against the host's frame, which stays whole. `railCutLookup(p)` gives\n * `railCutAt(sign, x)`, the row's c at a rail end, or null (no cut). `railEndBands(x, into, c, yBot)` = where the rail\n * stops and what fills out to the cut: `{ sq, bands }`, `sq` the X the square (instanced) rail stops at and each band\n * `{ pts, y0, y1 }` a plan outline in (x, d) to extrude upright, d measured OUT from the guard line (the rail's wall is\n * d -0.01..0 under it, its top flange 0..0.02). `into` is +1 when the piece lies at larger x. The wall ends on the\n * host's outer wall face (c * d back), the flange on the host flange's outer edge, one flange width further out, so\n * sqrt(1 + c^2) * 0.02 further back.\n */\nfunction railCutLookup(p) {\n  var railCutRows = Array.isArray(p.railCuts) ? p.railCuts : []\n  return function railCutAt(sign, x) {\n    for (var rc = 0; rc < railCutRows.length; rc++) if (railCutRows[rc][2] === sign && Math.abs(railCutRows[rc][0] - x) < 1e-3) return railCutRows[rc][1]\n    return null\n  }\n}\nfunction railEndBands(x, into, c, yBot) {\n  var F = 0.02 * Math.sqrt(1 + c * c)\n  function at(d, f) { return x + into * (c * d + f) }\n  var uMax = Math.max(-0.01 * c, 0, F, 0.02 * c + F)\n  var sq = x + into * uMax\n  function band(d0, d1, f, y0, y1) {\n    var raw = [[sq, d0], [at(d0, f), d0], [at(d1, f), d1], [sq, d1]], pts = []\n    for (var i = 0; i < raw.length; i++) {\n      var q = raw[i], prev = pts.length ? pts[pts.length - 1] : raw[raw.length - 1]\n      if (Math.abs(q[0] - prev[0]) > 1e-6 || Math.abs(q[1] - prev[1]) > 1e-6) pts.push(q)\n    }\n    return pts.length >= 3 ? { pts: pts, y0: y0, y1: y1 } : null\n  }\n  var bands = [band(-0.01, 0, 0, yBot, -0.005), band(0, 0.02, F, -0.005, 0)].filter(function (b) { return b })\n  return { sq: sq, bands: bands }\n}\n\n/**\n * The SPURS' straight side rails: `spurRailCutter(g, hw, FWT, FB, railCutAt)` gives `{ railFills, cutRailInstance }`.\n * `cutRailInstance(sign, bE, fE)` = the unit-rail instance for the side-`sign` rail spanning bE..fE, with each end\n * that has a rail cut stopped square at the cut's deepest point, and that end's fill pushed onto `railFills` (emit\n * them as one 'frame' part). The -Z rail is the template yawed 180 degrees, never mirrored.\n */\nfunction spurRailCutter(g, hw, FWT, FB, railCutAt) {\n  var railFills = []\n  function cutRailInstance(sign, bE, fE) {\n    var ends = [[bE, 1], [fE, -1]], lo = bE, hi = fE\n    for (var re = 0; re < 2; re++) {\n      var rc = railCutAt(sign, ends[re][0])\n      if (rc === null) continue\n      var cut = railEndBands(ends[re][0], ends[re][1], rc, FB)\n      if (re === 0) lo = cut.sq\n      else hi = cut.sq\n      for (var rb = 0; rb < cut.bands.length; rb++) {\n        var band = cut.bands[rb]\n        railFills.push(g.extrude(band.pts.map(function (q) { return [q[0], sign * (hw + FWT + q[1])] }), band.y0, band.y1, { axis: 'y' }))\n      }\n    }\n    var cx = (lo + hi) / 2, len = Math.max(hi - lo, 0.01)\n    return sign < 0\n      ? { position: [cx + len / 2, 0, -hw], scale: [len, 1, 1], quaternion: [0, 1, 0, 0] }\n      : { position: [cx - len / 2, 0, hw], scale: [len, 1, 1] }\n  }\n  return { railFills: railFills, cutRailInstance: cutRailInstance }\n}\n\n/**\n * A STRAIGHT guard built along bed-local X with its inner face at |z| = zIn:\n * `guardBand(g, x0, x1, c0, c1, d0, d1, y0, y1, sign, zIn)` = one band of the guard section, x0..x1, d0..d1 outward from\n * the inner face, y0..y1 tall, its ends cut by c0 / c1. Square ends stay a plain box; a mitred end is the band's plan\n * outline extruded upright. A piece too short to hold both cuts stays square.\n */\nfunction guardBand(g, x0, x1, c0, c1, d0, d1, y0, y1, sign, zIn) {\n  if ((c0 === 0 && c1 === 0) || x1 - x0 <= (c0 + c1) * d1) return g.box([x1 - x0, y1 - y0, d1 - d0], [(x0 + x1) / 2, (y0 + y1) / 2, sign * (zIn + (d0 + d1) / 2)])\n  return g.extrude([[x0 + c0 * d0, sign * (zIn + d0)], [x1 - c1 * d0, sign * (zIn + d0)], [x1 - c1 * d1, sign * (zIn + d1)], [x0 + c0 * d1, sign * (zIn + d1)]], y0, y1, { axis: 'y' })\n}\n\n// ---- from examples/parts/_shared/legs.js ----\n// The conveyor floor support, drawn once for every legged conveyor (belt, curved, curved roller, spur, spur roller),\n// and mirrored in TS by legPieces() in src/render/parts/common.ts for the rig roller's kind:'leg' link\n// (conveyorLegs.test.ts holds the two to the same pieces).\n//\n// It is sized to a typical unit-handling conveyor floor stand, not a\n// trestle whose posts were a 7.8\" x 5.9\" box: formed-channel uprights 4\" x 1-3/4\" standing under the side frames, a support\n// channel across under the bed, a 1-1/2\" x 8\" mounting bracket bolted to each frame web, a 6\" x 4\" x 1/4\" foot\n// plate with two anchor bolts, a telescoping inner leg with its adjustment bolts, horizontal cross braces, and knee\n// braces once the stand is tall.\n//\n// Leg-local metres: the floor at y 0, x along travel centred on the station, z across. `height` is the frame bottom\n// above the floor, `hw` half the bed width (the side frame's wall is hw .. hw + 0.01), `dir` the way the knee\n// braces lean along x (+1 / -1, toward the middle of the bed; 0 = none, e.g. on an arc, where a brace reaching\n// along the tangent would miss the curving frame). `frameDepth` is the deck → frame bottom: the mounting bracket\n// climbs 0.127 up the frame web, or stops 10 mm under the deck on a frame too shallow for that (a belt's Frame height\n// goes down to 0.1), dropping the web bolts it no longer reaches. Omitted, it takes the full rise.\n//\n// Returns { boxes, bolts }: a box is [cx, cy, cz, sx, sy, sz, rz] (a unit cube scaled, then turned rz about z),\n// a bolt [cx, cy, cz, r, depth, axis] (a hex head, axis 'y' standing up or 'z' across).\nfunction legPieces(hw, height, dir, frameDepth) {\n  var boxes = [], bolts = []\n  function box(x0, y0, z0, x1, y1, z1) { boxes.push([(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, Math.max(x1 - x0, 1e-4), Math.max(y1 - y0, 1e-4), Math.max(z1 - z0, 1e-4), 0]) }\n  function bolt(x, y, z, axis) { bolts.push([x, y, z, 0.009, 0.007, axis]) }\n  var FACE = hw + 0.01 //              the side frame's outer face: the uprights stand flush under it\n  var LW = 0.0508, LD = Math.min(0.0445, Math.max(hw - 0.02, 0.02)) // upright: 4\" along travel, 1-3/4\" deep\n  var PT = 0.009, CH = 0.076 //        foot plate top (1/4\" plate on a 3 mm floor gap); support channel depth (3\")\n  var TELE = height > 0.45 ? 0.3 : 0 // the telescoping inner leg's top, on a stand tall enough to adjust\n  var RISE = typeof frameDepth === 'number' ? Math.max(0, Math.min(0.127, frameDepth - 0.01)) : 0.127 // bracket rise up the web\n  for (var sg = 0; sg < 2; sg++) {\n    var s = sg === 0 ? 1 : -1, zo = s * FACE, zi = s * (FACE - LD), zc = s * (FACE - LD / 2)\n    var lo = Math.min(zo, zi), hi = Math.max(zo, zi)\n    if (TELE > 0) {\n      box(-0.042, PT, lo + 0.004, 0.042, TELE, hi - 0.004) // inner leg\n      box(-LW, TELE - 0.05, lo, LW, height, hi) //             outer leg, sleeved over it\n      bolt(-0.025, TELE - 0.025, zo + s * 0.0035, 'z'); bolt(0.025, TELE - 0.025, zo + s * 0.0035, 'z') // adjustment bolts\n    } else box(-LW, PT, lo, LW, height, hi)\n    box(-0.0762, 0.003, zc - 0.0508, 0.0762, PT, zc + 0.0508) // foot plate\n    bolt(-0.055, PT + 0.0035, zc, 'y'); bolt(0.055, PT + 0.0035, zc, 'y') // anchor bolts\n    var bo = zo + s * 0.006\n    box(-0.019, height - CH, Math.min(zo, bo), 0.019, height + RISE, Math.max(zo, bo)) // mounting bracket on the frame web\n    if (0.04 + 0.009 <= RISE) bolt(0, height + 0.04, bo + s * 0.0035, 'z') // the web bolts the bracket still reaches\n    if (0.1 + 0.009 <= RISE) bolt(0, height + 0.1, bo + s * 0.0035, 'z')\n    bolt(0, height - CH / 2, bo + s * 0.0035, 'z')\n    if (dir !== 0 && height > 1.0) { // knee brace: 1-1/4\" angle from the upright up to the frame web, outside both\n      var d = Math.min(0.6, 0.45 * height), ax = 0, ay = height - d, bx = dir * d, by = height + 0.04\n      var L = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / L, uy = (by - ay) / L, kz = s * (FACE + 0.016 + 0.006)\n      boxes.push([(ax + bx) / 2, (ay + by) / 2, kz, L, 0.032, 0.032, Math.atan2(by - ay, bx - ax)])\n      bolt(ax + ux * 0.03, ay + uy * 0.03, kz + s * 0.0195, 'z'); bolt(bx - ux * 0.03, by - uy * 0.03, kz + s * 0.0195, 'z')\n    }\n  }\n  var zin = FACE - LD + 0.005 //         the uprights' inner faces, lapped 5 mm\n  box(-0.0222, height - CH, -zin, 0.0222, height, zin) // support channel across under the bed\n  if (height >= 0.6) { // horizontal cross braces (1-3/4\" x 1-1/2\" channel), clear of the telescoping joint\n    var n = Math.min(Math.max(Math.floor(height / 0.9), 1), 3), y0 = TELE + 0.1, y1 = height - CH - 0.1\n    for (var k = 0; k < n && y1 > y0; k++) { var y = y0 + ((k + 1) * (y1 - y0)) / (n + 1); box(-0.0222, y - 0.019, -zin, 0.0222, y + 0.019, zin) }\n  }\n  return { boxes: boxes, bolts: bolts }\n}\n\n// Station layout shared by the straight beds: supports stand at the ends and at bed-joint pitch between (a\n// 10 ft section), the way a real run is supported. LEG_END_INSET is the station's distance in from the end: the\n// upright's half-width plus clearance for the foot plate.\nconst LEG_END_INSET = 0.15\nconst LEG_SPACING = 3.05\n// how far past an end station the middle cadence may start: a third of the pitch, so a middle support never lands\n// within a metre of an end one (at the old 0.5 a 4 m bed stood a middle leg 0.8 m from its head leg)\nconst LEG_CLEARANCE = 1.0\n\n// ---- from examples/parts/_shared/rollerBed.js ----\n/** the drive-band urethane (a warm amber, matte) as a package material: linear RGB of #d9772b */\n\n// The roller's profile, [radius, z] from the axle out to the tube, in the template's native units (radius 0.12):\n// the hub face, the chamfered bearing housing, the rim, and the tube.\nconst ROLLER_PROFILE = [[0, 0.938], [0.0689, 0.938], [0.0718, 0.9362], [0.0787, 0.9199], [0.1072, 0.9199], [0.1072, 0.9351], [0.1092, 0.9371], [0.118, 0.9371], [0.12, 0.9351]]\nconst ROLLER_TEMPLATE_R = 0.12, ROLLER_TEMPLATE_BODY = 2 * 0.9371 // tube radius, and the rim-to-rim length a body is fitted by\n// a roller shorter than this is a sliver at a clipped corner: dropped rather than drawn\nconst ROLLER_SLIVER = 0.02\n// Drive-band proportions as fractions of the ROLLER RADIUS, so every roller class keeps one look: on a 24 mm roller a\n// 4.8 mm cord (the common 3/16\" round band) in grooves 20 and 38 mm in from the bed edge.\nconst BAND_CORD_PER_R = 1 / 5, BAND_INSET_PER_R = 5 / 6, BAND_SPACING_PER_R = 3 / 4\n\n// the tube: the profile walked from the -Z hub to the +Z hub, turned about Z. Axle = local Z, centred.\nfunction rollerTemplate(g) {\n  var walk = []\n  for (var i = 0; i < ROLLER_PROFILE.length; i++) walk.push([ROLLER_PROFILE[i][0], -ROLLER_PROFILE[i][1]])\n  for (var k = ROLLER_PROFILE.length - 1; k >= 0; k--) walk.push([ROLLER_PROFILE[k][0], ROLLER_PROFILE[k][1]])\n  return g.lathe(walk, { axis: 'z', segments: 18, startAngle: Math.PI / 18 })\n}\n// an axle stub: a capped unit cylinder along Z, centred\nfunction stubTemplate(g) {\n  return g.lathe([[0, -0.5], [1, -0.5], [1, 0.5], [0, 0.5]], { axis: 'z', segments: 16 })\n}\n// a drive band's half-ring: a torus of loop radius lr and cord radius t over the -X half of the XY plane (the side of\n// a roller facing AWAY from the neighbour the band runs to). Axle = local Z.\nfunction bandArcTemplate(g, lr, t) {\n  var s = g.surface(), T = 10, N = 6, rows = []\n  for (var i = 0; i <= T; i++) {\n    var u = Math.PI * i / T, row = []\n    for (var j = 0; j < N; j++) {\n      var v = 2 * Math.PI * j / N, rr = lr + t * Math.cos(v)\n      row.push(s.vertex(-rr * Math.sin(u), rr * Math.cos(u), t * Math.sin(v)))\n    }\n    rows.push(row)\n  }\n  for (var a = 0; a < T; a++) for (var b = 0; b < N; b++) s.quad(rows[a][b], rows[a + 1][b], rows[a + 1][(b + 1) % N], rows[a][(b + 1) % N])\n  return s.build()\n}\n// a band's straight run: an open unit cylinder along X (its ends bury in the half-rings)\nfunction bandStrandTemplate(g) {\n  return g.lathe([[1, -0.5], [1, 0.5]], { axis: 'x', segments: 6 })\n}\nfunction yawQuat(yaw) { return [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)] }\n\n// Where the bands go, from the rollers in bed order ({x, z, yaw, length}). A groove sits on the line\n// z = side * (zWall - inset) (or one spacing further in); pair k uses the first groove when k is even, the second when\n// odd, as a two-groove roller does. The band runs in the plane across the axles, so its far end is the near groove\n// point projected onto the next roller's axle. A pair is skipped when a groove point falls off its (clipped) roller,\n// when the two rollers aren't parallel, or when the gap is a dropped roller wide (over 1.5x the tightest pair).\nfunction layoutRollerBands(rollers, bands, fullAxle, radius) {\n  var side = bands.side || 1\n  var zWall = typeof bands.zWall === 'number' ? bands.zWall : fullAxle / 2\n  var cord = typeof bands.cord === 'number' ? bands.cord : radius * BAND_CORD_PER_R\n  var inset = typeof bands.inset === 'number' ? bands.inset : radius * BAND_INSET_PER_R\n  var spacing = typeof bands.spacing === 'number' ? bands.spacing : radius * BAND_SPACING_PER_R\n  var grooves = [side * (zWall - inset), side * (zWall - inset - spacing)]\n  var out = [], minSpan = Infinity\n  for (var k = 0; k + 1 < rollers.length; k++) {\n    var a = rollers[k], b = rollers[k + 1]\n    if (Math.abs(a.yaw - b.yaw) > 1e-4) continue\n    var sin = Math.sin(a.yaw), cos = Math.cos(a.yaw)\n    if (Math.abs(cos) < 1e-3) continue // an axle along the flow has no wall to measure a groove from\n    var zg = grooves[k % 2]\n    var ta = (zg - a.z) / cos\n    if (Math.abs(ta) > a.length / 2 - cord) continue\n    var px = a.x + ta * sin, pz = zg\n    var d = (b.x - px) * cos - (b.z - pz) * sin // across to b's axle, along the axle normal (cos, -sin)\n    if (Math.abs(d) < 1e-4) continue\n    var qx = px + d * cos, qz = pz - d * sin\n    var tb = (qx - b.x) * sin + (qz - b.z) * cos\n    if (Math.abs(tb) > b.length / 2 - cord) continue\n    minSpan = Math.min(minSpan, Math.abs(d))\n    out.push({ px: px, pz: pz, qx: qx, qz: qz, span: Math.abs(d) })\n  }\n  return { cord: cord, bands: out.filter(function (b) { return b.span <= minSpan * 1.5 }) }\n}\n\n// A roller bed as MeshParts: the tubes (spinning), their axle stubs (spinning with them) and, on a powered bed, the\n// drive bands (static - an even band looks the same moving or still, and a static bank merges across every bed).\n//   rollers  [{x, z, yaw, length}] in bed order: part-local centre, yaw about +Y (axle = local +Z yawed), body length\n//   o.radius the tube radius, which also sets the no-slip spin rate (speed / radius)\n//   o.y      the axle height in the frame the parts are drawn in\n//   o.link   the rig link to hang them on (optional)\n//   o.stub   { radius, length, protrude }: two shafts per roller, centred protrude past each (clipped) end\n//   o.bands  a band spec ({ zWall, inset, spacing, cord, side }, all optional) - omit for an unpowered bed\n//   o.fullAxle the unclipped axle length the bands measure the bed edge from (default the first roller's length)\n//   o.dropSlivers  skip rollers of length <= ROLLER_SLIVER\n//   o.bandMaterial the package material id the bands are drawn in (default 'band')\n//   o.speed  the reported value (ctx.report) that turns the rollers, m/s at the tube surface (default 'speed')\n// A positive speed turns the tubes the way that carries cargo toward +X on a bed whose axles run along Z: about -Z.\nfunction rollerBed(g, rollers, o) {\n  var R = o.radius, y = o.y || 0\n  var sxy = R / ROLLER_TEMPLATE_R\n  var spin = { axis: [0, 0, -1], radius: R }\n  if (o.speed) spin.speed = o.speed\n  var bodies = [], stubs = [], drawn = []\n  for (var i = 0; i < rollers.length; i++) {\n    var r = rollers[i]\n    if (o.dropSlivers && r.length <= ROLLER_SLIVER) continue\n    drawn.push(r)\n    var q = yawQuat(r.yaw)\n    bodies.push({ position: [r.x, y, r.z], quaternion: q, scale: [sxy, sxy, Math.max(0.01, r.length) / ROLLER_TEMPLATE_BODY] })\n    if (o.stub) {\n      var ax = Math.sin(r.yaw), az = Math.cos(r.yaw), so = r.length / 2 + o.stub.protrude\n      var ss = [o.stub.radius, o.stub.radius, o.stub.length]\n      stubs.push({ position: [r.x + ax * so, y, r.z + az * so], quaternion: q, scale: ss })\n      stubs.push({ position: [r.x - ax * so, y, r.z - az * so], quaternion: q, scale: ss })\n    }\n  }\n  var out = [{ desc: rollerTemplate(g), finish: 'roller', instances: bodies, spin: spin }]\n  if (o.stub) out.push({ desc: stubTemplate(g), finish: 'roller', instances: stubs, spin: spin, castShadow: false })\n  if (o.bands) {\n    var full = typeof o.fullAxle === 'number' ? o.fullAxle : (rollers.length ? rollers[0].length : 0)\n    var laid = layoutRollerBands(drawn, o.bands, full, R)\n    var cord = laid.cord, lr = R + cord * 0.4 // seated on the tube: the cord's inner edge just under the facet flats\n    var arcs = [], strands = []\n    for (var b = 0; b < laid.bands.length; b++) {\n      var bd = laid.bands[b]\n      var yaw = Math.atan2(-(bd.qz - bd.pz), bd.qx - bd.px) // band frame: local X toward q, local Z the axle\n      arcs.push({ position: [bd.qx, y, bd.qz], quaternion: yawQuat(yaw + Math.PI) })\n      arcs.push({ position: [bd.px, y, bd.pz], quaternion: yawQuat(yaw) })\n      var mx = (bd.px + bd.qx) / 2, mz = (bd.pz + bd.qz) / 2, sc = [bd.span, cord / 2, cord / 2]\n      strands.push({ position: [mx, y + lr, mz], quaternion: yawQuat(yaw), scale: sc })\n      strands.push({ position: [mx, y - lr, mz], quaternion: yawQuat(yaw), scale: sc })\n    }\n    // finish 'mesh' says plainly what they are: a finish-less submesh of a CONVEYING function part is read as its belt\n    // fabric, which would draw the bands in the belt weave\n    var bm = o.bandMaterial || 'band'\n    out.push({ desc: bandArcTemplate(g, lr, cord / 2), finish: 'mesh', material: bm, instances: arcs, castShadow: false })\n    out.push({ desc: bandStrandTemplate(g), finish: 'mesh', material: bm, instances: strands, castShadow: false })\n  }\n  if (o.link) for (var m = 0; m < out.length; m++) out[m].link = o.link\n  return out\n}\n\n// ---- from examples/parts/_shared/rollerFrame.js ----\n/** The roller beds' `frameHeight` param: the side frame channel's height (deck-side top 5 mm under the\n *  conveying plane, as on every bed). Same meaning and default as the belt's `height`, whose frame wall is that deep,\n *  so a roller bed set to a belt's Frame height meets its frame flush. A geometry()-tier bed reads its frame bottom\n *  through frameBottom(); a rig bed tracks it with sizeParams / offsetParams / leg frameDepthParam.\n *  Same range as the belt's, so every Frame height has a roller bed that matches it; on a shallow frame the legs'\n *  mounting brackets shorten to stay under the deck (legPieces' frameDepth, _shared/legs.js). */\nfunction frameHeightParam(group) {\n  return {\n    frameHeight: { type: 'number', default: 0.17, min: 0.1, max: 0.6, step: 0.01, label: 'Frame height (m)', ...(group ? { group } : {}), desc: 'Depth of the side frame channel below the rollers. Set it to the Frame height of the conveyor this bed butts against so the two frames line up at the joint. The legs shorten or lengthen to meet the frame bottom; the deck height does not move.' },\n  }\n}\n\n/** The frame bottom's y (negative, below the deck) for a geometry()-tier bed.\n *  Rounded to the micrometre exactly as the belt's is, so at the default it is the literal -0.175 the pooled rail\n *  template is shared by value with (0.17 + 0.005 is 0.17500000000000002 in binary). */\nfunction frameBottom(p) {\n  var fh = typeof p.frameHeight === 'number' && p.frameHeight > 0 ? p.frameHeight : 0.17\n  return -Math.round((fh + 0.005) * 1e6) / 1e6\n}\n\nconst drive = conveyorDrive() // the ramp, the pulse and the encoder, remembered between steps\n\ndefinePart({\n  params: {\n    // The length handle's angleFrontParam/angleBackParam mark this part a spur to the host (angled snap ends,\n    // parallelogram footprint/deck, host guard opening + host-fed guardExtents). No sideGap override: this bed\n    // ends flush at its splayed face (no end drum, and the roller stubs protrude in Z, not X), so the default\n    // 2x-frame-flange junction clearance is all it needs — same as the belt spur.\n    length: { type: 'number', default: 2, min: 0.5, step: 0.1, label: 'Length (m)', group: 'Size', handle: { kind: 'face', axis: 'x', angleFrontParam: 'angleFrontDeg', angleBackParam: 'angleBackDeg' }, desc: 'Bed length along travel, measured down the centreline. The end faces stay splayed at the angles below as it grows, so the short side and long side keep their difference.' },\n    width: { type: 'number', default: 1.524, min: 0.2, step: 0.05, label: 'Width (m)', group: 'Size', handle: { kind: 'face', axis: 'z' }, desc: 'Bed width across travel. Drag the dot on either side face to resize in the viewport.' },\n    ...frameHeightParam('Size'),\n    ...speedUnitParams(1),\n    speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 1, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'Surface speed carried along the bed. Negative runs it backwards, which is the ONLY way to reverse flow - rotating the part 180 degrees moves its ends and their splay instead. A program can command this through the speed tag below.' },\n    ...driveRampParams(0.2, 0.2),\n    angleFrontDeg: { type: 'number', default: 30, min: -60, max: 60, step: 5, label: 'Front angle (°)', group: 'Ends', desc: 'Splay angle of the DISCHARGE end face. This is what makes the part a spur: an angled face merges flush onto the side of a straight conveyor instead of butting square against it. 0 leaves the end square.' },\n    angleBackDeg: { type: 'number', default: 0, min: -60, max: 60, step: 5, label: 'Back angle (°)', group: 'Ends', desc: 'Splay angle of the INFEED end face. Leave it at 0 for a spur fed square from behind; angle it too when the piece has to sit between two angled neighbours.' },\n    rollerClass: {\n      type: 'enum', default: 'light', label: 'Roller class', group: 'Size',\n      desc: 'Duty rating, which sets how thick the rollers are and how closely they are pitched: light 24 mm at 75 mm centres, medium 30 at 100, heavy 40 at 130. Heavier rollers sit further apart, so small product needs the lighter class to stay supported.',\n      options: [{ value: 'light', label: 'Light' }, { value: 'medium', label: 'Medium' }, { value: 'heavy', label: 'Heavy' }],\n    },\n    leftGuard: { type: 'boolean', default: true, label: 'Left guard', group: 'Guards', desc: 'Guard wall down the left side, looking along travel. A real barrier, so turning it off lets cargo leave the bed sideways - which on a spur is usually the point.' },\n    rightGuard: { type: 'boolean', default: true, label: 'Right guard', group: 'Guards', desc: 'Guard wall down the right side, looking along travel. A real barrier, so turning it off lets cargo leave the bed sideways.' },\n    // sensor-beam holes as [x m, y m, side ±1] rows: bed-local X (centre-origin), height above the deck, side −1\n    // left / +1 right. HOST-FED (core/guardHoles.ts works them out from the scene's beams), so hidden.\n    guardHoles: { type: 'numberList', arity: 3, default: [], hidden: true, label: 'Guard holes [x m, y m, side ±1]', group: 'Guards', desc: 'Where sensor beams cross the side guards. Worked out by the host from the scene; not for editing.' },\n    // rail/guard end overrides as [side ±1, backX m, frontX m] rows (local centre-origin X). Normally host-fed:\n    // at a side merge the host folds in the snap-derived extents so rails + guards reach the host's wall plane.\n    guardExtents: { type: 'numberList', hidden: true, arity: 3, default: [], label: 'Rail extents [side ±1, back m, front m]', group: 'Guards', desc: 'Where the rails and guards STOP on each side, in bed-local X. Normally written by the host: when this spur merges flush onto another conveyor, this retracts the rails to its outer wall instead of running them through its frame. Worked out by the host from the scene; not for editing.' },\n    // mitred guard ends as [x m, c, side ±1] rows (_shared/guardMitre.js). HOST-FED at a side merge, so hidden.\n    ...guardMitresParam('Guards'),\n    ...guardGapsParam('Guards'),\n    ...railCutsParam('Guards'),\n    // deck height above the floor — drives the LEG length; host auto-fills it from the surface beneath at drop/snap.\n    standHeight: { type: 'number', default: 2.0, min: 0.1, max: 3, step: 0.01, rest: 'surfaceBelow', label: 'Stand height (m)', desc: 'Height of the deck above whatever is beneath it, which sets the leg length. The host fills this in when you drop or snap the conveyor, so the legs reach the floor - or a platform crossing underneath - without you measuring. Pin it by hand when you want a deliberate height.' },\n    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed.' },\n    ...speedFpmTagParam('Comms'),\n    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (rollers run while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the bed.' },\n    runningTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Running tag (true while moving)', group: 'Comms', desc: 'Feedback the conveyor publishes for the program to read: true whenever it is actually moving. This is the EFFECTIVE speed, gates included, so a run tag holding it at zero reads false here.' },\n    ...driveFeedbackParams(1, 'Comms'),\n  },\n  // Procedural geometry — the full spur roller as multi-material MeshPart[]: a splay-clipped roller bank\n  // (render-only spinning cylinders) + straight steel L-rails + toggleable side guards + a tail trestle leg +\n  // hex bolts. Centred on the origin (x ∈ [−L/2, L/2]); no belt bed / gap fill.\n  geometry(g, p) {\n    var DEG = Math.PI / 180\n    var L = typeof p.length === 'number' && p.length > 0 ? p.length : 2\n    var w = typeof p.width === 'number' && p.width > 0 ? p.width : 1.524\n    var hw = w / 2\n    var tf = Math.tan((typeof p.angleFrontDeg === 'number' ? p.angleFrontDeg : 30) * DEG)\n    var tb = Math.tan((typeof p.angleBackDeg === 'number' ? p.angleBackDeg : 0) * DEG)\n    // roller class → [radius, centre-to-centre pitch], m.\n    var CLASS = { light: [0.024, 0.075], medium: [0.03, 0.1], heavy: [0.04, 0.13] }\n    var cls = CLASS[p.rollerClass] || CLASS.light\n    var R = cls[0], PITCH = cls[1]\n    var RAIL_TOP = -0.005, FB = frameBottom(p), FWT = 0.01, FFW = 0.02, FFT = 0.005, GH = 0.15, GT = 0.005\n    var RAIL_INSET = 0.005, CAP_INSET = 0.01\n    function frontX(z) { return L / 2 + tf * z }\n    function backX(z) { return -L / 2 + tb * z }\n    // z-span of a roller at local x, clipped to the splayed end faces, inset off the rails.\n    function clipAtX(x) {\n      var zMin = -hw + RAIL_INSET, zMax = hw - RAIL_INSET\n      if (Math.abs(tf) > 1e-6) { var zf = (x - L / 2) / tf; if (tf > 0) zMin = Math.max(zMin, zf); else zMax = Math.min(zMax, zf) }\n      else if (x > L / 2) return null\n      if (Math.abs(tb) > 1e-6) { var zb = (x + L / 2) / tb; if (tb > 0) zMax = Math.min(zMax, zb); else zMin = Math.max(zMin, zb) }\n      else if (x < -L / 2) return null\n      zMin += CAP_INSET; zMax -= CAP_INSET\n      return zMax - zMin > 0.02 ? { zMin: zMin, zMax: zMax } : null\n    }\n\n    // 1. ROLLER BANK (render-only, spinning; _shared/rollerBed.js) — a grid at the class pitch along +X, each\n    // roller clipped to the splay: centred at its clip mid-z with its own length = the clipped span, so the end\n    // rollers shorten to the bevelled face. yaw 0 (axle along +Z); each spins about its own axle at the bed speed.\n    var insts = []\n    var maxReach = Math.abs(tf) * hw + Math.abs(tb) * hw\n    var xLo = -L / 2 - maxReach, xHi = L / 2 + maxReach\n    var n0 = Math.ceil(xLo / PITCH)\n    for (var k = n0; k * PITCH <= xHi + 1e-6; k++) {\n      var x = k * PITCH\n      var clip = clipAtX(x)\n      if (!clip) continue\n      insts.push({ x: x, z: (clip.zMin + clip.zMax) / 2, yaw: 0, length: clip.zMax - clip.zMin })\n    }\n    var stubR = R * 0.34, STUB_PROT = 0.02, STUB_ANCHOR = 0.015\n    // drive bands: an O-ring chaining each roller to the next at the +Z end, alternating two grooves measured in from\n    // the unclipped roller end (so a splay-shortened end roller that doesn't reach the grooves carries none). Cord\n    // and groove spacing scale with the roller class's radius (the kit's defaults).\n    var bands = { zWall: hw - RAIL_INSET - CAP_INSET }\n    // axles at y = -R (the tube tops are the conveying plane); a full roller's stubs sit centred stubOff out from the\n    // bed centreline, through the frame wall, and a splay-shortened roller's follow its clipped ends the same way\n    var stubOff = hw + (FWT + STUB_PROT - STUB_ANCHOR) / 2, axle = w - 0.004\n    var rollers = rollerBed(g, insts, { radius: R, y: -R, stub: { radius: stubR, length: FWT + STUB_PROT + STUB_ANCHOR, protrude: stubOff - axle / 2 }, bands: bands, fullAxle: axle })\n\n    // 2. SIDE FRAME RAILS (steel L-rails) — two straight rails along the ±Z edges (the splayed ends carry no\n    // frame), emitted as instances of the straight belt's 1 m unit-rail template (wall + outward flange lip;\n    // profile z local 0..0.03, outward = +z): size in scale.x, the −Z side placed by running the SAME prism\n    // backwards under a 180° yaw. Never a z-mirror scale: a negative-determinant instance matrix reverses the\n    // winding, and under DoubleSide three flips the shading normal by gl_FrontFacing, so that rail is lit as if\n    // its outer face were the inner one (the renderer's frontFaceCW fix reads object.matrixWorld, never the\n    // per-instance matrix). Gated by src/render/parts/instanceMirror.test.ts. The template is byte-identical to the belt conveyor's, so\n    // they share one pooled rail geometry. Each rail spans its edge's own back→front X (offset by the shear = the\n    // parallelogram), unless a host-fed guardExtents row overrides its ends at a side merge (rails/guards/bolts\n    // reach the host wall).\n    var UNIT_X = [[0, 0, 0], [1, 0, 0]]\n    // capped like the belt's, so the ends don't show as hollow tubes AND the template stays byte-identical to it\n    // (FB is rounded the way the belt's is, so a spur whose Frame height matches a belt's Frame height shares its rail)\n    var railTemplate = g.merge(\n      g.sweep([[FB, 0], [FB, 0.01], [-0.005, 0.01], [-0.005, 0]], UNIT_X, { caps: true }),\n      g.sweep([[-0.005, 0.01], [-0.005, 0.03], [0, 0.03], [0, 0.01]], UNIT_X, { caps: true }),\n    )\n    var extRows = Array.isArray(p.guardExtents) ? p.guardExtents : []\n    var railInsts = []\n    var railRuns = []\n    var railCutAt = railCutLookup(p)\n    var spurRails = spurRailCutter(g, hw, FWT, FB, railCutAt)\n    var railFills = spurRails.railFills, cutRailInstance = spurRails.cutRailInstance\n    for (var s = 0; s < 2; s++) {\n      var sign = s === 0 ? -1 : 1, zEdge = sign * hw\n      var bE = backX(zEdge), fE = frontX(zEdge)\n      for (var xr = 0; xr < extRows.length; xr++) if (extRows[xr][0] === sign) { bE = extRows[xr][1]; fE = extRows[xr][2] }\n      var cx = (bE + fE) / 2, len = Math.max(fE - bE, 0.01)\n      railRuns.push({ sign: sign, cx: cx, len: len })\n      // an end merged onto another conveyor is CUT to fit against that one's frame (_shared/guardMitre.js)\n      railInsts.push(cutRailInstance(sign, bE, fE))\n    }\n    var frame = { desc: railTemplate, finish: 'frame', instances: railInsts }\n\n    // 3. SIDE GUARDS (steel walls just outside each rail, independently toggled). Each side is its own\n    // collision:'box' MeshPart so the host's AABB-box collider is a thin side wall (not the full width).\n    var guardParts = []\n    // MITRED ENDS (_shared/guardMitre.js): where a guard meets the guard of the conveyor this spur merges onto,\n    // its end is cut on the plane the two share instead of square, so neither runs through the other\n    var mitreAt = mitreLookup(p)\n    var holes = Array.isArray(p.guardHoles) ? p.guardHoles : []\n    var holePanels = {} // hole height → where its panels go\n    for (var s2 = 0; s2 < 2; s2++) {\n      var g_sign = s2 === 0 ? -1 : 1\n      var on = g_sign < 0 ? p.leftGuard !== false : p.rightGuard !== false\n      if (!on) continue\n      var run = railRuns[s2 === 0 ? 0 : 1]\n      // GUARD GAPS (host-fed rows [x0, x1, side], _shared/guardGaps.js): where the host opens this guard, for a\n      // diverter whose arms cross it. Each solid run between gaps is its own collision part, so the collider stops\n      // at the gap as the mesh does. With no gap there is one run, the whole guard.\n      var gRuns = guardGapRuns(p, g_sign, run.cx - run.len / 2, run.cx + run.len / 2)\n      for (var gr = 0; gr < gRuns.length; gr++) {\n        // SENSOR-BEAM HOLES (host-fed rows [x, y, side], guardHoles.ts): the sheet is split around a panel-long gap\n        // at each hole inside this guard's run, and a sheet panel with the hole cut through fills it (the top return\n        // below runs on unbroken over it). A run's pieces stay ONE collision part, so its AABB collider is the same\n        // whole wall; the sim never sees the holes anyway.\n        var gLo = gRuns[gr][0], gHi = gRuns[gr][1], gCuts = []\n        for (var hi = 0; hi < holes.length; hi++) {\n          var hrow = holes[hi], h0 = hrow[0] - HOLE_PANEL / 2, h1 = hrow[0] + HOLE_PANEL / 2\n          if (hrow[2] !== g_sign || h0 < gLo || h1 > gHi) continue\n          gCuts.push([h0, h1])\n          var hKey = hrow[1].toFixed(4)\n          if (!holePanels[hKey]) holePanels[hKey] = { y: hrow[1], descs: [] }\n          // the panel's frame: outward +z from the sheet's inner face; the −Z side is it yawed 180°, never mirrored\n          holePanels[hKey].descs.push({ x: hrow[0], sign: g_sign })\n        }\n        gCuts.sort(function (a, b) { return a[0] - b[0] })\n        var gPieces = [], gCur = gLo\n        for (var gc = 0; gc < gCuts.length; gc++) { if (gCuts[gc][0] - gCur > 1e-4) gPieces.push([gCur, gCuts[gc][0]]); gCur = Math.max(gCur, gCuts[gc][1]) }\n        if (gHi - gCur > 1e-4) gPieces.push([gCur, gHi])\n        var gboxes = gPieces.map(function (pc) { return guardBand(g, pc[0], pc[1], mitreAt(g_sign, pc[0]), mitreAt(g_sign, pc[1]), 0, GT, RAIL_TOP, GH, g_sign, hw + FWT) })\n        if (gboxes.length) guardParts.push({ desc: gboxes.length === 1 ? gboxes[0] : g.merge.apply(g, gboxes), finish: 'guard', collision: 'box', sideGuard: g_sign < 0 ? 'left' : 'right' })\n        // the guard's formed top: a 20 mm OUTWARD return along its top edge (as every conveyor guard has). Its own\n        // part with NO collision: the host's collider is this guard part's AABB, and the return would widen it off\n        // the one guard cross-section every family shares - the one butted guards merge on (core/guardRuns.ts).\n        var lip = guardBand(g, gLo, gHi, mitreAt(g_sign, gLo), mitreAt(g_sign, gHi), GT, GT + 0.02, GH - GT, GH, g_sign, hw + FWT)\n        guardParts.push({ desc: lip, finish: 'guard' })\n      }\n    }\n\n    // 4. SUPPORT LEGS — real floor supports (_shared/legs.js) at both ends of the bed.\n    // standHeight is host-filled (rest:'surfaceBelow') so the feet reach the floor.\n    var standH = typeof p.standHeight === 'number' && p.standHeight > 0 ? p.standHeight : 0.75\n    var FLOOR_Y = -standH\n    // Every support piece is a box → instances of one unit cube (size in scale), so all the leg\n    // hardware in the scene draws as one pooled bank.\n    var legInsts = []\n    // HEX bolt heads — instances of the belt conveyor's unit hex prism template (flat-topped, radius 1 in XY,\n    // depth 1 along Z, centred): axis 'z' = identity (wall / sleeve / clamp bolts), 'y' = a +90° X-rotation laying\n    // the prism axis along +Y. r/depth live in each instance's scale.\n    var hexSfc = g.surface()\n    var hexF = [], hexB = []\n    for (var hk = 0; hk < 6; hk++) {\n      var ha = (hk / 6) * Math.PI * 2 + Math.PI / 6 // flat-topped\n      var hu = Math.cos(ha), hwv = Math.sin(ha)\n      hexF.push(hexSfc.vertex(hu, hwv, 0.5))\n      hexB.push(hexSfc.vertex(hu, hwv, -0.5))\n    }\n    for (var hk = 1; hk < 5; hk++) { hexSfc.triangle(hexF[0], hexF[hk], hexF[hk + 1]); hexSfc.triangle(hexB[0], hexB[hk + 1], hexB[hk]) } // caps\n    for (var hk = 0; hk < 6; hk++) { var hk2 = (hk + 1) % 6; hexSfc.quad(hexF[hk], hexB[hk], hexB[hk2], hexF[hk2]) } // sides\n    var hexTemplate = hexSfc.build()\n    var hexInsts = []\n    function hexAt(cx, cy, cz, r, depth, axis) {\n      var inst = { position: [cx, cy, cz], scale: [r, r, depth] }\n      if (axis === 'y') inst.quaternion = [0.7071067811865476, 0, 0, 0.7071067811865476] // rotX(+90°): z-depth → +Y\n      hexInsts.push(inst)\n    }\n    function legAt(x0, height, dir) {\n      var pc = legPieces(hw, height, dir, -FB)\n      for (var i = 0; i < pc.boxes.length; i++) {\n        var b = pc.boxes[i], inst = { position: [b[0] + x0, b[1] + FLOOR_Y, b[2]], scale: [b[3], b[4], b[5]] }\n        if (b[6]) inst.quaternion = [0, 0, Math.sin(b[6] / 2), Math.cos(b[6] / 2)]\n        legInsts.push(inst)\n      }\n      for (var j = 0; j < pc.bolts.length; j++) { var t = pc.bolts[j]; hexAt(t[0] + x0, t[1] + FLOOR_Y, t[2], t[3], t[4], t[5]) }\n    }\n    var xMin = -L / 2 + Math.abs(tb) * hw, xMax = L / 2 - Math.abs(tf) * hw, legSpan = xMax - xMin\n    // supports at both ends of it (a real spur is carried at its discharge as well as its infeed) and on the\n    // bed-joint pitch between, their knee braces leaning toward the middle; a span too short for two gets one.\n    var lh = standH + FB\n    if (legSpan > 0.1 && lh > 0.05) {\n      var lx0 = xMin + LEG_END_INSET, lx1 = xMax - LEG_END_INSET, mid = (xMin + xMax) / 2\n      if (lx1 - lx0 < LEG_CLEARANCE) legAt(mid, lh, 0)\n      else {\n        // knee braces only where the two ends are far enough apart that theirs don't meet mid-span\n        var kd = lx1 - lx0 >= 1.4 ? 1 : 0\n        legAt(lx0, lh, kd); legAt(lx1, lh, -kd)\n        var nMid = Math.ceil((lx1 - lx0) / LEG_SPACING) - 1\n        for (var mi = 1; mi <= nMid; mi++) { var mx = lx0 + (mi * (lx1 - lx0)) / (nMid + 1); legAt(mx, lh, kd * (mx <= mid ? 1 : -1)) }\n      }\n    }\n    var legs = legInsts.length ? { desc: g.box([1, 1, 1], [0, 0, 0]), finish: 'leg', instances: legInsts } : null\n\n    // 5. FRAME WEB-BOLTS — vertical hex bolt pairs every ~1.2 m down each rail's mid-wall, into the same\n    // 'bolt' instance bank as the leg bolts.\n    // the pair closes up on a shallow wall so both heads stay 3 mm inside it; the default frame keeps its 0.04.\n    // Floored above 0: the pair loop below steps by 2 * bGap.\n    var yMid = (RAIL_TOP + FB) / 2, br = 0.012, bH = 0.01\n    var bGap = Math.max(0.001,Math.min(0.04, RAIL_TOP - 0.003 - br - yMid, yMid - br - 0.003 - FB))\n    for (var ri = 0; ri < railRuns.length; ri++) {\n      var run2 = railRuns[ri], bZ = run2.sign * (hw + 0.013), nB = Math.max(2, Math.round(run2.len / 1.2))\n      for (var bi2 = 0; bi2 < nB; bi2++) {\n        var bx = run2.cx - run2.len / 2 + ((bi2 + 0.5) / nB) * run2.len\n        for (var bd = -bGap; bd <= bGap; bd += 2 * bGap) hexAt(bx, yMid + bd, bZ, br, bH, 'z')\n      }\n    }\n    var bolts = hexInsts.length ? { desc: hexTemplate, finish: 'bolt', instances: hexInsts } : null\n\n    var parts = rollers.concat([frame])\n    for (var gp = 0; gp < guardParts.length; gp++) parts.push(guardParts[gp])\n    if (legs) parts.push(legs)\n    if (bolts) parts.push(bolts)\n    // hole panels LAST (they come and go with the sensors in the scene; the host reconciles banks by index), one\n    // part per hole height. VISUAL ONLY: no collision.\n    Object.keys(holePanels).sort().forEach(function (k) {\n      var base = holePanel(g, holePanels[k].y, false)\n      var placed = holePanels[k].descs.map(function (d) {\n        return d.sign > 0\n          ? g.transform(base, { translate: [d.x, 0, hw + FWT] })\n          : g.transform(base, { rotate: [0, 1, 0, 0], translate: [d.x, 0, -(hw + FWT)] })\n      })\n      parts.push({ desc: placed.length === 1 ? placed[0] : g.merge.apply(g, placed), finish: 'guard' })\n    })\n    // the rail-end fills after them, for the same reason: they come and go with the junction\n    if (railFills.length) parts.push({ desc: g.merge.apply(g, railFills), finish: 'frame' })\n    return parts\n  },\n  step(ctx) {\n    // Tag precedence: speedTag (REAL in) replaces the speed param; runTag (BOOL) gates to 0 only while a\n    // controller DRIVES it (ctx.tagDriven — undriven, the authored speed rules); runningTag (BOOL out) = effective\n    // speed ≠ 0. This drives the flat conveying deck; the host spins the rollers from the same commanded speed.\n    // the unit the conveyor is set up in: everything below this line is m/s\n    const cmd = commandedSpeed(ctx)\n    const fpm = cmd.fpm, commanded = cmd.commanded\n    const running = ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true\n    const s = rampedSpeed(ctx, drive, cmd, running ? commanded : 0)\n    // the readout the Inspector shows for 'speed' while a setpoint tag owns it: the EFFECTIVE value,\n    // gates and all, not the raw setpoint (a runTag holding this at 0 must not read as the commanded rate)\n    reportSpeed(ctx, fpm, s)\n    if (ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, s !== 0)\n    // drive feedback: the velocity as a share of the speed at 30, an encoder pulse and the odometer\n    publishDrive(ctx, drive, cmd, s)\n    ctx.setSurfaceVelocity({ x: ctx.forward.x * s, y: 0, z: ctx.forward.z * s })\n  },\n})\n",
+  "geometry": {
+    "kind": "drawn",
+    "bounds": {
+      "length": 2.8798818102449895,
+      "width": 1.524,
+      "top": 2.3
+    },
+    "conveys": true
+  },
+  "category": "Equipment",
+  "materials": [
+    {
+      "id": "band",
+      "color": [
+        0.6939,
+        0.1844,
+        0.0242
+      ],
+      "metalness": 0,
+      "roughness": 0.55
+    }
+  ],
+  "conveyor": {
+    "bed": "spur",
+    "surface": "roller",
+    "speedParam": "speed"
+  },
+  "sdk": {
+    "level": 6,
+    "of": "v2:57747:4xewumr96o"
+  }
+}

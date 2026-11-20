@@ -23,7 +23,7 @@ const ROUTE = [
 ]
 const POS_TOL = 0.06
 const PARAMS = {
-  enableComms: true, commandTag: 'Cmd', executeTag: 'Exec', doneTag: 'Done', forkTag: 'Fork', waypoints: ROUTE,
+  commandTag: 'Cmd', executeTag: 'Exec', doneTag: 'Done', forkTag: 'Fork', waypoints: ROUTE,
 }
 
 describe('AGV behavior - the PLC handshake', () => {

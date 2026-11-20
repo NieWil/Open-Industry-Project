@@ -64,7 +64,7 @@ async function main() {
 
     // --- behaviour: selecting a part far down the list brings its row into the DOM and on screen ---
     // the tree's last row, which is not the scene's last part: rows are a pre-order walk of the
-    // hierarchy (core/hierarchy.ts orderedTree - roots in array order, each followed by its subtree),
+    // hierarchy (core/scene/hierarchy.ts orderedTree - roots in array order, each followed by its subtree),
     // so a child part listed last in `scene.parts` draws inside its parent, mid-list. Last root, then
     // its last child, down to a leaf (a fresh localStorage collapses nothing).
     const lastId = await page.evaluate(() => {

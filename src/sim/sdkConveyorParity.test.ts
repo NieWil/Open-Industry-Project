@@ -1,11 +1,11 @@
 import initJolt from 'jolt-physics'
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartPackage } from '../core/partPackage'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartPackage } from '../core/parts/partPackage'
 import { ARC_END_EXT, BELT_FRICTION, CONVEYOR_FRICTION, FRAME_WALL_THICKNESS, GUARD_COLLISION_THICKNESS, GUARD_HEIGHT, SCENE_VERSION, DEFAULT_SIM_HZ } from '../core/types'
 import type { SdkPart, PartInstance, SceneJSON } from '../core/types'
 import { SimWorld } from './world'
-import { PACKAGE_FORMAT } from '../core/partPackage'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 
 // SDK↔built-in sim parity regressions:
 //  - an SDK belt's running surface must get BELT_FRICTION (0.5) everywhere a built-in belt would (lone deck,
@@ -314,7 +314,7 @@ describe('SDK conveyor sim parity (friction / clusters / interlock / curved guar
     // The lateral figure is ±0.325, not the authored ±0.305, because guardColliderCrossSection normalizes a
     // guard collider to GUARD_COLLISION_THICKNESS: this package authors 0.01 thick (half 0.005), so the box
     // grows to half 0.025 and its centre moves outward by 0.020. The inner face cargo rides is unmoved at
-    // 0.300 - growth is outward-only, which is the whole contract (core/collisionShapes.ts).
+    // 0.300 - growth is outward-only, which is the whole contract (core/geometry/collisionShapes.ts).
     expect(hasBodyAt(world, 'sp', 2 - 0.325, 0.9, 1.36)).toBe(true)
     expect(hasBodyAt(world, 'sp', 2 + 0.325, 0.9, 1.36)).toBe(true)
   })

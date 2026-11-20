@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { SdkPart } from './types'
 import { FRAME_WALL_THICKNESS } from './types'
-import type { PartPackage } from './partPackage'
-import { clearPackages, registerPackage } from './partRegistry'
-import { conveyorEndsOf } from './partGeometry'
-import { findSnap } from './snapFeatures'
-import { resolveRollerGrids } from './rollerGrid'
-import { deriveGuardOpenings } from './guardOpenings'
-import { PACKAGE_FORMAT } from './partPackage'
+import type { PartPackage } from './parts/partPackage'
+import { clearPackages, registerPackage } from './parts/partRegistry'
+import { conveyorEndsOf } from './parts/partGeometry'
+import { findSnap } from './snap/snapFeatures'
+import { resolveRollerGrids } from './conveyor/rollerGrid'
+import { deriveGuardOpenings } from './guards/guardOpenings'
+import { PACKAGE_FORMAT } from './parts/partPackage'
 
 // Snapping across an inclined junction (docs/conveyor-incline.md). A tilted straight pivots about its bed
 // centre, so its head sits (L/2)·cos out in plan and (L/2)·sin up, its tail the same down. Ends reported as if

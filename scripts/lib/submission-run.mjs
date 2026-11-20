@@ -9,7 +9,7 @@
 //
 // The checks, in order: it bakes as the app bakes it; its folder is named by its id; the author may publish under its
 // namespace; description.txt is there; it keeps the listing limits
-// (core/partSubmission.ts). Then it runs alone as the old-parts corpus runs a part (src/sim/partBehaviour.ts): at its
+// (core/parts/partSubmission.ts). Then it runs alone as the old-parts corpus runs a part (src/sim/partBehaviour.ts): at its
 // defaults twice (the same result both times, or it is not deterministic), then each number param at its min and
 // max, each boolean flipped and each choice of an enum, one at a time. Every run must report no problem.
 /* global process, console */
@@ -38,8 +38,8 @@ try {
   // (core/realmLockdown.ts, docs/part-sandbox.md), so submitted code on the CI runner reaches no more than in a tab
   const { lockdownRealm } = await vite.ssrLoadModule('/src/core/realmLockdown.ts')
   if (!lockdownRealm()) throw new Error('could not lock the realm down; refusing to run part code unsandboxed')
-  const { namespaceProblem, submissionProblems } = await vite.ssrLoadModule('/src/core/partSubmission.ts')
-  const { partToOippartBytes } = await vite.ssrLoadModule('/src/core/partArchive.ts')
+  const { namespaceProblem, submissionProblems } = await vite.ssrLoadModule('/src/core/parts/partSubmission.ts')
+  const { partToOippartBytes } = await vite.ssrLoadModule('/src/core/parts/partArchive.ts')
   const baked = await bakeFolder(vite, folder)
   if ('error' in baked) problems.push(baked.error)
   else {

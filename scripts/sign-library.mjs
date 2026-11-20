@@ -9,7 +9,7 @@
 // it on an index another step built, and nothing a part's code does can reach the key.
 //
 // --published names the index the bucket serves now, fetched by the signing job itself (absent file = first release).
-// The new index must then only append to it (core/partLibrary.ts checkLibraryAppend), and every new file beside the
+// The new index must then only append to it (core/parts/partLibrary.ts checkLibraryAppend), and every new file beside the
 // index must hash to the name it is listed under. So a build step that ran part code can add entries, but cannot get
 // a rewritten one signed.
 //
@@ -45,7 +45,7 @@ let code = 0
 try {
   const { signedBytes, checkLibrarySignature } = await vite.ssrLoadModule('/src/core/librarySignature.ts')
   const { LIBRARY_SIGNING_KEYS } = await vite.ssrLoadModule('/src/core/librarySigningKeys.ts')
-  const { validateLibraryIndex, checkLibraryAppend } = await vite.ssrLoadModule('/src/core/partLibrary.ts')
+  const { validateLibraryIndex, checkLibraryAppend } = await vite.ssrLoadModule('/src/core/parts/partLibrary.ts')
   const index = JSON.parse(readFileSync(indexPath, 'utf8'))
   delete index.signature
   const refusals = publishedPath === undefined ? [] : appendProblems(index, checkLibraryAppend, validateLibraryIndex)

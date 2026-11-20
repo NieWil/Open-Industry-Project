@@ -1,25 +1,25 @@
-// A part card's main button on the Catalog's Shelf tab: pressing it places the part. `beforePlace`
-// runs at the press, synchronously, so a part copied into the project there is found by the placement that starts in
-// the same handler.
+// The main button of a shelf part's catalog card when this project has no copy of it yet: pressing it places the part.
+// `beforePlace` runs at the press, synchronously, so a part copied into the project there is found by the placement
+// that starts in the same handler.
 
-import type { PartPackage } from '../../core/partPackage'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { EditorController } from '../controller'
-import type { EditorState } from '../store'
+import type { EditorState } from '../store/store'
 import { PartGlyph } from './toolbarIcons'
 
 interface Props {
-  pkg: Pick<PartPackage, 'id' | 'name' | 'thumbnail'>
+  pkg: Pick<PartPackage, 'id' | 'name'>
   blocked: boolean
   title: string
   state: EditorState
   controller: EditorController | null
-  packageThumbnails: Map<string, string>
+  /** the card image's URL, or none for the generic glyph */
+  image: string | undefined
   beforePlace?: () => void
 }
 
-export function CatalogPlaceButton({ pkg, blocked, title, state, controller, packageThumbnails, beforePlace }: Props) {
+export function CatalogPlaceButton({ pkg, blocked, title, state, controller, image, beforePlace }: Props) {
   const active = state.mode === 'placing' && state.placingType === 'part' && state.placingPackageId === pkg.id
-  const local = pkg.thumbnail ?? packageThumbnails.get(pkg.id)
   return (
     <button
       className={`catalog-card-main${active ? ' active' : ''}`}
@@ -53,8 +53,8 @@ export function CatalogPlaceButton({ pkg, blocked, title, state, controller, pac
       }}
     >
       <span className="catalog-card-thumb">
-        {local ? (
-          <img src={local} alt="" draggable={false} />
+        {image ? (
+          <img src={image} alt="" draggable={false} />
         ) : (
           <span className="catalog-card-glyph"><PartGlyph /></span>
         )}

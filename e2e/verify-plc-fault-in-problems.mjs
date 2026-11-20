@@ -72,7 +72,8 @@ async function main() {
     await page.waitForTimeout(300)
     expect((await faultRows(page)).length === 1, 'it is still listed after Stop')
     await page.evaluate((s) => window.__oip.store.loadStProgram(s), FIXED)
-    await page.waitForTimeout(300)
+    // (the panel's report comes from the program worker: wait for the row to go, not for a fixed time)
+    await page.waitForFunction(() => ![...document.querySelectorAll('.problems-row')].some((r) => /scan faulted/.test(r.textContent ?? '')), { timeout: 8000 }).catch(() => {})
     expect((await faultRows(page)).length === 0, 'editing the program retires it')
   } finally {
     await browser.close()

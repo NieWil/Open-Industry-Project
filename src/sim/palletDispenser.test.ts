@@ -6,11 +6,11 @@ import initJolt from 'jolt-physics'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildAuthoredCargoFrame, CARGO_KIND_PALLET } from '../core/frame'
 import { fillHolds } from '../core/heldStock'
-import { clearPackages, getPackage, registerPackage } from '../core/partRegistry'
-import { validateScene } from '../core/scene'
+import { clearPackages, getPackage, registerPackage } from '../core/parts/partRegistry'
+import { validateScene } from '../core/scene/scene'
 import { PALLET_SIZE, SCENE_VERSION } from '../core/types'
 import { DEFAULT_PALLET_STANDARD, PALLET_STANDARDS, palletCollider, palletPieces } from '../core/pallet'
-import { instantiatePartScript } from '../core/partScript'
+import { instantiatePartScript } from '../core/parts/partScript'
 import type { PartInstance, SceneJSON, SdkPart } from '../core/types'
 import { authoredZoneCounts } from '../core/zoneCounts'
 import { settleIdlePose } from './idlePose'
@@ -27,7 +27,7 @@ import { SimWorld } from './world'
 const Jolt = await initJolt()
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-/** a committed example part: its rig.json is the manifest (holds, commsParam and all) */
+/** a committed example part: its rig.json is the manifest (holds and all) */
 function loadExample(dir: string): { manifest: PackageManifest; behavior: string } {
   const manifest = JSON.parse(readFileSync(join(repo, 'examples', 'parts', dir, 'rig.json'), 'utf8')) as PackageManifest
   const behavior = readFileSync(join(repo, 'examples', 'parts', dir, 'behavior.ts'), 'utf8')
@@ -233,9 +233,9 @@ describe('Pallet Dispenser (SDK part, headless)', () => {
   })
 
   it('holds the carriage, forks and stack where they are while its enable is down, then finishes the dispense', () => {
-    world = dispenserWorld({ fill: true, params: { enableComms: true, dispenseTag: 'Disp', enableTag: 'En', busyTag: 'Busy' } })
+    world = dispenserWorld({ fill: true, params: { dispenseTag: 'Disp', enableTag: 'En', busyTag: 'Busy' } })
     const w = world
-    w.setBehaviorDrivenTags(['Disp'])
+    w.setBehaviorDrivenTags(['Disp', 'En'])
     const busy = (): unknown => w.frame().tags?.['disp']?.['Busy']
     const joints = (): Record<string, number> => ({ ...(w.frame().joints?.['disp'] ?? {}) })
     w.setBehaviorInputTags({ Disp: false, En: true })
@@ -353,6 +353,20 @@ describe('Pallet Dispenser (SDK part, headless)', () => {
     runFor(world, 5)
     expect(pallets(world)).toHaveLength(3) // the retired count made none: the placed ones are the stock
     expect(magazine(world).map((p) => p.id).sort()).toEqual(placed)
+  })
+
+  // A held body left kinematic under a removed rig would hang in the air for the rest of the run.
+  it('lets go of its load when it is deleted mid-run, and the pallets fall to the deck', () => {
+    const scene = dispenserScene({ params: { stock: 10 }, stack: 3 })
+    world = new SimWorld(Jolt, scene)
+    runFor(world, 6)
+    expect(magazine(world)).toHaveLength(3)
+    world.updateScene({ ...scene, parts: scene.parts.filter((p) => p.id !== 'disp') })
+    expect(heldIds(world).size).toBe(0)
+    runFor(world, 3)
+    const all = pallets(world)
+    expect(all).toHaveLength(3)
+    expect(Math.min(...all.map((p) => p.y))).toBeLessThan(DECK_Y + PH) // the bottom one rests on the deck
   })
 
   for (const std of PALLET_STANDARDS) {

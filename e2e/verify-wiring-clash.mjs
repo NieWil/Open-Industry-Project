@@ -54,9 +54,9 @@ async function main() {
         version: 4,
         packages: [sensor, belt],
         parts: [
-          { id: 's1', type: 'part', packageId: 'oip.diffuse-sensor', position: [0, 0, 0], rotationY: 0, params: { enableComms: true, tag: 'PE' } },
-          { id: 's2', type: 'part', packageId: 'oip.diffuse-sensor', position: [2, 0, 0], rotationY: 0, params: { enableComms: true, tag: 'PE' } },
-          { id: 'b1', type: 'part', packageId: 'oip.belt-conveyor', position: [6, 0, 0], rotationY: 0, params: { enableComms: true, runTag: 'Motor' } },
+          { id: 's1', type: 'part', packageId: 'oip.diffuse-sensor', position: [0, 0, 0], rotationY: 0, params: { tag: 'PE' } },
+          { id: 's2', type: 'part', packageId: 'oip.diffuse-sensor', position: [2, 0, 0], rotationY: 0, params: { tag: 'PE' } },
+          { id: 'b1', type: 'part', packageId: 'oip.belt-conveyor', position: [6, 0, 0], rotationY: 0, params: { runTag: 'Motor' } },
         ],
       })
       return { ok: true, parts: store.getState().scene.parts.length }
@@ -87,12 +87,12 @@ async function main() {
       return {
         found: true,
         text: row.textContent ?? '',
-        warnChips: [...row.querySelectorAll('.field-badge-warn')].map((b) => ({ text: b.textContent, title: b.getAttribute('title') })),
+        warnChips: [...row.closest('label').querySelectorAll('[data-testid="tag-warn"][data-kinds~="clash"]')].map((b) => ({ title: b.getAttribute('title') })),
       }
     })
     check('the sensor tag field is in the Inspector', chips.found, JSON.stringify(chips.labels ?? '').slice(0, 200))
     check('it carries the direction + ST type chip', /write/i.test(chips.text ?? '') && /BOOL/.test(chips.text ?? ''), JSON.stringify(chips.text))
-    check('it carries a clash chip explaining the contention', chips.warnChips?.length === 1 && /another part writes this tag/i.test(chips.warnChips[0].title ?? ''), JSON.stringify(chips.warnChips))
+    check('its warning mark explains the contention', chips.warnChips?.length === 1 && /another part writes this tag/i.test(chips.warnChips[0].title ?? ''), JSON.stringify(chips.warnChips))
 
     // ---- the control: the belt's runTag is wired correctly, so no clash chip
     await page.evaluate(() => window.__oip.store.select('b1'))
@@ -101,10 +101,10 @@ async function main() {
       const labels = [...document.querySelectorAll('.field-label')]
       const row = labels.find((l) => /^Run tag/i.test((l.textContent ?? '').trim()))
       if (!row) return { found: false }
-      return { found: true, text: row.textContent ?? '', warn: row.querySelectorAll('.field-badge-warn').length }
+      return { found: true, text: row.textContent ?? '', warn: row.closest('label').querySelectorAll('[data-testid="tag-warn"][data-kinds~="clash"]').length }
     })
     check('the belt run tag shows read + BOOL', beltChips.found && /read/i.test(beltChips.text) && /BOOL/.test(beltChips.text), JSON.stringify(beltChips))
-    check('a correctly wired field shows NO clash chip', beltChips.warn === 0, JSON.stringify(beltChips))
+    check('a correctly wired field shows NO clash warning', beltChips.warn === 0, JSON.stringify(beltChips))
 
     // raw shot on purpose: this shot is for the UI chrome (the PLC panel's warning + the chips),
     // which cleanShot() would hide

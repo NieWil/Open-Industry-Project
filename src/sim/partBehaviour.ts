@@ -6,11 +6,11 @@
 // thousandth. A part version keeps its digest for good; a later build that makes it behave differently fails.
 
 import type { BoxFrame } from '../core/frame'
-import { allPartDiagnostics, clearPartDiagnostics } from '../core/partDiagnostics'
-import type { ParamValue } from '../core/partApi'
-import type { PartPackage } from '../core/partPackage'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import { validateScene } from '../core/scene'
+import { allPartDiagnostics, clearPartDiagnostics } from '../core/parts/partDiagnostics'
+import type { ParamValue } from '../core/parts/partApi'
+import type { PartPackage } from '../core/parts/partPackage'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import { validateScene } from '../core/scene/scene'
 import { sha256Hex } from '../core/sha256'
 import { SCENE_VERSION } from '../core/types'
 import { SimWorld } from './world'

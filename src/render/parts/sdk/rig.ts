@@ -1,82 +1,52 @@
-import { Box3, BufferGeometry, CanvasTexture, Color, ConeGeometry, CylinderGeometry, DoubleSide, EdgesGeometry, Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, Quaternion, RepeatWrapping, SRGBColorSpace, Vector3 } from 'three'
-import type { InstancedMesh, Material, Object3D, Texture } from 'three'
-import { getPackage } from '../../../core/partRegistry'
-import { arrayInstanceDeltas, legFrameDepth, MAX_DISTRIBUTE_INSTANCES, POSE_STRIDE, resolvedBoxSize, resolvedCylinder, resolvedMeshScale, resolvedOffset, rigLinkLocalPoseInto, rigPoseBuffer, rigWorldPosesInto, restQuatOf } from '../../../core/rigPose'
-import { reportPartDiagnostic } from '../../../core/partDiagnostics'
-import type { SeamContext } from '../../../core/rigPose'
-import type { RollerGrid } from '../../../core/rollerGrid'
-import type { RigParams, SubPose } from '../../../core/rigPose'
-import { evalPartGeometry, geometryAnimates, partDeclaredLamps, partHasGeometry, resolvePartParams } from '../../../core/geometryEval'
-import { rigInclineRad } from '../../../core/partGeometry'
-import type { GuardOpenings } from '../../../core/guardOpenings'
-import { keptSegments, rigFrameSide, rigGuardSide } from '../../../core/guardOpenings'
-import type { GuardExtents } from '../../../core/guardExtents'
-import { legRestDyAt } from '../../../core/legRests'
+import { Box3, BufferGeometry, Color, ConeGeometry, CylinderGeometry, DoubleSide, EdgesGeometry, Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Mesh, MeshStandardMaterial } from 'three'
+import type { Material, Object3D, Texture } from 'three'
+import { arrayInstanceDeltas, pitchCapMessage, resolvedBoxSize, resolvedCylinder, resolvedMeshScale, restQuatOf } from '../../../core/rig/rigPose'
+import { reportPartDiagnostic } from '../../../core/parts/partDiagnostics'
+import { rigPoseColumns, robotDeclOfScript, robotKinematicsOf } from '../../../core/robot/robotIk'
+import type { SeamContext, SubPose } from '../../../core/rig/rigPose'
+import type { RollerGrid } from '../../../core/conveyor/rollerGrid'
+import type { RigParams } from '../../../core/rig/rigPose'
+import { showParamShows } from '../../../core/rig/rigLinkBody'
+import { resolvePartParams } from '../../../core/geometry/geometryEval'
+import { rigInclineRad } from '../../../core/parts/partGeometry'
+import type { GuardOpenings } from '../../../core/guards/guardOpenings'
+import { rigFrameSide, rigGuardSide } from '../../../core/guards/guardOpenings'
+import type { GuardExtents } from '../../../core/guards/guardExtents'
 import type { LegRestRows } from '../../../core/legRests'
-import { guardHolePanelDescription } from '../../../core/guardHoles'
-import { extrudeDescription } from '../../../core/geometryShapes'
-import { cutAt, mitreAt, railFlangeOffset } from '../../../core/guardExtents'
-import type { GuardHoles } from '../../../core/guardHoles'
-import { GUARD_HOLE_PANEL, GUARD_HOLE_RADIUS } from '../../../core/types'
-import { cutPostDeltas, deckStripRects, isMultiInstance } from '../../../core/structureCuts'
+import type { GuardHoles } from '../../../core/guards/guardHoles'
+import { isMultiInstance } from '../../../core/structureCuts'
 import type { PlatformCut } from '../../../core/structureCuts'
-import type { GeometryContext, MeshDescription, MeshPart, ParamValue } from '../../../core/partApi'
-import type { MeshUvTile, PartAsset, PartMaterial, PartPackage, RigLegShape, RigLink, RigShape, Vec3Tuple } from '../../../core/partPackage'
-import { subPosedLinkNames } from '../../../core/partPackage'
+import type { GeometryContext, ParamValue } from '../../../core/parts/partApi'
+import type { MeshUvTile, PartAsset, PartMaterial, PartPackage, RigLink, RigShape, Vec3Tuple } from '../../../core/parts/partPackage'
+import { subPosedLinkNames } from '../../../core/parts/partPackage'
 import type { SdkPart } from '../../../core/types'
-import { realizeMeshDescription, rewriteMeshDescription } from '../meshDescriptionGeometry'
-
-// A guard's sensor-beam hole panel (core/guardHoles.ts guardHolePanelDescription), one geometry per distinct plate
-// shape (sheet height, hole height, thickness), shared by every rig guard in the scene and kept for the session:
-// a scene has a handful of hole heights at most, and a geometry a recorded render bundle may still hold must never
-// be freed (gpuRetire.ts), so these are not.
-const holePanelGeometries = new Map<string, ReturnType<typeof realizeMeshDescription>>()
-function guardHolePanelGeometry(y0: number, y1: number, holeY: number, thickness: number): ReturnType<typeof realizeMeshDescription> {
-  const key = [y0, y1, holeY, thickness].map((v) => v.toFixed(4)).join('|')
-  let g = holePanelGeometries.get(key)
-  if (!g) {
-    g = realizeMeshDescription(guardHolePanelDescription(y0, y1, holeY, thickness))
-    holePanelGeometries.set(key, g)
-  }
-  return g
-}
-// A mitred guard end (core/guardExtents.ts GuardMitre) on a box link: the box stops square where the cut is deepest and
-// this right-angle wedge carries the band on out to the cut. Unit legs along +x and +z, y centred, so one scale
-// (c * thickness, height, thickness) and one of four proper rotations fits any end on either side. Shared scene-wide
-// and never freed, like the hole panels.
-const unitMitreWedge = realizeMeshDescription(extrudeDescription([[0, 0], [1, 0], [0, 1]], -0.5, 0.5, { axis: 'y' }))
-/** which end ('hi': the piece lies at lower x) and which way is outward in link-local z -> the turn that lays the
- *  wedge's legs along "out of the piece" and "outward". All proper rotations: a mirror scale would turn the faces
- *  inside out under DoubleSide lighting (the instanceMirror trap). */
-const MITRE_WEDGE_TURN: Record<string, Quaternion> = {
-  'hi,out+': new Quaternion(),
-  'hi,out-': new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI),
-  'lo,out+': new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI),
-  'lo,out-': new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI),
-}
-import { boltMaterial, scrollMaterial, createBeltSurface, createDeckSurface, deckTriplanarMaterial, createInstancePool, createLegSet, disposeLegSet, ensureInstanceCapacity, fillInstances, gapFillMaterial, guardMaterial, legMaterial, legStations, markTickUniformsAdvanced, railMaterial, ROLLER_MODEL_RADIUS, rollerMaterial, rollerSpinTick, shadowMesh, unitBox, writeLegs } from '../common'
-import type { InstancePool } from '../common'
-import type { LegPool } from '../common'
+import { boltMaterial, createBeltSurface, createDeckSurface, createLegSet, disposeLegSet, gapFillMaterial, guardMaterial, legMaterial, railMaterial, ROLLER_MODEL_RADIUS, rollerMaterial, rollerSpinTick, unitBox } from '../common'
 import type { DeckSurface, WalkFinish } from '../common'
-import { BEAM_GREEN, BEAM_RED } from '../sensor'
-import type { BeamProbe } from '../sensor'
-import { addSensorBeam, removeSensorBeam } from '../../sensorBeamOverlay'
-import type { SensorBeam } from '../../sensorBeamOverlay'
+import { removeSensorBeam } from '../../sensorBeamOverlay'
 import type { Content } from './types'
-import { FN_NEUTRAL, descEqual } from './shared'
+import { FN_NEUTRAL } from './shared'
 import { attachMesh, buildMaterial, loadMeshAsset, prepareMeshInstance } from './materials'
-import { realizeInstancedTemplate, syncBankEmptyVisibility, writeInstanceMatricesHeld } from '../instancedTemplate'
+import type { CarvedMeshShape } from './materials'
+import { drawnElsewhere } from '../../../core/glbBox'
 import { LampBank, lampBankMaterial } from '../lampBank'
 import type { LampSlot } from '../lampBank'
 import { LinkBank } from '../linkBank'
 import type { LinkSlot } from '../linkBank'
-import { bumpRepaintEpoch, bumpStructureVersion } from '../structureRev'
-import { retireGeometry, retireInstancedMesh, retireInstancedMeshOnly, retireTexture } from '../../gpuRetire'
-import { markLazyColliderBVH } from '../../bvh'
-import { advanceBankSpins, bankSpinSign, spinUniformOf } from './bankSpin'
-import type { BankSpin } from './bankSpin'
+import { bumpStructureVersion } from '../structureRev'
+import { retireGeometry, retireInstancedMeshOnly, retireTexture } from '../../gpuRetire'
 import { bumpPoseRev as bumpVisualPoseRev } from '../poseRev'
-import { buildRigGizmo, posableJoints } from './rigGizmo'
+import { buildRigGizmo } from './rigGizmo'
+import { paintLamp, SQUASH_TAU } from './rigLamps'
+import type { LampMat } from './rigLamps'
+import { createProcGeometry } from './rigProcedural'
+import { createRigPlacement } from './rigPlacement'
+import { placePosedArray } from './rigArrayPose'
+import type { PosedArray } from './rigArrayPose'
+import { createRigBeams } from './rigBeams'
+import { addLabelPlane, paintLabelPlates } from './rigLabels'
+import type { RigLabel } from './rigLabels'
+import { layoutArrayLink, layoutDeckCut, layoutGuardSplit, layoutLegs, releaseGuardSplit } from './rigLayout'
+import type { DeckCutLink, GuardSplitLink, InstancedArrayLink, LegLink } from './rigLayout'
 
 // ---- rig -----------------------------------------------------------------
 
@@ -89,7 +59,6 @@ const FINE_CYLINDER_RADIUS = 0.2
 const cylinderGeoFor = (radius: number): CylinderGeometry => (radius >= FINE_CYLINDER_RADIUS ? unitCylinderFine : unitCylinder)
 const unitCone = new ConeGeometry(1, 1, 20) // apex +Y, base −Y, scale (r, h, r) - a downward cue rotates the link
 const LAMP_OFF_COLOR = 0x2a2d31 // dark neutral an unlit lamp link shows when its lamp authors no `offColor`
-const SQUASH_TAU = 0.05 // time constant (s) of the squash ease - a cup settles ~95% in ~0.15 s
 
 /**
  * Rendered roller radius (m) of a rig's spinning-roller links. The no-slip visual spin rate is
@@ -103,66 +72,6 @@ export function rigRollerSpinRadius(geo: Extract<PartPackage['geometry'], { kind
   return ROLLER_MODEL_RADIUS
 }
 
-/** the longest edge of a label's canvas, in texels; the short edge follows the plane's aspect */
-const LABEL_TEXEL = 512
-/** requested anisotropy for a caption; both backends clamp this to the device max, so it needs no capability probe */
-const MAX_LABEL_ANISOTROPY = 16
-
-/**
- * The canvas a label link draws into, sized to the plane's aspect. A square canvas on a non-square plane
- * stretches every glyph by the aspect ratio. Sizing the canvas to the plane lets a caption be as wide as the
- * surface it is printed on (a legend band above a pushbutton cap is wide and shallow, like a real engraved plate).
- */
-function labelCanvasSize(w: number, h: number): { width: number; height: number } {
-  const long = Math.max(w, h)
-  const px = (n: number): number => Math.max(16, Math.round((LABEL_TEXEL * n) / long))
-  return { width: px(w), height: px(h) }
-}
-
-/** the legend plate a caption is printed on: pale engraving stock, with a darker edge so it reads as a plate */
-const LABEL_PLATE = '#e9e9e6'
-const LABEL_PLATE_EDGE = '#8d8f92'
-
-/**
- * Draw a label shape onto its canvas as an engraved plate: the plate colour edge to edge, with the text on top,
- * rather than bare glyphs on a transparent canvas. Empty text leaves the canvas clear (the link hides).
- * `color` is the ink, a CSS colour string.
- *
- * The plate is what makes the caption render. Bare glyphs on a transparent canvas are invisible under WebGPU,
- * while WebGL draws them. A solid fill on the same canvas shows at once (a red test fill did; black and white
- * text on transparent did not), so WebGPU sampling loses thin, mostly-transparent coverage. Headless runs have no
- * WebGPU adapter and fall back to WebGL, so gates and screenshots don't catch this. A solid plate also survives
- * minification: mip-averaging thin strokes over transparency fades a caption to nothing a couple of metres out,
- * while a plate keeps its contrast and just gets smaller. Verify captions on `msedge --enable-unsafe-webgpu`.
- *
- * The caption is fitted to both axes. It takes 72% of the plate height, then shrinks by measured width if it
- * would overrun the plate. A long caption stays inside a narrow plate, and a short one on a wide plate stays
- * as big as the height allows (a character count would ignore what the glyphs actually measure).
- */
-function drawLabelText(ctx: CanvasRenderingContext2D, text: string, color: string): void {
-  const { width, height } = ctx.canvas
-  ctx.clearRect(0, 0, width, height)
-  if (!text) return
-  ctx.fillStyle = LABEL_PLATE
-  ctx.fillRect(0, 0, width, height)
-  ctx.strokeStyle = LABEL_PLATE_EDGE
-  ctx.lineWidth = Math.max(2, Math.round(height * 0.05))
-  ctx.strokeRect(ctx.lineWidth / 2, ctx.lineWidth / 2, width - ctx.lineWidth, height - ctx.lineWidth)
-  ctx.fillStyle = color
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  const font = (px: number): string => `bold ${px}px ui-sans-serif, system-ui, sans-serif`
-  let size = height * 0.72
-  ctx.font = font(size)
-  const max = width * 0.9 // a margin either end, so the caption reads as printed ON the plate
-  const measured = ctx.measureText(text).width
-  if (measured > max) {
-    size = Math.max(4, (size * max) / measured)
-    ctx.font = font(size)
-  }
-  ctx.fillText(text, width / 2, height / 2 + size * 0.04)
-}
-
 function linkMesh(shape: Exclude<RigShape, { kind: 'mesh' } | { kind: 'frame' } | { kind: 'label' } | { kind: 'roller' } | { kind: 'leg' }>, material: Material): Mesh {
   const mesh = shape.kind === 'cylinder' ? new Mesh(cylinderGeoFor(shape.radius), material) : shape.kind === 'cone' ? new Mesh(unitCone, material) : new Mesh(unitBox, material)
   if (shape.kind === 'cylinder' || shape.kind === 'cone') mesh.scale.set(shape.radius, shape.height, shape.radius)
@@ -172,52 +81,12 @@ function linkMesh(shape: Exclude<RigShape, { kind: 'mesh' } | { kind: 'frame' } 
   return mesh
 }
 
-// ---- rig link banks (arrayed primitives / arrayed meshes / lamps) --
-// buildRig's per-link entry types + its closure-free rebuild helpers, hoisted to the top level so the
-// ~1100-line builder below stays reviewable. Field semantics are documented at each entry array inside
-// buildRig. The _inst temps are scratch reused per call (single-threaded render loop, like the
-// beam temps below); never retained across calls.
+// ---- arrayed mesh links ---------------------------------------------------
+// buildRig's entry type for an arrayed mesh link and its closure-free rebuild helpers. Field semantics are
+// documented at the entry array inside buildRig.
 
-type ArrayShape = Exclude<RigShape, { kind: 'mesh' } | { kind: 'frame' } | { kind: 'label' } | { kind: 'leg' }>
 type MeshArrayLink = { group: Group; array: NonNullable<RigLink['array']>; showParam?: string; shape: Extract<RigShape, { kind: 'mesh' }>; template: Object3D | null; instances: Object3D[]; name: string; squash?: { frac: number; signal: string; anchorY: number; restY: number[]; cur: number; target: number } }
-// C-emissive lamp-link material entry (see buildRig's lampMats)
-// `bank`: a lamp drawn as an instance of a LampBank - painted through the bank's per-instance data, never `mat`
-type LampMat = { name: string; mat: MeshStandardMaterial; color: Color; off: Color; opacity?: number; bank?: { bank: LampBank; index: number } }
 
-// Write an array of grid deltas into a pool's InstancedMesh at one uniform scale (per-copy position varies,
-// scale doesn't - a post run, a shelf stack). Grows the buffer as needed and refreshes bounds for culling.
-const _instQuat = new Quaternion() // identity - the link group already carries the shape's rotation
-const _instPos = new Vector3()
-const _instScale = new Vector3()
-const _instMat = new Matrix4()
-function writeInstances(pool: InstancePool, deltas: readonly Vec3Tuple[], sx: number, sy: number, sz: number): void {
-  ensureInstanceCapacity(pool, deltas.length)
-  const mesh = pool.mesh
-  _instScale.set(sx, sy, sz)
-  for (let i = 0; i < deltas.length; i++) {
-    _instPos.set(deltas[i]![0], deltas[i]![1], deltas[i]![2])
-    _instMat.compose(_instPos, _instQuat, _instScale)
-    mesh.setMatrixAt(i, _instMat)
-  }
-  mesh.count = deltas.length
-  mesh.instanceMatrix.needsUpdate = true
-  if (deltas.length > 0) mesh.computeBoundingSphere()
-  syncBankEmptyVisibility(mesh) // gate-empty array (showParam off) ⇒ invisible, not a codegen-paying no-op draw
-}
-// A `distribute` array that reaches the instance ceiling is silently truncated by arrayInstanceDeltas (a
-// roller bed or post run just stops mid-span). The ceiling is high enough that no realistic bed hits it, so
-// this fires only on a pathological spacing/span - surface it once (partDiagnostics dedups the stable
-// message, so a live drag can't storm it) with a message the author can act on, instead of geometry that
-// just vanishes. partId is best-effort (set on the group before buildRig; absent for a catalog/thumbnail).
-function warnIfCapped(deltas: readonly Vec3Tuple[], root: Group, packageId: string): void {
-  if (deltas.length < MAX_DISTRIBUTE_INSTANCES) return
-  reportPartDiagnostic({
-    source: 'geometry',
-    partId: typeof root.userData.partId === 'string' ? root.userData.partId : '',
-    packageId,
-    message: `A repeating rig element reached the ${MAX_DISTRIBUTE_INSTANCES}-instance safety ceiling; further copies were omitted. Increase the element spacing or reduce the span.`,
-  })
-}
 // tileUv (RigMeshShape.tileUv): a stretched GLB member re-tiles its repeating texture instead of smearing it.
 // Each matching mesh gets an owned geometry copy whose UV channel is the model's own times the stretch factor,
 // rewritten in place on a param change (the attribute version bump is what the instance pool re-bakes on).
@@ -257,8 +126,6 @@ function applyTiledMeshes(entry: TiledMeshLink, params: RigParams): void {
   }
 }
 
-const _spinQ = new Quaternion()
-const _spinV = new Vector3()
 // squash: compress every clone along local Y by `frac·cur`, anchored at the cup rim (anchorY) so the
 // contact lip that meets the workpiece stays put and the bellows fold up toward the mount - the box the
 // vacuum grips stays sealed against the lip instead of the lip springing off it. newY = restY + anchorY·frac·cur.
@@ -273,14 +140,6 @@ function applyMeshSquash(entry: MeshArrayLink): void {
     inst.position.y = (s.restY[i] ?? inst.position.y) + shift
   }
 }
-// MeshPart.squash: a geometry() submesh (or a whole instanced bank) compressed along its link's Y, anchored at its
-// lowest point, the same ease and anchor as a mesh link's clones above.
-type ProcSquash = { mesh: Mesh; frac: number; signal: string; anchorY: number; cur: number; target: number }
-function applyProcSquash(s: ProcSquash): void {
-  s.mesh.scale.y = 1 - s.frac * s.cur
-  s.mesh.position.y = s.anchorY * s.frac * s.cur
-}
-
 // (Re)build an arrayed mesh link's clones at each array delta. Shared with the async-load path.
 function rebuildMeshArray(entry: MeshArrayLink, params: RigParams, seam: SeamContext | undefined): void {
   if (!entry.template) return
@@ -303,37 +162,6 @@ function rebuildMeshArray(entry: MeshArrayLink, params: RigParams, seam: SeamCon
   }
 }
 
-// C-emissive: light/darken one lamp link's material (mirrors the built-in stack-light paintLens - lit =
-// tint + emissive at full energy, a lamp `opacity` lens going translucent over its core; off = the unlit
-// albedo, opaque).
-function paintLamp(lm: LampMat, on: boolean): void {
-  if (lm.bank) {
-    lm.bank.bank.paint(lm.bank.index, on)
-    return
-  }
-  if (on) {
-    lm.mat.color.copy(lm.color)
-    lm.mat.emissive.copy(lm.color)
-    lm.mat.emissiveIntensity = 1
-    if (lm.opacity !== undefined) {
-      lm.mat.transparent = true
-      lm.mat.opacity = lm.opacity
-    }
-  } else {
-    lm.mat.color.copy(lm.off)
-    lm.mat.emissive.setHex(0x000000)
-    lm.mat.emissiveIntensity = 0
-    if (lm.opacity !== undefined) {
-      lm.mat.transparent = false
-      lm.mat.opacity = 1
-    }
-  }
-}
-
-// reused per beam probe (single-threaded render loop, like sensor.ts's temps); never retained across frames
-const _beamQ = new Quaternion()
-const _beamOrigin = new Vector3()
-const _beamDir = new Vector3()
 
 // ---- rig build -------------------------------------------------------------
 
@@ -417,7 +245,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
   // depressing), which no geometry field declares. A dynamically-named call can't be resolved statically
   // and conservatively grounds the whole rig (subPosedLinkNames).
   const subPosed = subPosedLinkNames(pkg.behavior)
-  const mobileLink = (l: RigLink): boolean => jointedLinks.has(l.name) || !!l.aim || subPosed.unresolved || subPosed.names.has(l.name)
+  const mobileLink = (l: RigLink): boolean => jointedLinks.has(l.name) || !!l.aim || !!l.array?.posable || subPosed.unresolved || subPosed.names.has(l.name)
   // Per link, not per rig: a whole-rig rule lets one joint keep every link of the part out, including
   // hardware that never moves (the turntable's legs, feet and base frame, a blade stop's housing). What
   // makes that safe is `poolMobile` below: a mobile link's group
@@ -448,7 +276,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
   // demand. A guard sheet (a link tall enough to hold a sensor-beam hole) is also split around each hole on its
   // side (guardHoles.ts), and `panels` is the pool of holed plates that fill those gaps; `offsetY` is the link's
   // centre height, which is how a sheet is told from the thin top return above it (which stays whole).
-  const guardSplitLinks: { group: Group; size: Vec3Tuple; sizeParams: NonNullable<Extract<RigShape, { kind: 'box' }>['sizeParams']>; mat: Material; side: 'left' | 'right'; frame: boolean; offsetY: number; link: RigLink; children: Mesh[]; panels: Mesh[]; wedges: Mesh[] }[] = []
+  const guardSplitLinks: GuardSplitLink[] = []
   // stair→platform structure-cut deck pool (docs/part-snap-stairs.md): a notchable box link's children are
   // (re)laid out per refresh as the complement strips around the cut's deck notches (deckStripRects - the same
   // pure rects the sim carves its colliders from), the 2-axis twin of guardSplitLinks. No cut ⇒ one full-size
@@ -456,7 +284,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
   // stair sliding along a deck edge never tears the rig down (a full rebuild per pointer-move causes snap lag). The railing half of the cut rides instancedArrayLinks (see `railing` there).
   // `walk`/`strips`: a walking-surface deck tiles each strip by its own size, so strip i wears strips[i] (strip 0 the
   // link's own surface; more are minted as a cut adds strips, and kept for reuse when it removes them)
-  const deckCutLinks: { group: Group; size: Vec3Tuple; sizeParams?: Extract<RigShape, { kind: 'box' }>['sizeParams']; mat: Material; children: Mesh[]; walk?: WalkFinish; strips?: DeckSurface[] }[] = []
+  const deckCutLinks: DeckCutLink[] = []
   // param-driven cylinder links (C-paramgeo): radius/height track a param (a roller's axle-length = belt width)
   const paramCylinders: { mesh: Mesh; shape: Extract<RigShape, { kind: 'cylinder' }> }[] = []
   // node scaling: a mesh-node link whose group stretches per-axis from a param (a GLB section that grows with a
@@ -465,14 +293,14 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
   // ...and those of them that re-tile a repeating texture along the stretch instead of smearing it (tileUv)
   const tiledMeshLinks: TiledMeshLink[] = []
   // a param-driven offset (C-paramgeo) or a whole-bed incline makes the refresh re-place the links (placeLinks)
-  const paramPose = !!geo.inclineParam || geo.links.some((l) => !!l.offsetParams)
+  const paramPose = !!geo.inclineParam || geo.links.some((l) => !!l.offsetParams || !!l.rotationParams)
   // C-emissive: a link with a lamp (`lamps`) gets its own material so it can be lit per-tick. `off` is the
   // colour shown when dark - the lamp's authored `offColor` (its unlit albedo) else LAMP_OFF for a primitive, or a
   // mesh lamp's base (remapped) colour so e.g. a push-button cap reads as its matte colour when unlit, not a
   // dead grey. `opacity` (the lamp's own) makes the lit state translucent - a tinted lens over an inner
   // core, the built-in stack light's optics; off stays opaque.
   const lampMats: LampMat[] = []
-  // showParam links: a boolean param gates the whole link's visibility (a structural side-guard toggle). Refresh
+  // showParam links: a param gates the whole link's visibility (a structural side-guard toggle, a robot's own hand). Refresh
   // sets group.visible from the resolved param; the sim skips its collision body in parallel (world.buildRigBodies).
   const showParamLinks: { group: Group; param: string }[] = []
   // array-links: a count-driven primitive link (box/cylinder/cone) whose N copies share one uniform scale and
@@ -485,12 +313,10 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
   // (docs/part-snap-stairs.md): a post run (multi-instance array) drops instances in the railing gap + gains a
   // framing post at each gap edge (cutPostDeltas - shared with the sim's collider rewrite); a rail/toe box
   // (bare-gate or no array → `segment`) is laid out as one instance per kept segment with per-instance length.
-  const instancedArrayLinks: { group: Group; shape: ArrayShape; array: NonNullable<RigLink['array']>; showParam?: string; pool: InstancePool | null; mat: Material; geom: BufferGeometry; cast: boolean; railing?: { edge: keyof PlatformCut['openings']; axis: 0 | 2; segment: boolean } }[] = []
+  const instancedArrayLinks: InstancedArrayLink[] = []
   // kind:'leg' links: the built-in dual-post steel trestle (createLegSet + legStations + writeLegs), auto-spaced
   // along the spanParam length and reflowed on width/length change, the same legs the built-in parts use.
-  const legLinks: { pool: LegPool; spanParam: string; widthParam: string; standParam: string; shape: RigLegShape; arc?: { radiusParam: string; sweepDeg: number } }[] = []
-  // private texture copies minted for geometry() scroll channels (MeshPart.scroll). Not module-cached, so disposed with the part.
-  const scrollTexClones: Texture[] = []
+  const legLinks: LegLink[] = []
   // arrayed mesh links: the prepared GLB instance is a template cloned per array delta, (re)built in refresh -
   // the EOAT suction-cup grid (a `grid` array on a mesh link). Clones share the template's geometry/materials,
   // so a lamp material tint (the vacuum-on green) lights every cup at once.
@@ -510,7 +336,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
   let lastCutKey = ''
   // C-label: render-only text planes (3D labels). Each carries a CanvasTexture redrawn on
   // refresh from a static `text` or a `textParam` (Inspector-editable); the plane hides when the text is empty.
-  const labels: { shape: Extract<RigShape, { kind: 'label' }>; mesh: Mesh; ctx: CanvasRenderingContext2D; tex: CanvasTexture; last: string | null }[] = []
+  const labels: RigLabel[] = []
   const labelDisposables: (Texture | Material | BufferGeometry)[] = []
   // the display values last routed from the running frame (ctx.display) - what a live `textFrom` caption
   // shows. A name absent from the bag falls back to the authored plate, so a stopped scene reads as the
@@ -616,34 +442,12 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
     // param-gated structural toggle: refresh sets g.visible from the boolean param (the sim drops the body to match)
     if (link.showParam) showParamLinks.push({ group: g, param: link.showParam })
     if (link.shape.kind === 'label') {
-      // a flat plane facing local +Z; the canvas/2d context may be absent (headless tests) - then the link is empty
-      const shape = link.shape
-      const [w, h] = shape.size ?? [0.05, 0.05]
-      const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null
-      const c2d = canvas?.getContext('2d') ?? null
-      if (canvas && c2d) {
-        const size = labelCanvasSize(w, h)
-        canvas.width = size.width
-        canvas.height = size.height
-        const tex = new CanvasTexture(canvas)
-        tex.colorSpace = SRGBColorSpace
-        // a caption is read at a glancing angle as often as head-on (walking a line, not standing at it), and
-        // an unfiltered minified glyph washes out to nothing there - the plate keeps its text off-axis
-        tex.anisotropy = MAX_LABEL_ANISOTROPY
-        // Opaque: the plate covers its quad edge to edge, so there is nothing to blend and no reason to skip
-        // depth. Transparent + depthWrite:false is what a bare-glyph caption would need, and that combination
-        // loses the text under WebGPU (see drawLabelText). A solid quad standing clear of the surface behind it
-        // needs neither.
-        const mat = new MeshBasicMaterial({ map: tex, toneMapped: false })
-        const geom = new PlaneGeometry(w, h)
-        const mesh = new Mesh(geom, mat)
-        mesh.visible = false // shown once the first refresh draws non-empty text
-        g.add(mesh)
-        labels.push({ shape, mesh, ctx: c2d, tex, last: null })
-        labelDisposables.push(tex, mat, geom)
-      }
+      addLabelPlane(link.shape, g, labels, labelDisposables)
     }
     else if (link.shape.kind === 'mesh') {
+      // the GLB nodes other links of this asset keep are theirs to draw, not this link's
+      const elsewhere = drawnElsewhere(geo.links, link)
+      const meshShape: CarvedMeshShape = elsewhere ? { ...link.shape, drawnElsewhere: elsewhere } : link.shape
       // a finish overrides the GLB's own material with the host conveyor material (e.g. a 'roller'-finish GLB roller
       // gets the brushed roller metal + spin); else the shape's declared package material, else the GLB's own.
       const single = link.finish ? roleMaterial(link.finish) : link.shape.material ? matById.get(link.shape.material) : undefined
@@ -683,7 +487,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
         // an arrayed mesh link: the prepared GLB instance becomes a template cloned per array delta (the EOAT
         // suction-cup grid). Loads async → rebuild once it arrives (using the last refreshed params/seam), and
         // bump structureVersion so a staged placement preview re-tags the new clones (like roller/chain links).
-        const entry: MeshArrayLink = { group: g, array: link.array, ...(link.showParam ? { showParam: link.showParam } : {}), shape: link.shape, template: null, instances: [], name: link.name }
+        const entry: MeshArrayLink = { group: g, array: link.array, ...(link.showParam ? { showParam: link.showParam } : {}), shape: meshShape, template: null, instances: [], name: link.name }
         // squash: the clones compress when their driving lamp lights - `squash.lamp` (the EOAT's vacuum-status
         // LED) or this link's own lamp. No lamp of its own required (the cups don't glow).
         // anchorY is filled from the template bounds once the GLB loads.
@@ -708,7 +512,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
         }
       } else {
         const poolable = poolableLink(link)
-        attachMesh(g, root, link.shape, assets, single, perMat, referencedNodes, poolable || tiled ? (inst) => { prepareTiled(inst); if (poolable) tagPoolLeaves(inst) } : undefined)
+        attachMesh(g, root, meshShape, assets, single, perMat, referencedNodes, poolable || tiled ? (inst) => { prepareTiled(inst); if (poolable) tagPoolLeaves(inst) } : undefined)
       }
       if (!link.lamps?.length && link.colorParam && !link.finish && link.shape.material) {
         // C-paramgeo colour on a plain mesh link: tints its single package-material override (a `finish`'s shared
@@ -888,192 +692,9 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
     bumpVisualPoseRev(root)
   }
 
-  // C-sensing beam visual: a link with a `beam` draws the same live beam line as the built-in sensors
-  // (sensor.ts) and publishes the guard-hole segment each frame - probeTick, driven by view.ts's per-entry
-  // probe loop. The line runs to the link's `beam.rangeParam` (default-resolved, the same length the sim senses
-  // to; else its declared range) and hides when its `beam.showParam` is false; `beam.tint:'hit'` colours a
-  // blocked beam with the detected cargo's tint instead of red (the colour sensor). `paramRange` / `shown` are
-  // those two, resolved in refresh.
-  const beamVisuals: { name: string; group: Group; beam: SensorBeam; axis: Vector3; range: number; rangeParam?: string; showParam?: string; paramRange: number | null; shown: boolean; tintHit: boolean; lastDist: number }[] = []
-  for (const link of geo.links) {
-    if (!link.beam) continue
-    const g = linkGroups.get(link.name)!
-    const axis = new Vector3(link.beam.axis?.[0] ?? 0, link.beam.axis?.[1] ?? 0, link.beam.axis?.[2] ?? 1).normalize()
-    // Not a mesh under g: the beam renders in the overlay pass, so it must not sit inside the part's
-    // rig (which is bundled under WebGPU, and bundles execute after every base draw, so they would paint
-    // over it). Every beam in the scene is one instance of a shared bank instead: probeTick
-    // writes its world aim + tint below, and `root` is passed so the bank can mirror the part's
-    // visibility each frame. It stays collapsed/undrawn until that first probe, which keeps an
-    // unprobed thumbnail rig out of the overlay gate. See sensorBeamOverlay.ts.
-    beamVisuals.push({ name: link.name, group: g, beam: addSensorBeam(root), axis, range: link.beam.range, ...(link.beam.rangeParam !== undefined ? { rangeParam: link.beam.rangeParam } : {}), ...(link.beam.showParam !== undefined ? { showParam: link.beam.showParam } : {}), paramRange: null, shown: true, tintHit: link.beam.tint === 'hit', lastDist: -1 })
-  }
-  const probeTick = beamVisuals.length
-    ? (probe: BeamProbe): boolean => {
-        // hidden part: no beam (mirrors the built-in sensors). The guard holes a beam cuts are not drawn from here:
-        // they are geometry, worked out from the scene (core/guardHoles.ts), so hiding a sensor leaves them. The show flags are
-        // left alone - syncSensorBeams ANDs them with root.visible every frame, so
-        // the beams come back with the part without needing another probe seam (WebGPU's staged
-        // compile hides parts outside any seam; see sensorBeamOverlay.ts).
-        if (!root.visible) return false
-        let mutated = false // whether a beam visual changed (stretch/tint) - the view's bundle activity mark
-        for (const bv of beamVisuals) {
-          bv.group.getWorldPosition(_beamOrigin)
-          _beamDir.copy(bv.axis).applyQuaternion(bv.group.getWorldQuaternion(_beamQ))
-          const range = bv.paramRange ?? bv.range
-          if (!bv.shown) {
-            bv.beam.setShow(false)
-            continue
-          }
-          const hit = probe(_beamOrigin, _beamDir, range, bv.name)
-          const dist = hit ? Math.min(hit.distance, range) : range
-          // tint only on a real change, so a steady beam doesn't mark its part dirty every probe pass
-          const tint = bv.tintHit ? (hit ? hit.color : BEAM_GREEN) : hit ? BEAM_RED : BEAM_GREEN
-          if (bv.beam.tint(tint)) mutated = true
-          bv.beam.setShow(true)
-          // World aim, rewritten every probe: the beam is an instance of the scene-level bank, so it
-          // inherits nothing from the part and must re-derive its placement whenever the part moves,
-          // not only when the hit distance changes. The beam is outside the matrix-frozen rig and
-          // outside the bundle, so these few vector ops need no poseRev bump and no per-frame re-bake.
-          bv.beam.aim(_beamOrigin, _beamDir, dist)
-          // still change-gated: `mutated` is the view's activity mark, not the transform write
-          if (dist !== bv.lastDist) {
-            bv.lastDist = dist
-            mutated = true
-          }
-        }
-        return mutated
-      }
-    : undefined
+  const { beamVisuals, probeTick } = createRigBeams(geo, root, linkGroups)
 
-  // ---- link placement: one resolver --------------------------------------------------------------------------
-  // Every link group's pose comes from core's rig FK (rigWorldPosesInto) - the function the sim builds its bodies
-  // from - run on the current geometry with the current joints, sub-poses, params and whole-bed incline, and
-  // written back as each group's local transform (its parent's world pose inverted, times its own). Every layer
-  // is in that one call: the authored rest pose, a param-driven offset (C-paramgeo), a joint, a setSubPose
-  // override, an aim constraint (C-aim), the incline (legs excepted, as in core).
-  //
-  // Never re-derive a layer here from a copy of the rest pose taken at build time: an author edit to a node
-  // would change the data while the next refresh puts the node back, and the visual could drift from the
-  // sim's colliders. A new pose, from any source, is one call.
-  const aimLinks = geo.links.filter((l) => l.aim)
-  let poseGeo: Extract<PartPackage['geometry'], { kind: 'rig' }> = geo // what the groups are posed from
-  let poseBuf = rigPoseBuffer(geo)
-  // parent index per link (by position in links); structure is fixed for this build - applyRestPose only swaps poses
-  const poseParent = Int32Array.from(geo.links.map((l) => (l.parent ? geo.links.findIndex((x) => x.name === l.parent) : -1)))
-  let lastJoints: Record<string, number> = {} // the last-applied joint values (a refresh re-places with them)
-  let lastSubPoses: Record<string, SubPose> = {} // every setSubPose override seen; a link keeps its last one
-  let lastIncline = 0 // the whole-bed incline the last placeLinks resolved (params change only through a refresh)
-  const placeLinks = (): void => {
-    lastIncline = rigInclineRad(poseGeo, lastParams)
-    rigWorldPosesInto(poseBuf, poseGeo, lastJoints, lastSubPoses, 1, lastParams, lastIncline)
-    const b = poseBuf
-    const links = poseGeo.links
-    for (let i = 0; i < links.length; i++) {
-      const grp = linkGroups.get(links[i]!.name)
-      if (!grp) continue
-      const o = i * POSE_STRIDE
-      const pi = poseParent[i]!
-      if (pi < 0) {
-        grp.position.set(b[o]!, b[o + 1]!, b[o + 2]!)
-        grp.quaternion.set(b[o + 3]!, b[o + 4]!, b[o + 5]!, b[o + 6]!)
-        continue
-      }
-      // local = parent^-1 * world: rotate (world pos - parent pos) by the parent's conjugate, and conj(parent) * q
-      const po = pi * POSE_STRIDE
-      const cx = -b[po + 3]!, cy = -b[po + 4]!, cz = -b[po + 5]!, cw = b[po + 6]!
-      const dx = b[o]! - b[po]!, dy = b[o + 1]! - b[po + 1]!, dz = b[o + 2]! - b[po + 2]!
-      const tx = 2 * (cy * dz - cz * dy), ty = 2 * (cz * dx - cx * dz), tz = 2 * (cx * dy - cy * dx)
-      grp.position.set(dx + cw * tx + (cy * tz - cz * ty), dy + cw * ty + (cz * tx - cx * tz), dz + cw * tz + (cx * ty - cy * tx))
-      const qx = b[o + 3]!, qy = b[o + 4]!, qz = b[o + 5]!, qw = b[o + 6]!
-      grp.quaternion.set(cw * qx + cx * qw + cy * qz - cz * qy, cw * qy + cy * qw + cz * qx - cx * qz, cw * qz + cz * qw + cx * qy - cy * qx, cw * qw - cx * qx - cy * qy - cz * qz)
-    }
-  }
-  placeLinks() // the rest pose, with aim links connected, in case the rig is never driven (no gizmo/idle pose)
-
-  // The per-frame paths (a joint tick, a sub-pose) can only change the local transform of the links they name, and
-  // the scene graph carries every child along. So they re-pose just those, by core's own per-link rule
-  // (rigLinkLocalPoseInto, the same math the full composition uses) on the current geometry. Placing all 57 links
-  // of a one-joint turntable every frame costs ~60x what the joint itself does. A rig with aim links composes the
-  // whole tree instead, since an aimed strut's rotation hangs on another link's world position.
-  const localScratch = new Float64Array(POSE_STRIDE)
-  const linkIndex = new Map(geo.links.map((l, i) => [l.name, i]))
-  const jointedIdx = geo.joints.map((j) => linkIndex.get(j.link)).filter((i): i is number => i !== undefined)
-  const placeOnly = (indices: Iterable<number>): void => {
-    if (aimLinks.length > 0) {
-      placeLinks()
-      return
-    }
-    for (const i of indices) {
-      const grp = linkGroups.get(poseGeo.links[i]!.name)
-      if (!grp) continue
-      const b = rigLinkLocalPoseInto(localScratch, poseGeo, i, lastJoints, lastSubPoses, lastParams, lastIncline)
-      grp.position.set(b[0]!, b[1]!, b[2]!)
-      grp.quaternion.set(b[3]!, b[4]!, b[5]!, b[6]!)
-    }
-  }
-
-  const applyJoints = (values: Record<string, number>): void => {
-    // command every declared joint each call; an un-commanded joint returns to rest (position control).
-    lastJoints = values
-    // a rig with nothing a joint value can move: nothing to place (and no pose bump)
-    if (geo.joints.length === 0 && aimLinks.length === 0) return
-    placeOnly(jointedIdx)
-    // repeat-value spam is gated upstream (the view's frame routing); a call that reached here moved links
-    bumpPoseRev()
-  }
-
-  // An author edit moved a link's rest pose (a node drag, an Inspector field, an undo) without changing the rig's
-  // structure, so the groups are re-posed in place rather than rebuilt: the edited geometry becomes the one
-  // placeLinks resolves from, and the refresh that follows in `apply` lays it out with the params.
-  const applyRestPose = (g2: Extract<PartPackage['geometry'], { kind: 'rig' }>): void => {
-    poseGeo = g2
-    if (poseBuf.length < g2.links.length * POSE_STRIDE) poseBuf = rigPoseBuffer(g2)
-    for (const link of g2.links) linkByName.set(link.name, link)
-    placeLinks()
-    replaceLinkBanks()
-  }
-
-  // Runtime backstop to the static setSubPose read (poolableLink): a link this actually moves must not
-  // be pooled, whatever the source scan concluded. The scan is a whole-string-literal match - the same
-  // best-effort convention as the rename cascade - so an obfuscated/computed name can slip it; here the
-  // move is a fact. Untag the subtree, hand back anything the pool had hidden (so the moving link draws
-  // live from this tick), and bump structureVersion, which is the async-attach signal the view already
-  // re-pools on. Once per link: after the first move nothing is left tagged.
-  const unpooled = new Set<string>()
-  const unpoolSubtree = (name: string, g: Group): void => {
-    if (unpooled.has(name)) return
-    unpooled.add(name)
-    let found = false
-    // the group tag is what keeps the link's instanced banks out (they need no opt-in to be ingested,
-    // so untagging poolUnit alone would leave them merged - and frozen); the pool prunes the subtree
-    g.userData.poolMobile = true
-    g.traverse((o) => {
-      if (o.userData.poolUnit === true) delete o.userData.poolUnit
-      else if (o.userData.poolHidden !== true) return
-      if (o.userData.poolHidden === true) {
-        delete o.userData.poolHidden
-        o.visible = true
-      }
-      found = true
-    })
-    if (found) bumpStructureVersion(root)
-  }
-
-  const applySubPoses = (subPoses: Record<string, SubPose>): void => {
-    // free-form pose overrides: a subPose overrides the link's rest + joint pose (core's rule); one placeLinks
-    let moved = false
-    for (const name in subPoses) {
-      const g = linkGroups.get(name)
-      if (!g || !linkByName.has(name)) continue
-      unpoolSubtree(name, g)
-      moved = true
-    }
-    if (!moved) return
-    lastSubPoses = { ...lastSubPoses, ...subPoses }
-    placeOnly(Object.keys(subPoses).map((n) => linkIndex.get(n)).filter((i): i is number => i !== undefined))
-    if (linkBanks.length > 0) replaceLinkBanks()
-    bumpPoseRev()
-  }
+  const { applyJoints, applyRestPose, applySubPoses: placeSubPoses, resetRunPose: placeRunReset, instancePoseInto, ...placement } = createRigPlacement({ geo, root, linkGroups, linkByName, hasLinkBanks: linkBanks.length > 0, replaceLinkBanks, bumpPoseRev })
 
   // squash links: the driving lamp's frame.lamps signal also sets the compression target (0/1), eased toward
   // by the tick (below). The signal is a different link than the squash (the cups squash off the tool's LED).
@@ -1081,48 +702,65 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
   // the behavior's per-tick lamp state (frame.lamps), routed here by the view while the sim runs. A geometry()
   // submesh can be a lamp too (MeshPart.lamps) - those register on the first refresh, after this is built, so a rig
   // whose script has geometry() and declares lamps gets the hook up front (the loop reads lampMats at call time).
-  const procMayLight = partHasGeometry(pkg.behavior) && partDeclaredLamps(pkg.behavior).length > 0
-  // A geometry() submesh can squash too (MeshPart.squash): registered by the procedural refresh, eased by procTick.
-  const procSquashes: ProcSquash[] = []
+  const proc = createProcGeometry({ root, linkGroups, pkg, paramSpecs, materials, assets, allMaterials, lampMats, bumpPoseRev })
+
+  // posable array links (array.posable): each instance's draws follow setSubPose(link, pose, i) (rigArrayPose.ts)
+  const posedArrays = new Map<string, PosedArray>()
+  for (const link of geo.links) {
+    if (!link.array?.posable) continue
+    const ial = instancedArrayLinks.find((x) => x.group === linkGroups.get(link.name))
+    posedArrays.set(link.name, {
+      rest: [],
+      poses: undefined,
+      primitive: () => (ial?.pool && ial.scale ? { mesh: ial.pool.mesh, scale: ial.scale } : null),
+      banks: () => proc.banksOn(link.name),
+      place: (out, pose, rest) => instancePoseInto(out, link.name, pose, rest),
+    })
+  }
+  // a refresh re-lays the rows at rest: take the new rest places and put back the run's poses
+  const refreshPosedArrays = (params: RigParams): void => {
+    for (const [name, pa] of posedArrays) {
+      const link = linkByName.get(name)!
+      pa.rest = arrayInstanceDeltas(link.array!, params, undefined, link.showParam)
+      const capped = pitchCapMessage(link, params)
+      if (capped) reportPartDiagnostic({ source: 'geometry', partId: typeof root.userData.partId === 'string' ? root.userData.partId : '', packageId: pkg.id, message: capped })
+      placePosedArray(pa)
+    }
+  }
+  const applySubPoses = (subPoses: Record<string, SubPose>): void => {
+    placeSubPoses(subPoses)
+    let moved = false
+    for (const name in subPoses) {
+      const pa = posedArrays.get(name)
+      const poses = subPoses[name]!.instances
+      if (!pa || (!poses && !pa.poses)) continue
+      pa.poses = poses
+      placePosedArray(pa)
+      moved = true
+    }
+    if (moved) bumpPoseRev()
+  }
+  const resetRunPose = (): void => {
+    placeRunReset()
+    proc.setCopySpeeds({}) // Stop: every copy's belt stops where it stands
+    for (const pa of posedArrays.values()) {
+      if (!pa.poses) continue
+      pa.poses = undefined
+      placePosedArray(pa)
+    }
+  }
+  const procMayLight = proc.mayLight
   const applyLamps = lampMats.length || squashLinks.length || procMayLight
     ? (lamps: Record<string, boolean>): void => {
         for (const lm of lampMats) paintLamp(lm, lamps[lm.name] === true)
         for (const e of squashLinks) e.squash!.target = lamps[e.squash!.signal] === true ? 1 : 0
-        for (const s of procSquashes) s.target = lamps[s.signal] === true ? 1 : 0
+        proc.setLampTargets(lamps)
       }
     : undefined
   // idle lit-state (a lamp's `param`): a lamp bound to a boolean param shows that param whenever the behavior isn't
   // driving it - painted by refresh (place, param edit, sim stop), like the built-ins' authored lamps.
   const lampParamOf = new Map(geo.links.flatMap((l) => (l.lamps ?? []).flatMap((lamp) => (lamp.param ? [[lamp.name ?? l.name, lamp.param] as [string, string]] : []))))
-  /** Repaint the caption plates. A live caption (`textFrom`, published by the behavior) is shown while it is being
-   *  published, else the authored `textParam`/`text` - so a stopped scene reads as the engraved legend instead
-   *  of going blank. Returns whether anything changed (the bundle-refresh signal). */
-  const paintLabels = (params: RigParams): boolean => {
-    let changed = false
-    for (const lb of labels) {
-      const live = lb.shape.textFrom !== undefined ? displayValues[lb.shape.textFrom] : undefined
-      const raw = live !== undefined ? live : lb.shape.textParam !== undefined ? params[lb.shape.textParam] : lb.shape.text
-      const text = raw === undefined || raw === null ? '' : String(raw)
-      const shown = text !== ''
-      const redraw = text !== lb.last
-      if (redraw) {
-        lb.last = text
-        const col = lb.shape.color
-        drawLabelText(lb.ctx, text, col ? `rgb(${Math.round(col[0] * 255)},${Math.round(col[1] * 255)},${Math.round(col[2] * 255)})` : '#000000')
-        lb.tex.needsUpdate = true
-      }
-      const flipped = lb.mesh.visible !== shown
-      lb.mesh.visible = shown
-      // Only a visibility flip is structural: a recorded render bundle bakes which draws exist. New text is
-      // not. The canvas keeps the size it was made with, so three re-uploads into the same GPU texture (no
-      // new handle for a bundle to go stale on), and the upload goes out with the part's dirty mark (`changed`
-      // → the view marks the part, whose walked draw uploads the texture). Bumping here would re-record every
-      // bundle and re-sign the instance pools each time a counter ticks.
-      if (flipped) bumpStructureVersion(root)
-      if (redraw || flipped) changed = true
-    }
-    return changed
-  }
+  const paintLabels = (params: RigParams): boolean => paintLabelPlates(labels, displayValues, params, root)
 
   // The behavior's per-tick display values (frame.displays), routed here by the view while the sim runs.
   // Not a full refresh: a running panel would then re-derive guards, legs and roller grids sixty
@@ -1171,78 +809,8 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
         return moved
       }
     : undefined
-  // ---- geometry() animation channels: MeshPart.scroll (a texture moving along its U) and MeshPart.spin (a submesh
-  // turning about an axis). A channel's speed is a reported value while the sim runs (applyValues: ctx.report, the
-  // number the Inspector's live readout shows), so a program-commanded speed drives it; otherwise the part's param
-  // of that name. The procedural refresh registers the channels as it emits the submeshes; the hook they run in has
-  // to exist from the start, so it is built whenever the script's geometry() animates at its default params.
-  const procMayAnimate = partHasGeometry(pkg.behavior) && geometryAnimates(pkg.behavior, paramSpecs)
-  let liveValues: Record<string, number | boolean> | null = null
-  let procResolved: Record<string, ParamValue> = {}
-  // a scroll/spin channel names the param that turns it; left out, it is the conveyor's declared speed param
-  // (conveyor.speedParam). A part that is no conveyor must name it (validatePart refuses one that doesn't), so
-  // its empty key here only ever reads 0.
   const conveyorSpeedKey = pkg.conveyor?.speedParam
-  const channelKey = (named: string | undefined): string => named ?? conveyorSpeedKey ?? ''
-  const channelSpeed = (key: string): number => {
-    if (key === '') return 0
-    const live = liveValues?.[key]
-    if (typeof live === 'number') return live
-    const p = procResolved[key]
-    return typeof p === 'number' ? p : 0
-  }
-  const procScrolls: { tex: Texture; src: Texture; srcVersion: number; tilesPerMeter: number; speed: string }[] = []
-  const procSpins: { mesh: Mesh; axis: Vector3; center: Vector3; radius: number; speed: string; angle: number }[] = []
-  const procBankSpins: BankSpin[] = [] // MeshPart.spin on an instanced bank: its material turns (bankSpin.ts)
-  const procTick = procMayAnimate
-    ? (dt: number, running: boolean): boolean => {
-        if (!running) liveValues = null // a stale reported speed must not outlive the run
-        let scrolled = false
-        for (const sc of procScrolls) {
-          // the shared texture decoded after this part's copy was made: the copy shares its image, but only the
-          // copy's own version makes the renderer upload it
-          if (sc.src.version !== sc.srcVersion) {
-            sc.srcVersion = sc.src.version
-            if (sc.src.image) sc.tex.needsUpdate = true // never flag an upload before there is an image to upload
-          }
-          if (!running) continue
-          const v = channelSpeed(sc.speed)
-          if (v === 0) continue
-          sc.tex.offset.x = (sc.tex.offset.x - v * sc.tilesPerMeter * dt) % 1 // the pattern moves toward +U
-          scrolled = true
-        }
-        // the scroll uses the shared tick uniform group on WebGPU (scrollNodeMaterial.ts): a direct upload, no mark
-        if (scrolled) markTickUniformsAdvanced()
-        let spun = false
-        if (running) {
-          for (const sp of procSpins) {
-            const v = channelSpeed(sp.speed)
-            if (v === 0 || sp.radius <= 0) continue
-            sp.angle = (sp.angle + (v / sp.radius) * dt) % (Math.PI * 2)
-            _spinQ.setFromAxisAngle(sp.axis, sp.angle)
-            sp.mesh.quaternion.copy(_spinQ)
-            // turn about `center`, not the mesh origin: p' = q(p - c) + c, so the mesh sits at c - q c
-            sp.mesh.position.copy(sp.center).sub(_spinV.copy(sp.center).applyQuaternion(_spinQ))
-            spun = true
-          }
-        }
-        // squash ease, the mesh links' rule (squashTick): toward the lamp while running, relaxed when stopped
-        let squashed = false
-        const k = 1 - Math.exp(-dt / SQUASH_TAU)
-        for (const s of procSquashes) {
-          const target = running ? s.target : 0
-          if (s.cur === target) continue
-          s.cur += (target - s.cur) * k
-          if (Math.abs(target - s.cur) < 1e-3) s.cur = target
-          applyProcSquash(s)
-          squashed = true
-        }
-        if (spun || squashed) bumpPoseRev()
-        // a spinning bank turns its material's spin uniform, which rides the shared tick group: no pose, no mark
-        if (running && advanceBankSpins(procBankSpins, channelSpeed, dt)) markTickUniformsAdvanced()
-        return spun || squashed
-      }
-    : undefined
+  const procTick = proc.tick
   const tick = rollerTick || squashTick || procTick
     ? (dt: number, running: boolean): boolean => {
         // no short-circuit: every sub-tick must run each frame; OR their mutation reports
@@ -1254,342 +822,23 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
       }
     : undefined
 
-  const gizmo = buildRigGizmo(geo, root, linkGroups, applyJoints, paramSpecs)
-  // the authored idle pose: a `pose` numberList param whose first row is [j1..j6] degrees (posable-joint
-  // order; cosmetic self-driven joints are not in the row) → the rig's at-rest pose. Only an array is valid,
-  // matching the numberList grid the Inspector edits; a legacy JSON string is ignored.
+  // a robot's gizmo drags its grip point, which is the tool's it carries (core robotKinematics): read per refresh
+  const robotDecl = geo.posable === true ? robotDeclOfScript(pkg.behavior) : null
+  const gripEnd = (params: Record<string, ParamValue>): string | undefined => (robotDecl ? robotKinematicsOf(geo, robotDecl, params)?.end : undefined)
+  const gizmo = buildRigGizmo(geo, root, linkGroups, applyJoints, paramSpecs, gripEnd(resolvePartParams(paramSpecs, {})))
+  // the authored idle pose: a `pose` numberList param whose first row is the rig's at-rest pose, in the columns and
+  // units Capture Pose writes (core rigPoseColumns: a robot's controller joints in ° and mm, any other rig's posable
+  // joints in ° and m). Only an array is valid, matching the numberList grid the Inspector edits; a legacy JSON
+  // string is ignored.
+  const poseColumns = gizmo ? rigPoseColumns(geo, robotDecl) : []
   const applyIdlePose = gizmo
     ? (poseParam: unknown): void => {
         const idle: Record<string, number> = {}
         const row = Array.isArray(poseParam) && Array.isArray(poseParam[0]) ? (poseParam[0] as unknown[]) : undefined
-        if (row) posableJoints(geo).forEach((j, i) => { const d = row[i]; if (typeof d === 'number') idle[j.name] = (d * Math.PI) / 180 })
+        if (row) poseColumns.forEach(({ joint, unit }, i) => { const d = row[i]; if (typeof d === 'number') idle[joint.name] = d / unit })
         gizmo.applyIdle(idle)
       }
     : undefined
-
-  // ---- procedural rig-link geometry (MeshPart.link) ---------------------------------------------------------
-  // A rig can be dressed by the part's geometry() output: each emitted MeshPart is realized into the group of
-  // the rig link named by MeshPart.link (so it follows that link's joint/rest pose), or the rig root when
-  // untagged. Collision still comes from the declarative link shapes (a `hidden` box = collision-only), so this
-  // is render-only: the wire-mesh the built-in fence/gate draw over a solid barrier/leaf box. Each submesh's
-  // material follows the same rules as the function tier (role / package material / a colorParam tint), so a
-  // rig-dressed part looks identical to a function part. Lazy: a rig whose behavior declares no geometry()
-  // does no work here (procDisabled latches after the first empty eval).
-  const procRoleMat = (role: string): Material => {
-    switch (role) {
-      case 'frame': return railMaterial()
-      case 'guard': return guardMaterial()
-      case 'leg': return legMaterial()
-      case 'bolt': return boltMaterial()
-      case 'gapfill': return gapFillMaterial()
-      case 'roller': return rollerMaterial()
-      case 'belt': return createBeltSurface().material
-      case 'deck': return deckTriplanarMaterial('deck')
-      case 'tread': return deckTriplanarMaterial('tread')
-      default: return FN_NEUTRAL()
-    }
-  }
-  const procPkgMat = (id: string): Material => {
-    const ref = materials.find((m) => m.id === id)
-    return ref ? buildMaterial(ref, assets) : FN_NEUTRAL()
-  }
-  const procShared = new Map<string, Material>() // shared role/package materials (untinted submeshes)
-  const procTintMats: { mat: MeshStandardMaterial; param: string; lamp?: LampMat }[] = []
-  const procLampByName = new Map<string, MeshStandardMaterial>() // MeshPart.lamp: one material per lamp name
-  const procTintByKey = new Map<string, MeshStandardMaterial>()
-  const procScrollByKey = new Map<string, Material>() // MeshPart.scroll: one moving copy per (material, rate, speed)
-  // DoubleSide variants for procedural rig submeshes (MeshPart.doubleSided) - own clone per base, like the
-  // function tier; keeps shared role materials single-sided for the other links.
-  const procDblVariants = new Map<Material, Material>()
-  const asDoubleProc = (base: Material): Material => {
-    let d = procDblVariants.get(base)
-    if (!d) { d = base.clone(); d.side = DoubleSide; procDblVariants.set(base, d); allMaterials.push(d) }
-    return d
-  }
-  const procBankSpinByKey = new Map<string, Material>() // spinning banks: one turning material per (material, radius, speed, sense)
-  const procMatFor = (part: MeshPart): Material => {
-    if (part.spin && part.instances) {
-      // a spinning bank: its own material, whose object-space grain the tick turns about each instance's local Z
-      // (bankSpin.ts). Shared by the banks that spin alike (a roller bed's bodies and its axle stubs).
-      const sign = bankSpinSign(part.spin.axis)
-      const speed = channelKey(part.spin.speed)
-      const key = `${part.material ?? part.finish ?? 'mesh'}\0${part.spin.radius}\0${speed}\0${sign ?? 0}`
-      let m = procBankSpinByKey.get(key)
-      if (!m) {
-        m = part.material ? procPkgMat(part.material) : procRoleMat(part.finish ?? 'mesh')
-        const uniform = spinUniformOf(m)
-        if (uniform && sign !== null) procBankSpins.push({ uniform, radius: part.spin.radius, speed, sign, angle: 0 })
-        procBankSpinByKey.set(key, m)
-        allMaterials.push(m)
-      }
-      return m
-    }
-    if (part.scroll) {
-      // its own material over its own copy of the albedo (the package texture is shared by every part that uses
-      // it), whose offset the tick moves. On WebGPU a node material samples through live offset uniforms
-      // (scrollMaterial), since three never re-uploads a plain material's uv transform there.
-      const speed = channelKey(part.scroll.speed)
-      const key = `${part.material ?? part.finish ?? 'mesh'}\0${part.scroll.tilesPerMeter}\0${speed}`
-      let m = procScrollByKey.get(key)
-      if (!m) {
-        const base = (part.material ? procPkgMat(part.material) : procRoleMat(part.finish ?? 'mesh').clone()) as MeshStandardMaterial
-        if (base.map) {
-          const tex = base.map.clone()
-          tex.wrapS = RepeatWrapping
-          tex.wrapT = RepeatWrapping
-          // A URL texture is still loading when the part builds, and Texture.clone() (copy) flags the copy for upload
-          // regardless, an upload with no image, which the renderer throws on. Hold it at version 0 (nothing to upload)
-          // until there is an image; the tick flags it when the original's version moves.
-          if (!base.map.image) tex.version = 0
-          scrollTexClones.push(tex)
-          m = scrollMaterial(base, tex)
-          procScrolls.push({ tex, src: base.map, srcVersion: base.map.version, tilesPerMeter: part.scroll.tilesPerMeter, speed })
-        } else {
-          m = base // no texture: nothing to move, but still its own instance
-        }
-        procScrollByKey.set(key, m)
-        allMaterials.push(m)
-      }
-      return m
-    }
-    const lamp = part.lamps?.[0]
-    if (lamp) {
-      // a lamp submesh: its own material, painted per tick by applyLamps (dark = its offColor else the material's
-      // colour, lit = the emissive glow); a colorParam sets both, as it does for a mesh link's lamp
-      let m = procLampByName.get(lamp.name)
-      if (!m) {
-        const base = part.material ? procPkgMat(part.material) : procRoleMat(part.finish ?? 'mesh')
-        m = (part.material ? base : base.clone()) as MeshStandardMaterial // finish materials are shared singletons
-        if (lamp.offColor) m.color.setRGB(lamp.offColor[0], lamp.offColor[1], lamp.offColor[2])
-        const e = lamp.emissive
-        const lm: LampMat = { name: lamp.name, mat: m, color: new Color(e[0], e[1], e[2]), off: m.color.clone(), ...(lamp.opacity !== undefined ? { opacity: lamp.opacity } : {}) }
-        lampMats.push(lm)
-        if (part.colorParam) procTintMats.push({ mat: m, param: part.colorParam, lamp: lm })
-        procLampByName.set(lamp.name, m)
-        allMaterials.push(m)
-      }
-      return m
-    }
-    if (part.colorParam) {
-      // a tinted submesh gets its own material instance (shared role/pkg materials must not be repainted),
-      // identity-stable across refreshes so a colour edit re-tints in place instead of rebuilding the mesh
-      const key = `${part.material ?? part.finish ?? 'mesh'}\0${part.colorParam}`
-      let m = procTintByKey.get(key)
-      if (!m) {
-        m = (part.material ? procPkgMat(part.material) : procRoleMat(part.finish ?? 'mesh')) as MeshStandardMaterial
-        procTintByKey.set(key, m)
-        procTintMats.push({ mat: m, param: part.colorParam })
-        allMaterials.push(m)
-      }
-      return m
-    }
-    const key = part.material ? `m:${part.material}` : `r:${part.finish ?? 'mesh'}`
-    let m = procShared.get(key)
-    if (!m) {
-      m = part.material ? procPkgMat(part.material) : procRoleMat(part.finish ?? 'mesh')
-      procShared.set(key, m)
-      allMaterials.push(m)
-    }
-    return m
-  }
-  // one realized submesh per emitted MeshPart (stable emit order), holding its target group + desc + material so
-  // a refresh reuses the slot when none changed - only a target/role/geometry change re-realizes (a colour edit
-  // keeps every mesh and just repaints, exactly like buildFunctionMesh).
-  const procSlots: { group: Group; mesh: Mesh; desc: MeshDescription; mat: Material }[] = []
-  // MeshPart.instances banks: one InstancedMesh per emitted bank (stable emit order among the banks), the function
-  // tier's realization (instancedTemplate.ts) hung on the bank's link group
-  const procBanks: { group: Group; mesh: InstancedMesh; desc: MeshDescription; mat: Material }[] = []
-  let procKey = '' // last (behavior-source + resolved-params) key; re-emit only when it changes
-  let procDisabled = false
-  /** returns whether it actually removed anything (a draw-list change - see the bump below) */
-  const clearProcSlots = (): boolean => {
-    if (procSlots.length === 0 && procBanks.length === 0) return false
-    // Retire, never dispose: a recorded render bundle holds this geometry's actual GPUBuffers, and
-    // freeing them here would blank the whole main pass on replay. gpuRetire.ts holds each one
-    // until a re-record has been requested and has run. The same applies to every procedural re-emit below,
-    // since a resize drag runs this on every pointer-move.
-    for (const s of procSlots) { s.group.remove(s.mesh); retireGeometry(s.mesh.geometry) }
-    procSlots.length = 0
-    for (const b of procBanks) { b.group.remove(b.mesh); retireInstancedMesh(b.mesh) }
-    procBanks.length = 0
-    return true
-  }
-  const realizeProceduralGeometry = (p: SdkPart, ctx: GeometryContext): void => {
-    if (procDisabled) return
-    const source = getPackage(p.packageId)?.behavior ?? pkg.behavior // fresh source so a geometry() hot-reload takes effect
-    const resolved = resolvePartParams(paramSpecs, p.params as Record<string, ParamValue>)
-    procResolved = resolved // the channels' fallback speed while no run reports one
-    // The seam context is an input to geometry(), so every field of it belongs in the re-emit key alongside the
-    // params. Otherwise a bed that slides along its own axis keeps the plate its old grid phase implied. Keyed
-    // on the grid's endpoints + count (an arithmetic world-phase sequence, so those pin the whole array) and
-    // the butt flags. The first refresh of a part runs before the scene resolve hands the rig its grid, so the
-    // butt flags are the only thing that changes on the pass that learns the bed has a neighbour. Without them
-    // that pass early-outs on an unchanged key and the seam geometry never appears. A part with no
-    // world-phase bank contributes nothing here and keeps its param-only key, so nothing else re-emits more often.
-    const d = ctx.deltas
-    const b = ctx.butt
-    const gridKey = d && d.length > 0 ? `${ctx.pitch ?? 0}|${d[0]![0]}|${d[d.length - 1]![0]}|${d.length}|${b?.head ? 1 : 0}${b?.tail ? 1 : 0}` : ''
-    const key = `${source}\0${JSON.stringify(resolved)}\0${gridKey}`
-    if (key === procKey) return
-    procKey = key
-    const emitted = evalPartGeometry(source, resolved, { partId: p.id, packageId: pkg.id }, ctx)
-    // drop any meshes; latch off only when the part declares no geometry() at all. A geometry() that emitted
-    // nothing for this param set (e.g. the transfer plate on a straight bed) must stay live so a later skew re-emits.
-    if (!emitted) {
-      if (clearProcSlots()) bumpStructureVersion(root)
-      procDisabled = !partHasGeometry(source)
-      return
-    }
-    const drawn = emitted.filter((mp) => mp.desc.positions.length > 0) // drop empty descs (render-only roller banks)
-    const parts = drawn.filter((mp) => mp.instances === undefined)
-    const bankParts = drawn.filter((mp) => mp.instances !== undefined)
-    // adding / swapping / dropping a submesh is a draw-list change; an unchanged slot is not (see the bump below)
-    let structural = false
-    // instanced banks first (their materials are minted by procMatFor like any submesh's). Reuse a slot when the
-    // template, material and link are unchanged and the count still fits its buffer: only the transforms rewrite,
-    // which a recorded bundle replays. A bank's count is baked into the recorded draw, so a count change is
-    // structural; a new template or an outgrown buffer mints a fresh mesh.
-    for (let i = 0; i < bankParts.length; i++) {
-      const part = bankParts[i]!
-      const insts = part.instances!
-      const group = (part.link ? linkGroups.get(part.link) : undefined) ?? root
-      let mat = procMatFor(part)
-      if (part.doubleSided) {
-        if (part.lamps?.length || part.colorParam || part.scroll || part.spin) mat.side = DoubleSide
-        else mat = asDoubleProc(mat)
-      }
-      const slot = procBanks[i]
-      if (slot && slot.group === group && slot.mat === mat && descEqual(slot.desc, part.desc) && insts.length <= slot.mesh.instanceMatrix.count) {
-        // a bed sliding along its world grid gains and loses a roller as it goes: hold the drawn count (see there)
-        if (writeInstanceMatricesHeld(slot.mesh, insts)) structural = true
-        continue
-      }
-      structural = true
-      if (slot) { slot.group.remove(slot.mesh); retireInstancedMesh(slot.mesh) }
-      const mesh = realizeInstancedTemplate(part.desc, insts, mat)
-      if (part.castShadow === false) mesh.castShadow = false
-      group.add(mesh)
-      procBanks[i] = { group, mesh, desc: part.desc, mat }
-    }
-    for (let i = procBanks.length - 1; i >= bankParts.length; i--) {
-      const b = procBanks.pop()!
-      b.group.remove(b.mesh); retireInstancedMesh(b.mesh)
-      structural = true
-    }
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i]!
-      const group = (part.link ? linkGroups.get(part.link) : undefined) ?? root
-      let mat = procMatFor(part)
-      // A lamp or tinted submesh already has its own material, and that instance is the one painted and retinted:
-      // a double-sided clone of it would be what renders, and would never see the paint. Flip its side instead.
-      if (part.doubleSided) {
-        if (part.lamps?.length || part.colorParam || part.scroll) mat.side = DoubleSide
-        else mat = asDoubleProc(mat)
-      }
-      const slot = procSlots[i]
-      if (slot && slot.group === group && slot.mat === mat && descEqual(slot.desc, part.desc)) continue
-      // Recycle first: a resize drag re-emits this on every pointer-move, and the usual re-emit is the
-      // same topology at new coordinates. Rewriting the existing buffers frees nothing (so nothing can
-      // be freed under a live recording) and keeps the recorded draw valid, so it needs no re-record
-      // either - only a genuine topology change falls through to the swap (gpuRetire.ts).
-      if (slot && slot.group === group && slot.mat === mat && rewriteMeshDescription(slot.mesh.geometry, part.desc)) {
-        slot.desc = part.desc
-        continue
-      }
-      structural = true
-      if (slot) { slot.group.remove(slot.mesh); retireGeometry(slot.mesh.geometry) }
-      const mesh = shadowMesh(realizeMeshDescription(part.desc), mat, part.castShadow !== false)
-      // the pilot collides against this render mesh; let it build a tree when it does (bvh.ts)
-      markLazyColliderBVH(mesh)
-      group.add(mesh)
-      procSlots[i] = { group, mesh, desc: part.desc, mat }
-    }
-    for (let i = procSlots.length - 1; i >= parts.length; i--) {
-      const s = procSlots.pop()!
-      s.group.remove(s.mesh); retireGeometry(s.mesh.geometry)
-      structural = true
-    }
-    // spin channels: which slot meshes turn, and about what. Re-registered on every emit; a mesh keeps its angle,
-    // and one that stopped spinning (its part changed) goes back to rest.
-    const prevAngle = new Map(procSpins.map((sp) => [sp.mesh, sp.angle] as const))
-    procSpins.length = 0
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i]!, mesh = procSlots[i]!.mesh
-      if (part.spin) {
-        const ax = new Vector3(part.spin.axis[0], part.spin.axis[1], part.spin.axis[2])
-        if (ax.lengthSq() > 0) {
-          const c = part.spin.center ?? [0, 0, 0]
-          procSpins.push({ mesh, axis: ax.normalize(), center: new Vector3(c[0], c[1], c[2]), radius: part.spin.radius, speed: channelKey(part.spin.speed), angle: prevAngle.get(mesh) ?? 0 })
-          continue
-        }
-      }
-      if (prevAngle.has(mesh)) { mesh.quaternion.identity(); mesh.position.set(0, 0, 0) }
-    }
-    // squash channels: re-registered on every emit like the spins, a reused mesh keeping how far it is compressed (a
-    // lit vacuum stays squashed across a resize). The anchor is the mesh's lowest point in its link's frame, which an
-    // InstancedMesh's box measures across every instance. The pool must not bake a copy of a mesh that changes size.
-    const prevSquash = new Map(procSquashes.map((s) => [s.mesh, s] as const))
-    procSquashes.length = 0
-    const squashed = [
-      ...bankParts.map((part, i) => ({ part, mesh: procBanks[i]!.mesh as Mesh, bank: procBanks[i]!.mesh as InstancedMesh | null })),
-      ...parts.map((part, i) => ({ part, mesh: procSlots[i]!.mesh, bank: null })),
-    ]
-    for (const { part, mesh, bank } of squashed) {
-      const was = prevSquash.get(mesh)
-      if (!part.squash || part.spin) {
-        if (was) { mesh.scale.y = 1; mesh.position.y = 0; delete mesh.userData.poolMobile }
-        continue
-      }
-      let minY: number | undefined
-      if (bank) { bank.computeBoundingBox(); minY = bank.boundingBox?.min.y }
-      else { mesh.geometry.computeBoundingBox(); minY = mesh.geometry.boundingBox?.min.y }
-      const s: ProcSquash = { mesh, frac: part.squash.amount, signal: part.squash.lamp, anchorY: minY !== undefined && Number.isFinite(minY) ? minY : 0, cur: was?.cur ?? 0, target: was?.target ?? 0 }
-      mesh.userData.poolMobile = true
-      applyProcSquash(s)
-      procSquashes.push(s)
-    }
-    // Pool opt-in, the function tier's rule (functionMesh.ts): identical dressing on identical parts (three racks,
-    // two push buttons) merges in the scene-global pool, which matches by geometry content and folds each
-    // source's geometry version into its bake, so the in-place rewrite above stays coherent. A submesh riding a
-    // moving link is still kept live by that link's `poolMobile`. Out: a lamp (its material is painted per
-    // tick) and the belt fabric (its own material, scrolled in place).
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i]!
-      // ...and an animated one (MeshPart.scroll/spin): its texture or pose moves per part, which a merged copy can't
-      if (part.lamps?.length || part.finish === 'belt' || part.scroll || part.spin || part.squash) delete procSlots[i]!.mesh.userData.poolUnit
-      else procSlots[i]!.mesh.userData.poolUnit = true
-    }
-    // re-apply each colorParam tint from the resolved value (materials are identity-stable → in-place repaint)
-    let repainted = false
-    for (const t of procTintMats) {
-      const v = resolved[t.param]
-      if (typeof v === 'string' && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(v)) {
-        const before = t.mat.color.getHex()
-        if (t.lamp) {
-          // a lamp: retint the unlit base and the glow, then repaint in its current state (lit keeps glowing)
-          t.lamp.off.set(v.slice(0, 7))
-          t.lamp.color.set(v.slice(0, 7))
-          paintLamp(t.lamp, t.mat.emissiveIntensity > 0)
-        } else {
-          t.mat.color.set(v.slice(0, 7))
-        }
-        if (t.mat.color.getHex() !== before) repainted = true
-      }
-    }
-    // A repaint moves render identity without moving the draw list: the bundle keeps drawing the right
-    // pixels (same material object) and must not be re-recorded, but instancePool groups by a key that
-    // includes colour, so its bake is stale. Hence the repaint epoch rather than a structural bump, and only
-    // when a colour actually changed, so the common unchanged re-apply does nothing.
-    if (repainted) bumpRepaintEpoch()
-    // A recorded WebGPU render bundle bakes the draw list, so a mesh that entered/left/swapped here never
-    // reaches the screen until something unrelated re-records (without the bump, the roller bed's skew transfer
-    // plates would stay invisible after the edit that creates them; verify-roller-skew.mjs's live-edit check). Same rule (and
-    // same seam) as the guard-split / deck-cut count changes below: bump the structural counter
-    // view.syncBundleInvalidation polls. Only then: an unchanged re-emit (the common case, a param that
-    // geometry() ignores) must not re-record, and a pure colorParam re-tint above is an in-place repaint,
-    // not a draw-list change.
-    if (structural) bumpStructureVersion(root)
-  }
 
   return {
     materials: allMaterials,
@@ -1623,7 +872,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
         // guard never comes back.
         for (const sp of showParamLinks) {
           if (sp.group.userData.authorHidden) continue
-          const want = rp[sp.param] !== false
+          const want = showParamShows(sp.param, rp)
           if (sp.group.visible === want) continue
           sp.group.visible = want
           bumpStructureVersion(root)
@@ -1653,8 +902,14 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
       }
       // rigSize handles: keep the dots + tool outline at the resolved param values (default-resolved, so a
       // sparse instance shows the package defaults; streamed transient params track a live gizmo drag)
-      gizmo?.setSizes?.(resolvePartParams(paramSpecs, p.params as Record<string, ParamValue>))
-      const params = p.params as RigParams
+      // Every size and pose below reads the default-resolved params: a sparse instance is drawn at its defaults, as its
+      // geometry(), its gizmo and the sim's bodies (world.ts) all take it, so the links, the colliders and the host's
+      // footprint describe one part.
+      const resolvedParams = resolvePartParams(paramSpecs, p.params as Record<string, ParamValue>)
+      gizmo?.setSizes?.(resolvedParams)
+      const end = gripEnd(resolvedParams)
+      if (end !== undefined) gizmo?.setEnd(end)
+      const params = resolvedParams as RigParams
       // Pass the part placement as the seam so world-phase beds (roller grids) align across butted parts;
       // the centred default ignores it (docs/seam-resolvers.md).
       const seam = { worldPos: p.position, worldRotY: p.rotationY, anchor: grid?.anchor }
@@ -1671,7 +926,8 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
         : {}
       // (re)emit the behavior's geometry() into the rig links (MeshPart.link) - before the param-geo early-out,
       // so a purely-static procedural rig (a fence: dressing only, no param-driven primitive links) still draws.
-      realizeProceduralGeometry(p, geoCtx)
+      proc.realize(p, geoCtx)
+      if (posedArrays.size > 0) refreshPosedArrays(params)
       if (paramBoxes.length === 0 && guardSplitLinks.length === 0 && deckCutLinks.length === 0 && paramCylinders.length === 0 && !paramPose && instancedArrayLinks.length === 0 && legLinks.length === 0 && meshArrayLinks.length === 0 && paramMeshes.length === 0 && labels.length === 0) return
       // C-label: redraw each text plane from its static text or its (Inspector-editable) param value.
       //
@@ -1699,118 +955,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
       // grows/shrinks to one box per kept segment; each is scaled to the segment length and centred on it.
       // The link group already carries the incline tilt + ±width offset, so children ride it.
       for (const gs of guardSplitLinks) {
-        const sz = resolvedBoxSize(gs.size, gs.sizeParams, params)
-        const half = sz[0] / 2
-        const backX = (gs.side === 'left' ? extents?.leftBack : extents?.rightBack) ?? -half
-        const frontX = (gs.side === 'left' ? extents?.leftFront : extents?.rightFront) ?? half
-        const open = gs.frame ? [] : ((gs.side === 'left' ? openings?.left : openings?.right) ?? [])
-        // sensor-beam holes: only a guard sheet holds one - a link whose height spans the hole's disc (the thin
-        // top return above it stays whole) - and only inside the span it keeps after openings and extents
-        const y0 = gs.offsetY - sz[1] / 2, y1 = gs.offsetY + sz[1] / 2
-        const sideHoles = gs.frame ? [] : ((gs.side === 'left' ? holes?.left : holes?.right) ?? [])
-        const panelHoles = sideHoles.filter(([hx, hy]) => hy - GUARD_HOLE_RADIUS >= y0 && hy + GUARD_HOLE_RADIUS <= y1
-          && keptSegments(backX, frontX, open).some(([lo, hi]) => hx - GUARD_HOLE_PANEL / 2 >= lo && hx + GUARD_HOLE_PANEL / 2 <= hi))
-        const segs = keptSegments(backX, frontX, [...open, ...panelHoles.map(([hx]): [number, number] => [hx - GUARD_HOLE_PANEL / 2, hx + GUARD_HOLE_PANEL / 2])])
-        const proto = gs.children[0]!
-        const before = gs.children.length + gs.panels.length + gs.wedges.length
-        while (gs.panels.length < panelHoles.length) {
-          const panel = new Mesh(unitBox, gs.mat)
-          panel.castShadow = proto.castShadow
-          panel.receiveShadow = proto.receiveShadow
-          panel.userData.guardHolePanel = true // gates count the holes a guard actually draws
-          // pool like the sheet it replaces: every panel cut at one hole height, scene-wide, shares one geometry,
-          // so the instance pool draws them all as one bank instead of a draw per hole
-          if (proto.userData.poolUnit === true) panel.userData.poolUnit = true
-          gs.group.add(panel)
-          gs.panels.push(panel)
-        }
-        while (gs.panels.length > panelHoles.length) gs.group.remove(gs.panels.pop()!)
-        let panelGeometryChanged = false
-        for (let i = 0; i < panelHoles.length; i++) {
-          const [hx, hy] = panelHoles[i]!
-          const panel = gs.panels[i]!
-          // the plate is built in the link's frame: y about its centre, z from 0 through its thickness
-          const geom = guardHolePanelGeometry(y0 - gs.offsetY, y1 - gs.offsetY, hy - gs.offsetY, sz[2])
-          if (panel.geometry !== geom) { panel.geometry = geom; panelGeometryChanged = true }
-          panel.position.set(hx, 0, -sz[2] / 2)
-        }
-        while (gs.children.length < segs.length) {
-          const extra = new Mesh(unitBox, gs.mat)
-          extra.castShadow = proto.castShadow
-          extra.receiveShadow = proto.receiveShadow
-          // a split piece is the same unit box as the first, so it pools with it (and every other guard in the scene);
-          // untagged, each piece a hole or an opening split off would be a draw of its own
-          if (proto.userData.poolUnit === true) extra.userData.poolUnit = true
-          gs.group.add(extra)
-          gs.children.push(extra)
-        }
-        for (let i = gs.children.length - 1; i >= Math.max(segs.length, 1); i--) {
-          gs.group.remove(gs.children[i]!)
-          gs.children.pop()
-        }
-        // a guard fully covered by openings (segs empty) collapses its one remaining child to nothing
-        if (segs.length === 0) gs.children[0]!.scale.set(0, 0, 0)
-        // Cut ends where this part meets another conveyor. A guard end is mitred on the plane the two guards share
-        // (core/guardExtents.ts GuardMitre: the host's mitres come with its openings, a mover's with its extents). A mover's
-        // frame rail end is cut to fit against the host's frame, which stays whole (GuardExtents.railCuts): the wall on
-        // the host's outer wall face, the top flange a flange width further out. Either way the cut is a line across
-        // this link's band, d0..d1 out from the guard line, at `c` along the bed per metre out: the box stops square
-        // where the cut is deepest, and a wedge carries it out to the cut from the face where it reaches furthest.
-        const cuts = gs.frame ? extents?.railCuts : (openings?.mitres ?? extents?.mitres)
-        const cutOf = (x: number): number | null => (gs.frame
-          ? cutAt(extents?.railCuts, gs.side, x)
-          : mitreAt(openings?.mitres, gs.side, x) || mitreAt(extents?.mitres, gs.side, x) || null)
-        // the link as it is now (an author edit may have moved it since the build), not the build-time copy
-        const nowLink = linkByName.get(gs.link.name) ?? gs.link
-        const linkZ = cuts ? resolvedOffset(nowLink.offset, nowLink.offsetParams, params)[2] : 0
-        const out = linkZ < 0 ? -1 : 1 // outward is away from the bed centreline
-        const d0 = cuts ? Math.abs(linkZ) - sz[2] / 2 - cuts.inner : 0
-        const d1 = d0 + sz[2]
-        const flangeOffset = (c: number) => (gs.frame && d0 >= -1e-4 ? railFlangeOffset(c) : 0) // the top flange band
-        const pull = (c: number | null) => (c === null ? 0 : Math.max(c * d0, c * d1) + flangeOffset(c))
-        const wedgeAt: { x: number; hi: boolean; c: number }[] = []
-        for (let i = 0; i < segs.length; i++) {
-          let [lo, hi] = segs[i]!
-          if (cuts) {
-            const cLo = cutOf(lo), cHi = cutOf(hi)
-            if ((cLo !== null || cHi !== null) && hi - lo > pull(cLo) + pull(cHi)) {
-              if (cLo !== null) {
-                lo += pull(cLo)
-                if (Math.abs(cLo) > 1e-6) wedgeAt.push({ x: lo, hi: false, c: cLo })
-              }
-              if (cHi !== null) {
-                hi -= pull(cHi)
-                if (Math.abs(cHi) > 1e-6) wedgeAt.push({ x: hi, hi: true, c: cHi })
-              }
-            }
-          }
-          const c = gs.children[i]!
-          c.scale.set(hi - lo, sz[1], sz[2])
-          c.position.x = (lo + hi) / 2
-        }
-        while (gs.wedges.length < wedgeAt.length) {
-          const w = new Mesh(unitMitreWedge, gs.mat)
-          w.castShadow = proto.castShadow
-          w.receiveShadow = proto.receiveShadow
-          if (proto.userData.poolUnit === true) w.userData.poolUnit = true
-          gs.group.add(w)
-          gs.wedges.push(w)
-        }
-        while (gs.wedges.length > wedgeAt.length) gs.group.remove(gs.wedges.pop()!)
-        for (let i = 0; i < wedgeAt.length; i++) {
-          const { x, hi, c } = wedgeAt[i]!
-          const w = gs.wedges[i]!
-          // the right-angle corner sits at the square end on the face where the cut reaches furthest out of the piece:
-          // the inner face when c > 0 (its leg runs outward), the outer one when c < 0 (its leg runs back in)
-          const leg = c > 0 ? out : -out
-          w.quaternion.copy(MITRE_WEDGE_TURN[`${hi ? 'hi' : 'lo'},out${leg > 0 ? '+' : '-'}`]!)
-          w.scale.set(Math.abs(c) * sz[2], sz[1], sz[2])
-          w.position.set(x, 0, (-leg * sz[2]) / 2)
-        }
-        // a segment-, panel- or wedge-count change (or a panel re-cut to a new hole height) alters the draw list - a
-        // recorded WebGPU render bundle would keep replaying the old pieces; bump the structural counter the
-        // bundle invalidation polls
-        if (gs.children.length + gs.panels.length + gs.wedges.length !== before || panelGeometryChanged) bumpStructureVersion(root)
+        if (layoutGuardSplit(gs, params, linkByName, openings, extents, holes)) bumpStructureVersion(root)
       }
       // walking surfaces: retile the texture to the slab's resolved metre extents (X→U, Z→V), so a
       // resized/non-square deck keeps a fixed ~0.5 m crop instead of stretching (createDeckSurface.setExtent)
@@ -1820,36 +965,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
       // deck-cut pool: lay the deck out as the complement strips around a snapped stair's notches (guardSplit's
       // 2-axis twin, deckStripRects = the sim's collider rects). No cut ⇒ one full-size child (a plain rescale).
       for (const dc of deckCutLinks) {
-        const sz = dc.sizeParams ? resolvedBoxSize(dc.size, dc.sizeParams, params) : dc.size
-        const rects = deckStripRects(sz[0] / 2, sz[2] / 2, platformCut?.notches ?? [])
-        const proto = dc.children[0]!
-        const before = dc.children.length
-        while (dc.children.length < rects.length) {
-          const i = dc.children.length
-          if (dc.walk && dc.strips && !dc.strips[i]) dc.strips[i] = newDeckSurface(dc.walk)
-          const extra = new Mesh(unitBox, dc.strips?.[i]?.material ?? dc.mat)
-          extra.castShadow = proto.castShadow
-          extra.receiveShadow = proto.receiveShadow
-          dc.group.add(extra)
-          dc.children.push(extra)
-        }
-        for (let i = dc.children.length - 1; i >= Math.max(rects.length, 1); i--) {
-          dc.group.remove(dc.children[i]!)
-          dc.children.pop()
-        }
-        // a deck fully covered by notches (rects empty) collapses its one remaining child to nothing
-        if (rects.length === 0) proto.scale.set(0, 0, 0)
-        for (let i = 0; i < rects.length; i++) {
-          const r = rects[i]!
-          const c = dc.children[i]!
-          c.scale.set(r.x1 - r.x0, sz[1], r.z1 - r.z0)
-          c.position.set((r.x0 + r.x1) / 2, 0, (r.z0 + r.z1) / 2)
-          dc.strips?.[i]?.setExtent(r.x1 - r.x0, r.z1 - r.z0) // after deckSizeLinks: a strip tiles by its own size
-        }
-        // adding/removing strip meshes changes the draw list. Without a bump a recorded WebGPU render bundle keeps
-        // replaying the old one (a removed strip keeps drawing, so the hole never closes), so a count change must bump the
-        // structural counter the view's bundle invalidation polls
-        if (dc.children.length !== before) bumpStructureVersion(root)
+        if (layoutDeckCut(dc, params, platformCut, newDeckSurface)) bumpStructureVersion(root)
       }
       // node scaling: stretch each param-scaled mesh node's group per-axis (atop its fitHeight/scale base)
       for (const pm of paramMeshes) {
@@ -1866,7 +982,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
       // guards climb the grade; the legs, below, stay vertical) both come out of it, from the current geometry.
       // inclineRad/cosIncline/sinIncline are read again by the leg layout; 0 ⇒ flat.
       lastParams = params
-      placeLinks()
+      placement.place(params)
       const inclineRad = rigInclineRad(geo, params)
       const cosIncline = Math.cos(inclineRad)
       const sinIncline = Math.sin(inclineRad)
@@ -1880,80 +996,15 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
       // height auto-adjusting to the stand param (deck→floor) minus the frame depth - so raising/lowering the deck
       // (or dropping it on a platform) regrows the legs to reach.
       for (const ll of legLinks) {
-        const width = typeof params[ll.widthParam] === 'number' ? (params[ll.widthParam] as number) : 1
-        const frameDepth = legFrameDepth(ll.shape, params)
-        const stand = typeof params[ll.standParam] === 'number' ? (params[ll.standParam] as number) : frameDepth
-        const height = Math.max(0.05, stand - frameDepth)
-        if (ll.arc) {
-          // Curved conveyor: fan the trestles around the arc (centreline radius r, sweep) at the legStations
-          // cadence, each yawed radially - the SDK curved's convention: point (r·cos t, −r·sin t), yaw t+π/2.
-          const r = typeof params[ll.arc.radiusParam] === 'number' ? (params[ll.arc.radiusParam] as number) : 1.5
-          const sweep = (ll.arc.sweepDeg * Math.PI) / 180
-          const angles = legStations(r * sweep).map((s) => s / r) // arc-length stations → sweep angles
-          writeLegs(ll.pool, width, angles.map((t) => ({ base: new Matrix4().makeRotationY(t + Math.PI / 2).setPosition(r * Math.cos(t), 0, -r * Math.sin(t)), height })), frameDepth)
-        } else {
-          const span = typeof params[ll.spanParam] === 'number' ? Math.max(0, params[ll.spanParam] as number) : 0
-          const stations = legStations(span, -span / 2) // centre-origin: legs run −span/2 … +span/2
-          // whole-bed incline: legs stay vertical but each foot slides to x·cos and the post grows/shrinks by
-          // x·sin so it still reaches the tilted deck underside (head legs taller, tail legs shorter). Flat ⇒ x,height.
-          // Per-leg footing (legRests rows, part-local X = this group's X): a station over a platform deck
-          // lifts its foot by dy and shortens the post; one overhanging past the part's own deck drops to the
-          // warehouse floor (dy < 0). A footed leg squeezed under 5 cm is dropped (the bed rests on the deck
-          // there), while the row-less flat layout keeps the legacy 5 cm clamp.
-          // Knee braces lean toward the middle of the bed, and only on a level one: a brace drawn along a tilted
-          // bed would meet the frame a slope's rise away from where it was aimed.
-          const specs: { base: Matrix4; height: number; dir: number }[] = []
-          for (const x of stations) {
-            const dy = legRestDyAt(legRests, x)
-            const h = height + x * sinIncline - dy
-            if (dy !== 0 && h <= 0.05) continue
-            const dir = Math.abs(sinIncline) > 1e-3 ? 0 : x <= 0 ? 1 : -1
-            specs.push({ base: new Matrix4().makeTranslation(x * cosIncline, dy, 0), height: Math.max(0.05, h), dir })
-          }
-          writeLegs(ll.pool, width, specs, frameDepth)
-        }
+        layoutLegs(ll, params, legRests, cosIncline, sinIncline)
       }
       // arrayed primitive links (rollers/stubs/railings/shelves/treads): one InstancedMesh at a uniform per-copy
       // scale (from the shape's size + any sizeParams), only the grid delta varies per copy. `cast` was decided
       // at build time (roller hardware skips the shadow pass; structural arrays cast like the built-ins).
       for (const ial of instancedArrayLinks) {
-        let deltas = arrayInstanceDeltas(ial.array, params, seam, ial.showParam)
-        warnIfCapped(deltas, root, pkg.id)
-        if (!ial.pool) ial.pool = createInstancePool(ial.group, ial.geom, ial.mat, Math.max(deltas.length, 16), ial.cast)
-        let sx = 1, sy = 1, sz = 1
-        if (ial.shape.kind === 'box') {
-          const s = ial.shape.sizeParams ? resolvedBoxSize(ial.shape.size, ial.shape.sizeParams, params) : ial.shape.size
-          sx = s[0]; sy = s[1]; sz = s[2]
-        } else if (ial.shape.kind === 'cylinder' || ial.shape.kind === 'cone') {
-          const c = ial.shape.kind === 'cylinder' && ial.shape.sizeParams ? resolvedCylinder(ial.shape, params) : { radius: ial.shape.radius, height: ial.shape.height }
-          sx = c.radius; sy = c.height; sz = c.radius
-        }
-        // stair→platform railing cut, applied in place like the conveyor guard merge (no rig rebuild):
-        // a rail/toe box (`segment`) becomes one instance per kept segment of its run, each scaled to the
-        // segment length; a post run drops instances in the gap + gains a framing post at each gap edge
-        // (cutPostDeltas - the same pure transform the sim rewrites its collider links with).
-        const open = ial.railing ? (platformCut?.openings[ial.railing.edge] ?? []) : []
-        if (ial.railing?.segment && deltas.length > 0) {
-          const axis = ial.railing.axis
-          const full = axis === 2 ? sz : sx
-          const segs = open.length > 0 ? keptSegments(-full / 2, full / 2, open) : ([[-full / 2, full / 2]] as const)
-          const base = deltas[0]!
-          fillInstances(ial.pool, segs.map(([lo, hi]) => ({
-            x: base[0] + (axis === 0 ? (lo + hi) / 2 : 0),
-            y: base[1],
-            z: base[2] + (axis === 2 ? (lo + hi) / 2 : 0),
-            sx: axis === 0 ? hi - lo : sx,
-            sy,
-            sz: axis === 2 ? hi - lo : sz,
-          })))
-          continue
-        }
-        if (ial.railing && !ial.railing.segment && open.length > 0) {
-          const { kept, framing } = cutPostDeltas(deltas, ial.railing.axis, open)
-          deltas = [...kept, ...framing] as Vec3Tuple[]
-        }
-        writeInstances(ial.pool, deltas, sx, sy, sz)
+        layoutArrayLink(ial, params, seam, platformCut, root, pkg.id)
       }
+      if (posedArrays.size > 0) refreshPosedArrays(params)
       // a changed neighbour cut reshaped draws that live inside this part's recorded render bundle (instanced
       // rail segments/posts, deck strips) while the part itself was never dragged/ejected. Bump the structural
       // counter so the bundle re-records, or WebGPU keeps replaying the old railing/deck until a dev restart.
@@ -1970,6 +1021,8 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
     applyJoints,
     applySubPoses,
     applyRestPose,
+    resetRunPose,
+    ...(posedArrays.size > 0 ? { applyCopySpeeds: proc.setCopySpeeds } : {}),
     ...(applyLamps ? { applyLamps } : {}),
     ...(applyDisplays ? { applyDisplays } : {}),
     // per-frame animation: roller-bed spin + squash cup ease (combined). Roller beds also follow the
@@ -1978,7 +1031,7 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
     ...(rollerTick ? { applyConveyorSpeed: (v: number): void => { liveRollerSpeed = v } } : {}),
     // geometry() channels take the behavior's reported values (a program-commanded speed), not the deck's surface
     // speed: a chain transfer's deck runs across its chains while raised, so frame.conveyorSpeeds reads 0 exactly then
-    ...(procTick ? { applyValues: (v: Record<string, number | boolean>): void => { liveValues = v } } : {}),
+    ...(procTick ? { applyValues: proc.applyValues } : {}),
     ...(probeTick ? { probeTick } : {}),
     ...(gizmo ? { gizmo: gizmo.api, applyIdlePose } : {}),
     dispose: () => {
@@ -1988,12 +1041,13 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
       // and the one beam material; neither is per-part, so neither is disposed here.)
       for (const bv of beamVisuals) removeSensorBeam(bv.beam)
       for (const s of deckSurfaces) s.dispose() // a walking surface's material (its maps are shared app-wide)
-      clearProcSlots() // dispose the procedural rig-link geometries (their materials are in allMaterials, above)
+      proc.dispose() // the procedural rig-link geometries and their scroll texture copies (materials are in allMaterials, above)
       for (const tl of tiledMeshLinks) for (const tm of tl.meshes) retireGeometry(tm.geo) // tileUv's owned UV copies (the source GLB geometry is shared, never freed here)
       for (const ial of instancedArrayLinks) retireInstancedMeshOnly(ial.pool?.mesh) // array-link InstancedMesh buffers; mesh-only: the geom is shared (unitBox / unitCone / cylinderGeoFor), mats are in allMaterials
       for (const lb of lampBanks) lb.dispose() // lamp-bank instance buffers + cloned geometry (retired; the material is shared)
       for (const lb of linkBanks) lb.dispose() // link-bank instance buffers (retired; shared unit geometry, material in allMaterials)
       for (const ll of legLinks) disposeLegSet(ll.pool) // the trestle InstancedMesh buffers
+      for (const gs of guardSplitLinks) releaseGuardSplit(gs) // the shared hole-panel plates its panels hold (retired at zero)
       // label canvas textures/materials/geometries are per-instance. Textures + geometries retire (a recording may
       // still bind them, gpuRetire.ts); a material's dispose is already safe (bindings.deleteForRender).
       for (const d of labelDisposables) {
@@ -2001,7 +1055,6 @@ export function buildRig(geo: Extract<PartPackage['geometry'], { kind: 'rig' }>,
         else if ((d as BufferGeometry).isBufferGeometry) retireGeometry(d as BufferGeometry)
         else d.dispose()
       }
-      for (const t of scrollTexClones) retireTexture(t) // private scroll-channel texture copies (not the shared package texture)
       for (const eg of edgeGeoms) retireGeometry(eg) // per-link wireframe outline buffers (link.outline); their material is in allMaterials
     },
   }

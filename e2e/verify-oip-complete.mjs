@@ -59,8 +59,8 @@ try {
   // ── the exported .oip carries the bytes ────────────────────────────────────────────────────────
   const oip = await page.evaluate(async () => {
     // what Export Project does (projectFile.ts downloadProject), minus the download dialog
-    const { projectToOipBytes } = await import('/src/core/projectArchive.ts')
-    const { shippedAssetBytes, warmShippedAssets } = await import('/src/editor/shippedAssetCache.ts')
+    const { projectToOipBytes } = await import('/src/core/project/projectArchive.ts')
+    const { shippedAssetBytes, warmShippedAssets } = await import('/src/editor/parts/shippedAssetCache.ts')
     const project = window.__oip.store.snapshotProject()
     await warmShippedAssets(project.packages ?? [])
     return [...(await projectToOipBytes(project, { assetBytes: shippedAssetBytes }))]
@@ -77,9 +77,9 @@ try {
   // ── and reads back as the same part ────────────────────────────────────────────────────────────
   const same = await page.evaluate(
     async ([bytes, id]) => {
-      const { oipBytesToProject } = await import('/src/core/projectArchive.ts')
-      const { partFingerprint } = await import('/src/core/partOrigin.ts')
-      const { bakePart } = await import('/src/editor/bakePart.ts')
+      const { oipBytesToProject } = await import('/src/core/project/projectArchive.ts')
+      const { partFingerprint } = await import('/src/core/parts/partOrigin.ts')
+      const { bakePart } = await import('/src/editor/parts/bakePart.ts')
       const r = await oipBytesToProject(new Uint8Array(bytes), { bakePart })
       if (!r.ok) return { error: r.errors.join('; ') }
       const back = r.project.packages?.find((p) => p.id === id)

@@ -9,7 +9,7 @@
 //
 // Append-only: test-corpus/parts/<id>/<fingerprint>.json, each a stored package exactly as a project holds it
 // (its package format included, so a later format bump runs the corpus through upgradeStoredPackage). The fingerprint
-// is core/partOrigin.ts storedPackageHash, which covers the whole stored package; its ':' becomes '-' in the file name.
+// is core/parts/partOrigin.ts storedPackageHash, which covers the whole stored package; its ':' becomes '-' in the file name.
 // A version never leaves: delete a file only if no build ever shipped it.
 
 import { execFileSync } from 'node:child_process'
@@ -34,7 +34,7 @@ let missing = 0
 let added = 0
 try {
   const { buildPackage } = await vite.ssrLoadModule('/src/sim/buildPackage.ts')
-  const { storedPackageHash } = await vite.ssrLoadModule('/src/core/partOrigin.ts')
+  const { storedPackageHash } = await vite.ssrLoadModule('/src/core/parts/partOrigin.ts')
   // the built-ins (examples/parts/<dir>/{rig.json, behavior.ts}) and the first-party library parts
   // (libraries/<library>/<dir>/{manifest.json, behavior.js}, docs/part-libraries.md): every version either ships is one
   // a later build has to keep running
@@ -50,7 +50,7 @@ try {
   for (const { name, rig, beh } of sources) {
     const dir = { name }
     if (!existsSync(rig) || !existsSync(beh)) continue
-    // baked the way the app bakes its bundle (editor/bundledPackageData.ts): the manifest as written, LF behavior
+    // baked the way the app bakes its bundle (editor/parts/bundledPackageData.ts): the manifest as written, LF behavior
     const pkg = buildPackage(JSON.parse(readFileSync(rig, 'utf8')), readFileSync(beh, 'utf8').replace(/\r\n/g, '\n'))
     const file = join(CORPUS, pkg.id, `${storedPackageHash(pkg).replace(/:/g, '-')}.json`)
     if (existsSync(file)) continue

@@ -3,19 +3,19 @@
 // beside it (partTools.ts, programTools.ts, viewTools.ts).
 
 import { UNLISTED_BUILT_INS, sameAsBuiltIn } from '../../core/builtInVersion'
-import type { PartPackage } from '../../core/partPackage'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { PartInstance, SceneJSON } from '../../core/types'
 import type { EditorController } from '../controller'
-import type { EditorStore } from '../store'
+import type { EditorStore } from '../store/store'
 import type { AgentSession } from './agentSession'
-import { allPartDiagnostics, partDiagnosticsOverflowed } from '../../core/partDiagnostics'
+import { allPartDiagnostics, partDiagnosticsOverflowed } from '../../core/parts/partDiagnostics'
 import { isKnownDialect } from '../../core/dialect'
 import { controllerFor } from '../../plc/controller'
 import { collectProblems } from '../problems'
 
 /** The slice of the controller the tools use, so a test can hand in a stand-in (null = no viewport mounted yet). */
 export type AgentController = Pick<EditorController, 'run' | 'stop' | 'plcWatch' | 'writePlcValue' | 'plcFault'> &
-  Partial<Pick<EditorController, 'sim' | 'view' | 'lastFrame'>>
+  Partial<Pick<EditorController, 'sim' | 'view' | 'lastFrame' | 'plcScanTimes' | 'plcForces' | 'forcePlcValue' | 'releasePlcForces' | 'setPaused' | 'stepBy' | 'externalPlcAvailable'>>
 
 /** A rectangle of the editor window in CSS pixels. */
 export interface CaptureRect {
@@ -38,8 +38,9 @@ export interface AgentImage {
 export interface AgentShell {
   /** the window's pixels inside `rect`, as composited on screen */
   capture?(rect: CaptureRect): Promise<AgentImage | null>
-  /** a model file's bytes (.glb, .step, .stp), or why not */
-  readModel?(path: string): Promise<{ name: string; bytes: Uint8Array } | { error: string }>
+  /** a model file's bytes (.glb, .step, .stp, USD), or why not. A .usd / .usda / .usdc root also brings the layers
+   *  and images under its folder (`files`, keyed by path from that folder; `root` is its own key). */
+  readModel?(path: string): Promise<{ name: string; bytes: Uint8Array; files?: { path: string; bytes: Uint8Array }[]; root?: string } | { error: string }>
 }
 
 export interface AgentToolContext {
@@ -129,7 +130,7 @@ export function strList(args: Record<string, unknown>, key: string): string[] {
 
 /** Refuse an edit the store would silently drop: a view-only room, or a scene still loading as a preview. */
 export function assertEditable(store: EditorStore): void {
-  if (store.getState().readOnly) throw new AgentToolError('this editor is view-only (a room opened with ?view): it cannot be edited')
+  if (store.getState().readOnly) throw new AgentToolError('this editor is view-only (opened from a view link): it cannot be edited')
 }
 
 export function findPart(scene: SceneJSON, id: string): PartInstance {
@@ -156,6 +157,17 @@ export function catalogPackages(store: EditorStore): PartPackage[] {
 
 export const round = (n: number): number => Math.round(n * 1000) / 1000
 
+/**
+ * A tool's result as the text the transport sends: a string as it is, anything else as indented JSON with each array
+ * of plain values on one line. Indented JSON puts every number of a position on its own line, which made a large
+ * scene's get_scene several times longer than its data.
+ */
+export function agentResultText(value: unknown): string {
+  if (typeof value === 'string') return value
+  // an array holding no object or array: JSON strings never hold a raw newline, so a newline here is layout
+  return JSON.stringify(value ?? null, null, 2).replace(/\[\n\s+([^[\]{}]*?)\n\s*\]/g, (_m, inner: string) => `[${inner.split(/,\n\s+/).join(', ')}]`)
+}
+
 export function needController(ctx: AgentToolContext): AgentController {
   if (!ctx.controller) throw new AgentToolError('the viewport is still loading; try again in a moment')
   return ctx.controller
@@ -177,5 +189,7 @@ export function problems({ store, controller }: AgentToolContext, candidate?: st
     stepHz: s.simHz,
     runtimeOverflowed: partDiagnosticsOverflowed(),
     plcFault: fault && fault.source === source ? fault : null,
+    namedPlcs: s.externalPlc.controllers,
+    mainPlcName: s.externalPlc.mainName,
   })
 }

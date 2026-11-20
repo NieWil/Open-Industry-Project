@@ -1,7 +1,7 @@
 /* global console, process, window, localStorage, sessionStorage */
 // Guard for the per-project camera projection surviving a switch to another project and back.
 //
-// Each project remembers its camera pose and the projection it was framed at (editor/storePrefs viewport
+// Each project remembers its camera pose and the projection it was framed at (editor/store/storePrefs viewport
 // state, keyed documentStore.sceneSlotKey(SCENE_SLOT)). Two defects on that restore path are guarded here:
 //
 //   - the stale-snapshot bounce: if restoreCamera runs inside onStoreChange and the same pass's

@@ -6,6 +6,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react'
 import { pasteCompatible } from './paramLogic'
 import type { ClipKind, ClipValue } from './paramLogic'
 import { comboTookKey } from '../comboKeys'
+import { commandDisabledReason, commandEnabled, getCommand, runCommand } from '../../commands'
 
 // --- property clipboard (inspector Copy / Paste Property) ---
 let propClipboard: { kind: ClipKind; value: ClipValue } | null = null
@@ -184,6 +185,18 @@ export function menuItemsFor(m: PropMenuState): MenuItem[] {
   if (m.revert) {
     items.push({ label: '-', onClick: () => {} })
     items.push({ label: 'Revert to Default', onClick: m.revert })
+  }
+  // the whole part's properties, beside the one row's (commands.ts edit.copyProperties / edit.pasteProperties)
+  items.push({ label: '-', onClick: () => {} })
+  for (const id of ['edit.copyProperties', 'edit.pasteProperties']) {
+    const enabled = commandEnabled(id)
+    items.push({
+      label: getCommand(id)?.label ?? id,
+      disabled: !enabled,
+      title: enabled ? undefined : (commandDisabledReason(id) ?? undefined),
+      testid: `prop-menu-${id}`,
+      onClick: () => runCommand(id),
+    })
   }
   return items
 }

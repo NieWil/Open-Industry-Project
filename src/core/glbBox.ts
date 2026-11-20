@@ -91,13 +91,39 @@ export interface MeshShapeLike {
   keepNode?: string
   fitHeight?: number
   scale?: number
+  /** nodes other links of the same asset keep (drawnElsewhere), left out of what this one keeps */
+  drawnElsewhere?: readonly string[]
+}
+
+/** A rig link as far as carving goes: its shape's asset and which of its nodes it draws. */
+interface CarvingLink {
+  shape: { kind: string; asset?: string; node?: string; keepNode?: string }
+}
+
+/**
+ * The GLB nodes other mesh links keep (`keepNode`) out of the asset `link` draws. Each node is drawn by one link,
+ * the nearest that keeps it, so `link` leaves these out of whatever it keeps: a whole-scene link leaves out every
+ * piece split from it, and a piece leaves out a piece split from inside it. Undefined when there are none, and for
+ * a `node` ref, which draws one mesh as it is.
+ */
+export function drawnElsewhere(links: readonly CarvingLink[], link: CarvingLink): string[] | undefined {
+  const s = link.shape
+  if (s.kind !== 'mesh' || s.node !== undefined) return undefined
+  const out: string[] = []
+  for (const l of links) {
+    const o = l.shape
+    if (l === link || o.kind !== 'mesh' || o.asset !== s.asset || o.node !== undefined || !o.keepNode || o.keepNode === s.keepNode) continue
+    if (!out.includes(o.keepNode)) out.push(o.keepNode)
+  }
+  return out.length > 0 ? out : undefined
 }
 
 /**
  * The box a mesh link's GLB occupies in the LINK's frame, mirroring how the host builds it:
  * - `node`: that node's mesh alone, in its MESH-LOCAL frame (its transform reset);
  * - whole scene: the full tree, normalised by `fitHeight` (scale to height, XZ-centred, underside on y=0) using
- *   the FULL scene's box, then carved - `hideNodes` drops subtrees, `keepNode` keeps one subtree;
+ *   the FULL scene's box, then carved - `hideNodes` drops subtrees, `keepNode` keeps one subtree, and
+ *   `drawnElsewhere` drops the subtrees other links keep from inside it;
  * - `scale` multiplies the result. (`sizeParams` node stretching is not applied: default params give ~1.)
  */
 export function meshLinkBox(json: GltfJson, shape: MeshShapeLike): Box3Like | null {
@@ -108,6 +134,7 @@ export function meshLinkBox(json: GltfJson, shape: MeshShapeLike): Box3Like | nu
     if (n?.mesh != null) growMesh(json, n.mesh, ident(), box)
   } else {
     const hide = new Set(shape.hideNodes ?? [])
+    const elsewhere = new Set(shape.drawnElsewhere ?? [])
     const scene = json.scenes?.[json.scene ?? 0]
     const full = emptyBox()
     const carved = emptyBox()
@@ -116,7 +143,7 @@ export function meshLinkBox(json: GltfJson, shape: MeshShapeLike): Box3Like | nu
       const n = nodes[i]
       const world = mul(parent, nodeMatrix(n))
       const kept = keptAbove || n.name === shape.keepNode
-      const hidden = hide.has(n.name)
+      const hidden = hide.has(n.name) || (kept && n.name !== shape.keepNode && elsewhere.has(n.name))
       if (n.mesh != null) {
         growMesh(json, n.mesh, world, full)
         if (kept && !hidden) growMesh(json, n.mesh, world, carved)

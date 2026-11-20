@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { useRegisterSW } from 'virtual:pwa-register/react'
 import { defineMessages, t } from '../../core/i18n'
 
@@ -19,12 +20,14 @@ const UPDATE_INTERVAL = 20 * 60 * 1000
  * or shared collab session. Rendered unconditionally (all device sizes).
  */
 export function UpdatePrompt() {
+  const regRef = useRef<ServiceWorkerRegistration | undefined>(undefined)
   const {
     needRefresh: [needRefresh],
     updateServiceWorker,
   } = useRegisterSW({
     onRegisteredSW(_swUrl, reg) {
       if (!reg) return
+      regRef.current = reg
       const check = (): void => {
         // skip while offline: update() would just fail, and we'll re-check on next focus
         if (navigator.onLine) void reg.update()
@@ -36,12 +39,26 @@ export function UpdatePrompt() {
     },
   })
 
+  // updateServiceWorker(true) alone reloads only on workbox's `controlling` event with isUpdate, and isUpdate is
+  // fixed at page load, so a tab that loaded with no controller (first visit, or Ctrl+Shift+R) never reloaded.
+  // The worker claims every tab when it activates (clientsClaim in vite.config.ts), so controllerchange fires here
+  // either way. The listener is added on click, in this tab only: the new worker takes over every open tab, and
+  // one listening from startup would reload a tab with work in progress. With no worker waiting (another tab
+  // already activated it) there is nothing to message, so reload straight away.
+  const reload = (): void => {
+    if (!regRef.current?.waiting) {
+      window.location.reload()
+      return
+    }
+    navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), { once: true })
+    void updateServiceWorker(true)
+  }
+
   if (!needRefresh) return null
   return (
     <div className="update-toast" role="status">
       <span>{t(M.available)}</span>
-      {/* updateServiceWorker(true) skip-waits the new worker and reloads onto it */}
-      <button onClick={() => void updateServiceWorker(true)}>{t(M.reload)}</button>
+      <button onClick={reload}>{t(M.reload)}</button>
     </div>
   )
 }

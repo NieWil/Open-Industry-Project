@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { BufferGeometry, Float32BufferAttribute, Mesh, Raycaster, Vector3 } from 'three'
-import { sweepProfileAlongX } from '../../core/meshDescription'
+import { sweepProfileAlongX } from '../../core/geometry/meshDescription'
 import { realizeMeshDescription, rewriteMeshDescription } from './meshDescriptionGeometry'
 import { ensureColliderBVH, markLazyColliderBVH } from '../bvh'
-import { evalPartGeometry, resolvePartParams } from '../../core/geometryEval'
-import { instantiatePartScript } from '../../core/partScript'
+import { evalPartGeometry, resolvePartParams } from '../../core/geometry/geometryEval'
+import { instantiatePartScript } from '../../core/parts/partScript'
 import { examplePart } from './examplePart'
 
 // The host realization step: a portable MeshDescription → a three.js BufferGeometry. BufferGeometry +
@@ -20,16 +20,16 @@ const deckSection: Array<[number, number]> = [
 
 describe('meshDescriptionGeometry - realizeMeshDescription', () => {
   it('maps the description buffers onto BufferGeometry attributes + index', () => {
-    const desc = sweepProfileAlongX(deckSection, [0, 3]) // 8 verts, 24 indices
+    const desc = sweepProfileAlongX(deckSection, [0, 3]) // 16 verts (a hard edge at each corner), 24 indices
     const geo = realizeMeshDescription(desc)
 
-    expect(geo.getAttribute('position').count).toBe(8)
+    expect(geo.getAttribute('position').count).toBe(16)
     expect(geo.getAttribute('position').itemSize).toBe(3)
-    expect(geo.getAttribute('uv').count).toBe(8)
+    expect(geo.getAttribute('uv').count).toBe(16)
     expect(geo.getAttribute('uv').itemSize).toBe(2)
     expect(geo.getIndex()!.count).toBe(24)
     // the description carries no normals; the host derives them
-    expect(geo.getAttribute('normal').count).toBe(8)
+    expect(geo.getAttribute('normal').count).toBe(16)
   })
 
   it('derives unit-length vertex normals from the faces', () => {

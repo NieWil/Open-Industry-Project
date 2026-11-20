@@ -1,7 +1,7 @@
 import { InstancedMesh, Matrix4, Mesh, Sphere, Vector3 } from 'three'
 import type { Intersection, Material, Raycaster } from 'three'
 
-// Far-aware InstancedMesh raycasting (three 0.186 - docs/three-coupling.md, Tier 1).
+// Far-aware InstancedMesh raycasting (three 0.187 - docs/three-coupling.md, Tier 1).
 //
 // Stock InstancedMesh.raycast composes (and Mesh.raycast inverts) a matrix for every instance and
 // never consults raycaster.far. The pilot's per-frame ray fan (far ≈ 0.35 m) runs beside banks of
@@ -13,7 +13,7 @@ import type { Intersection, Material, Raycaster } from 'three'
 // [near, far]. The gate is conservative: survivors run the stock compose + (BVH-patched)
 // Mesh.raycast narrow phase, so the Intersections are identical.
 //
-// Feature-detects the r186 shape and delegates to stock on anything unexpected (slower, never
+// Feature-detects the r187 shape and delegates to stock on anything unexpected (slower, never
 // wrong). Off switch: `?stockinstraycast`. Canary: instancedRaycast.test.ts (patched vs stock).
 // Retire when three's own instanced loop prunes by ray.far per instance.
 
@@ -35,7 +35,7 @@ export function farAwareInstancedMeshRaycast(
   const geometry = this.geometry
   const arr = this.instanceMatrix?.array as ArrayLike<number> | undefined
   const count = this.count
-  // r186-shape guard: anything unexpected → stock (slower, never wrong)
+  // r187-shape guard: anything unexpected → stock (slower, never wrong)
   if (!geometry || !arr || arr.length < count * 16) {
     stockInstancedMeshRaycast.call(this, raycaster, intersects)
     return

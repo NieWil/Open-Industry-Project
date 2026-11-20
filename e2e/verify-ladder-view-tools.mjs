@@ -1,8 +1,8 @@
 // The ladder view's tools, through the rung core: Find and Replace
-// (Ctrl+F / Ctrl+H, or the toolbar's Find: plc/ladderFind.ts, reading IEC's leaf through IEC_LEAVES) and Cross
+// (Ctrl+F / Ctrl+H, or the toolbar's Find: plc/ladder/ladderFind.ts, reading IEC's leaf through IEC_LEAVES) and Cross
 // Reference (Ctrl+E, or the toolbar's Cross Ref: plc/crossRef.ts, through IEC_REFS); and, while the program runs,
 // Toggle Bit (Ctrl+T, or the toolbar) and a value typed into the running program under a block's pin. And type-ahead
-// in a field (plc/ladderComplete.ts): the proposed ending selected after the caret, BOOLs first for a contact.
+// in a field (plc/ladder/ladderComplete.ts): the proposed ending selected after the caret, BOOLs first for a contact.
 //
 // ladderFind.test.ts proves the search and the replace on rungs. What only a browser can prove: that the keys open the
 // bar and do not reach the browser's own Find, that a match is selected and lit where it stands, that the stored
@@ -133,6 +133,12 @@ try {
   await page.locator('[data-testid="ladder-find-show-replace"]').click()
   const withField = page.locator('[data-testid="ladder-find-with"]')
   await withField.waitFor({ state: 'visible', timeout: 5000 })
+  // the same button closes the Replace row again, and keeps what was being searched for
+  await page.locator('[data-testid="ladder-find-show-replace"]').click()
+  expect((await withField.count()) === 0 && (await page.locator('[data-testid="ladder-replace-all"]').count()) === 0, 'the Replace button hides the replace row again')
+  expect((await what.inputValue()) === 'Belt1' && /of 4$/.test(await count(page)), `and the search stands (${await count(page)})`)
+  await page.locator('[data-testid="ladder-find-show-replace"]').click()
+  await withField.waitFor({ state: 'visible', timeout: 5000 })
   await withField.fill('Conv1')
   await page.locator('[data-testid="ladder-replace-all"]').click()
   await page.waitForFunction(() => (window.__oip.store.getState().stProgram ?? '').includes('Conv1'), null, { timeout: 10000 }).catch(() => {})
@@ -179,7 +185,7 @@ try {
   await page.evaluate(() => {
     const st = window.__oip.store
     const scene = st.getState().scene
-    st.commit('Wire a belt to Belt1', { ...scene, parts: [...scene.parts, { id: 'xrefbelt', type: 'part', name: 'Belt_X', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0, params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, enableComms: true, runTag: 'Belt1' } }] })
+    st.commit('Wire a belt to Belt1', { ...scene, parts: [...scene.parts, { id: 'xrefbelt', type: 'part', name: 'Belt_X', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0, params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, runTag: 'Belt1' } }] })
   })
   await page.waitForTimeout(400)
   // the second rung's contact: |Belt1|

@@ -88,8 +88,25 @@ async function main() {
     await A.waitForFunction(() => window.__oip.store.getState().scene.parts.length > 5, undefined, { timeout: 30000, polling: 500 })
     const shared = await docOf(A)
     check('the shared room holds the demo', shared.parts === demo.parts && shared.program === demo.program, `${shared.parts} parts`)
-    const forked = await A.evaluate(() => localStorage.getItem('oip-web/project'))
+    const forked = await A.evaluate(async () => (await window.__oip.savedProject()))
     check('sharing the demo did not fork it into the sharer’s own project', forked === null, forked === null ? '' : `${forked.length} chars written`)
+
+    // ── the demo, shared, opens in its room again, so its sharer can always get back to stop sharing it ──
+    const sharedRoom = await A.evaluate(() => new URL(location.href).searchParams.get('room'))
+    await A.goto(`${APP_URL}?scene=demo`, { waitUntil: 'domcontentloaded', timeout: 180000 })
+    await waitForApp(A)
+    await A.waitForFunction(() => window.__oip.store.getState().collab === true, undefined, { timeout: 30000, polling: 500 }).catch(() => {})
+    const again = await A.evaluate(() => ({ collab: window.__oip.store.getState().collab, room: new URL(location.href).searchParams.get('room') }))
+    check('opening the demo again opens the room it was shared in', again.collab && again.room === sharedRoom, JSON.stringify({ collab: again.collab, sameRoom: again.room === sharedRoom }))
+    A.on('dialog', (d) => void d.accept())
+    await A.locator('button.share-button').click()
+    await A.locator('[data-testid=share-stop-sharing]').click()
+    await A.waitForURL((u) => u.searchParams.get('scene') === 'demo' && !u.searchParams.has('room'), { timeout: 30000 })
+    await waitForApp(A)
+    await A.goto(`${APP_URL}?scene=demo`, { waitUntil: 'domcontentloaded', timeout: 180000 })
+    await waitForApp(A)
+    const after = await A.evaluate(() => ({ collab: window.__oip.store.getState().collab, room: new URL(location.href).searchParams.get('room') }))
+    check('...until it stops sharing: then the demo opens on its own', !after.collab && after.room === null, JSON.stringify(after))
     await hostCtx.close()
 
     // ── 2. a room an older build shared from its demo ──
@@ -104,8 +121,8 @@ async function main() {
         import('/src/collab/provider.ts'),
         import('/src/collab/rooms.ts'),
         import('/src/collab/demoRoom.ts'),
-        import('/src/editor/demoScenes.ts'),
-        import('/src/editor/stProgram.ts'),
+        import('/src/editor/demo/demoScenes.ts'),
+        import('/src/editor/program/stProgram.ts'),
       ])
       const { ydoc, whenSynced, serverSynced, provider } = connectRoom(await resolveRoom(room, false))
       await whenSynced

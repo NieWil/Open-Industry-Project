@@ -3,7 +3,7 @@
 //
 // A WebGPU validation error never throws: the device fires `uncapturederror`, three logs it, and
 // the frame is silently wrong. Resizing a fence re-emits its geometry on every pointer-move
-// (sdk/rig.ts realizeProceduralGeometry). Disposing the outgoing geometry would destroy GPUBuffers
+// (sdk/rigProcedural.ts realizeProceduralGeometry). Disposing the outgoing geometry would destroy GPUBuffers
 // that a recorded render bundle still holds by handle. The replay then submits them (hundreds of
 // "[Buffer (unlabeled)] used in submit while destroyed"), Dawn rejects the whole command buffer, and
 // since the main pass is the only bundled one, everything except the (unbundled) wall + overlay passes

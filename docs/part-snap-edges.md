@@ -52,7 +52,7 @@ The part never sees its neighbour. The host reads both rectangles and resolves t
 ## How a match happens
 
 A `tile` declaration compiles to a `rect` plug ([part-snap-connectors.md](part-snap-connectors.md)); the mates
-table (`solvePlug` in [snapFeatures.ts](../src/core/snapFeatures.ts)) solves it against the target's own
+table (`solvePlug` in [snapFeatures.ts](../src/core/snap/snapFeatures.ts)) solves it against the target's own
 `tile` through `snapTile`, whose candidate loop (`flushOnEdges`) it shares with ambient `flush`:
 
 1. Both parts must declare `tile` in the same `group`, else `null`.
@@ -65,12 +65,12 @@ table (`solvePlug` in [snapFeatures.ts](../src/core/snapFeatures.ts)) solves it 
 
 **Broadphase sizing.** `snapTile` reads its rectangle from params, and the pre-filter (`xzDistToTargetBox`)
 uses the part's footprint, which reflows from the instance's `face`-handle params (`reflowFaceDims` in
-[partGeometry.ts](../src/core/partGeometry.ts), via `effectiveResize`), so a resized tile passes the pre-filter at
+[partGeometry.ts](../src/core/parts/partGeometry.ts), via `effectiveResize`), so a resized tile passes the pre-filter at
 its real size.
 
 ## Proof
 
-[snapFeatures.test.ts](../src/core/snapFeatures.test.ts) drives SDK markings (synthetic packages,
+[snapFeatures.test.ts](../src/core/snap/snapFeatures.test.ts) drives SDK markings (synthetic packages,
 `customMarkingPkg`) and asserts pinned poses + junctions (to 9 decimals) across three scenarios
 (edge slide, corner-flush overhang and 90-degree-step orientation), plus a group-isolation case (a `'deck'`-group
 part is inert to a `'floorMarking'` mover).
@@ -91,7 +91,7 @@ stepping-mezzanine non-goal below.
 
 The other platform-adjacent snaps are *different* kinds: **barrier → deck edge** and **stairs → deck edge** are
 both `snap.edgeMount` (`snapEdgeMount` for the `'along'` facing, `snapEdgeMountInto` for `'into'`, in
-[snapFeatures.ts](../src/core/snapFeatures.ts)): see [part-snap-edge-mount.md](part-snap-edge-mount.md) and
+[snapEdges.ts](../src/core/snap/snapEdges.ts)): see [part-snap-edge-mount.md](part-snap-edge-mount.md) and
 [part-snap-stairs.md](part-snap-stairs.md).
 
 ## Non-goals

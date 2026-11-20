@@ -1,6 +1,6 @@
 import initJolt from 'jolt-physics'
 import { describe, expect, it } from 'vitest'
-import { clearPackages } from '../core/partRegistry'
+import { clearPackages } from '../core/parts/partRegistry'
 import { SCENE_VERSION, DEFAULT_SIM_HZ } from '../core/types'
 import type { SdkPart, SceneJSON } from '../core/types'
 import { buildPackage } from './buildPackage'

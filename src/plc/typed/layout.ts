@@ -229,27 +229,29 @@ export class Layouts {
 }
 
 /** A standard block's record: its outputs first, in the order the walker's objects list them (runtime.ts: a TON's
- *  `Q` then `ET`), then its private state, hidden. Placed by `record` like any struct, so the validator covers it. */
+ *  `Q` then `ET`), then its private state, hidden, then the inputs it keeps for a call that leaves them out, hidden
+ *  too. An input the block already keeps as an edge's previous value (a trigger's CLK, a counter's CU) has no field of
+ *  its own. Placed by `record` like any struct, so the validator covers it. */
 function block(type: FbType, fields: [string, ScalarType, boolean?][]): StructLayout {
   const rec = record(fields.map(([name, t]) => ({ name, layout: scalarLayout(t) })))
   const hidden = new Set(fields.filter((f) => f[2]).map((f) => f[0]))
   const placed = rec.fields.map((f) => (hidden.has(f.name) ? { ...f, hidden: true as const } : f))
   return { ...rec, fields: placed, byKey: new Map(placed.map((f) => [identKey(f.name), f])), block: type }
 }
-const TIMER: [string, ScalarType, boolean?][] = [['Q', 'BOOL'], ['ET', 'TIME'], ['running', 'BOOL', true], ['start', 'LREAL', true]]
+const TIMER: [string, ScalarType, boolean?][] = [['Q', 'BOOL'], ['ET', 'TIME'], ['running', 'BOOL', true], ['start', 'LREAL', true], ['IN', 'BOOL', true], ['PT', 'TIME', true]]
 export const BLOCKS: Record<FbType, StructLayout> = {
   // the motion kernel: its outputs only; its plan is the host's (typed/blocks.ts keeps a channel per instance)
   AXIS_KERNEL: block('AXIS_KERNEL', Object.entries(AXIS_KERNEL_OUTPUTS)),
   TON: block('TON', TIMER),
   TOF: block('TOF', TIMER),
-  TP: block('TP', [['Q', 'BOOL'], ['ET', 'TIME'], ['prev', 'BOOL', true], ['running', 'BOOL', true], ['start', 'LREAL', true]]),
+  TP: block('TP', [['Q', 'BOOL'], ['ET', 'TIME'], ['prev', 'BOOL', true], ['running', 'BOOL', true], ['start', 'LREAL', true], ['PT', 'TIME', true]]),
   R_TRIG: block('R_TRIG', [['Q', 'BOOL'], ['prev', 'BOOL', true]]),
   F_TRIG: block('F_TRIG', [['Q', 'BOOL'], ['prev', 'BOOL', true]]),
-  CTU: block('CTU', [['CV', 'INT'], ['Q', 'BOOL'], ['prev', 'BOOL', true]]),
-  CTD: block('CTD', [['CV', 'INT'], ['Q', 'BOOL'], ['prev', 'BOOL', true]]),
-  CTUD: block('CTUD', [['CV', 'INT'], ['QU', 'BOOL'], ['QD', 'BOOL'], ['prevU', 'BOOL', true], ['prevD', 'BOOL', true]]),
-  SR: block('SR', [['Q1', 'BOOL']]),
-  RS: block('RS', [['Q1', 'BOOL']]),
+  CTU: block('CTU', [['CV', 'INT'], ['Q', 'BOOL'], ['prev', 'BOOL', true], ['R', 'BOOL', true], ['PV', 'INT', true]]),
+  CTD: block('CTD', [['CV', 'INT'], ['Q', 'BOOL'], ['prev', 'BOOL', true], ['LD', 'BOOL', true], ['PV', 'INT', true]]),
+  CTUD: block('CTUD', [['CV', 'INT'], ['QU', 'BOOL'], ['QD', 'BOOL'], ['prevU', 'BOOL', true], ['prevD', 'BOOL', true], ['R', 'BOOL', true], ['LD', 'BOOL', true], ['PV', 'INT', true]]),
+  SR: block('SR', [['Q1', 'BOOL'], ['S1', 'BOOL', true], ['R', 'BOOL', true]]),
+  RS: block('RS', [['Q1', 'BOOL'], ['S', 'BOOL', true], ['R1', 'BOOL', true]]),
 }
 
 /** The name of the hidden field holding a reference VAR_IN_OUT's own copy (a character no identifier has). */

@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { callAgentTool, type AgentToolContext } from './tools'
 import { AgentSession } from './agentSession'
 import { agentChanges } from './agentReview'
-import { EditorStore } from '../store'
-import { providePlcReading } from '../plcReading'
-import { registerPackage, unregisterPackage } from '../../core/partRegistry'
-import { PACKAGE_FORMAT, type PartPackage } from '../../core/partPackage'
+import { EditorStore } from '../store/store'
+import { providePlcReading } from '../program/plcReading'
+import { registerPackage, unregisterPackage } from '../../core/parts/partRegistry'
+import { PACKAGE_FORMAT, type PartPackage } from '../../core/parts/partPackage'
 import type { SceneJSON, SdkPart } from '../../core/types'
 
 // run_test's runner loads jolt-physics/wasm, which the node env cannot resolve; nothing here runs a test
-vi.mock('../projectTestsRun', () => ({ runProjectTests: vi.fn() }))
+vi.mock('../project/projectTestsRun', () => ({ runProjectTests: vi.fn() }))
 
 const BELT: PartPackage = {
   format: PACKAGE_FORMAT,

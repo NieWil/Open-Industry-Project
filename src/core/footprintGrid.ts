@@ -1,5 +1,5 @@
 import type { PartInstance } from './types'
-import { partFootprint, toWorldXZ } from './partGeometry'
+import { partFootprint, toWorldXZ } from './parts/partGeometry'
 
 /**
  * Uniform footprint grid for neighbour-derived resolvers.

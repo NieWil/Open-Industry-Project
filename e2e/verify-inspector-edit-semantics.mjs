@@ -28,6 +28,8 @@
 //   K. A table showed two decimals whatever its values, and its row folds did nothing.
 //   M. Joint limits could cross (min above max).
 //   N. The browser part panel said the script needed the desktop app, though the in-app editor works.
+//   O. A multi-selection had no Transform, so "move these 1200 mm east" meant one absolute edit per part. Its
+//      fields are mixed where the parts differ; "+= 1200mm" offsets each part and "+= 90" in Y turns the group.
 // Run: node e2e/verify-inspector-edit-semantics.mjs [--headed]
 /* global process, console, window, localStorage, document */
 import { startServer } from './_server.mjs'
@@ -136,9 +138,8 @@ async function main() {
       // fpmUnits: false pins the conveyor to metres per second, which is what every speed expectation
       // below is written in. The belt defaults to FPM, and the m/s Speed + `speedTag` rows are
       // `visibleWhen fpmUnits is false`, so on the default the script would wait for a row the Inspector
-      // rightly doesn't render, and time out mid-run without a verdict. enableComms: true for the same reason:
-      // the Inspector hides a part's tag fields while its PLC switch is off, and H1/H2 edit `speedTag`.
-      const belt = (id, z, params) => ({ id, type: 'part', packageId: 'oip.belt-conveyor', position: [0, 0, z], rotationY: 0, params: { fpmUnits: false, enableComms: true, ...params } })
+      // rightly doesn't render, and time out mid-run without a verdict.
+      const belt = (id, z, params) => ({ id, type: 'part', packageId: 'oip.belt-conveyor', position: [0, 0, z], rotationY: 0, params: { fpmUnits: false, ...params } })
       const note = (id, z, text) => ({ id, type: 'annotation', position: [4, 1.2, z], rotationY: 0, params: { text } })
       const parts = [
         { ...belt('b1', 0, { segments: [[4, 0]], speed: 1.25, beltColor: '#ff0000' }), position: [1.23456, 0, 0] },
@@ -329,8 +330,11 @@ async function main() {
     await select('b1')
     await openMenu('speed')
     check('I1 the menu takes focus on its first item', (await focusedText()) === 'Copy Property', `focused=${await focusedText()}`)
+    // the last enabled item is the whole part's Copy Properties (Paste Properties is off with nothing copied)
     await page.keyboard.press('End'); await settle()
-    check('I1 End moves to the last item', (await focusedText()) === 'Revert to Default', `focused=${await focusedText()}`)
+    check('I1 End moves to the last item', (await focusedText()) === 'Copy Properties', `focused=${await focusedText()}`)
+    await page.keyboard.press('ArrowUp'); await settle()
+    check('I1 ArrowUp steps back over the separator', (await focusedText()) === 'Revert to Default', `focused=${await focusedText()}`)
     await page.keyboard.press('Delete'); await settle()
     check('I2 Delete with the menu open does not delete the part', (await part('b1')) !== undefined && (await exists('.ctx-menu')))
     await page.keyboard.press('Enter'); await settle()
@@ -398,6 +402,35 @@ async function main() {
         (await page.evaluate(() => window.__oip.store.getState().behaviorEditTarget)) === 'oip.belt-conveyor')
       await page.evaluate(() => window.__oip.store.closeBehaviorEditor())
     }
+
+    // ── O. typed offsets on a selection ──
+    await patch('b1', { position: [1.25, 0, 0], rotationY: 0 })
+    await patch('b3', { position: [0, 0, 6], rotationY: 0 })
+    await settle()
+    await select('b1', 'b3')
+    const posX = page.locator('.vector-field').nth(0).locator('.axis-x .spin-input')
+    const rotY = page.locator('.vector-field').nth(1).locator('.axis-y .spin-input')
+    check('O1 a multi-selection shows Position', (await posX.count()) === 1)
+    check('O1 ... mixed where the parts differ', (await posX.inputValue()) === '' && (await posX.getAttribute('placeholder')) === '--')
+    h0 = await history()
+    await posX.click(); await settle()
+    await page.keyboard.type('+= 1200mm'); await page.keyboard.press('Enter'); await settle()
+    const xs = [(await part('b1')).position[0], (await part('b3')).position[0]]
+    check('O2 "+= 1200mm" moves each part 1.2 m along X', Math.abs(xs[0] - 2.45) < 1e-9 && Math.abs(xs[1] - 1.2) < 1e-9, JSON.stringify(xs))
+    check('O2 ... in one undo step', (await history()) === h0 + 1, `history ${h0} -> ${await history()}`)
+    const gap = async () => { const a = await part('b1'); const b = await part('b3'); return Math.hypot(a.position[0] - b.position[0], a.position[2] - b.position[2]) }
+    const gap0 = await gap()
+    await rotY.click(); await settle()
+    await page.keyboard.type('+= 90'); await page.keyboard.press('Enter'); await settle()
+    const yaws = [(await part('b1')).rotationY, (await part('b3')).rotationY]
+    check('O3 "+= 90" in Rotation Y turns both parts', yaws.every((y) => Math.abs(y - Math.PI / 2) < 1e-9), JSON.stringify(yaws))
+    check('O3 ... as one rigid group', Math.abs((await gap()) - gap0) < 1e-9, `gap ${gap0} -> ${await gap()}`)
+    await select('b1')
+    await posX.click(); await settle()
+    await page.keyboard.press('Control+A'); await page.keyboard.type('-5'); await page.keyboard.press('Enter'); await settle()
+    check('O4 a plain "-5" stays an absolute value', (await part('b1')).position[0] === -5, `x=${(await part('b1')).position[0]}`)
+    await select('b1', 's1')
+    check('O5 parts of different packages still share the Transform', (await posX.count()) === 1)
 
     check('no console / page errors', errors.length === 0, errors.slice(0, 3).join(' | '))
   } finally {

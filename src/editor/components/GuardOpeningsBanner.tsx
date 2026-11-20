@@ -1,5 +1,5 @@
 import { defineMessages, t } from '../../core/i18n'
-import type { EditorState, EditorStore } from '../store'
+import type { EditorState, EditorStore } from '../store/store'
 
 const M = defineMessages('guardOpenings', {
   hintSelected: 'Opening selected: Delete removes it, or drag inside it to slide it.',

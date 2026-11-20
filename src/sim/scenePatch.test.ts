@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { SCENE_VERSION } from '../core/types'
 import type { PartInstance, SceneJSON } from '../core/types'
-import type { PartPackage } from '../core/partPackage'
+import type { PartPackage } from '../core/parts/partPackage'
 import { applyScenePatch, scenePatch } from './scenePatch'
-import { PACKAGE_FORMAT } from '../core/partPackage'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 
 function part(id: string, x = 0): PartInstance {
   return { id, type: 'part', packageId: 'test.deck', position: [x, 0, 0], rotationY: 0, params: {} } as unknown as PartInstance

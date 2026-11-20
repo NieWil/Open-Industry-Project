@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { linkFieldOwnership, resolvedBoxSize, resolvedCylinder, rigWorldPoses } from '../core/rigPose'
-import type { RigParams } from '../core/rigPose'
-import { rigInclineRad } from '../core/partGeometry'
-import { resolvePartParams } from '../core/partScript'
-import type { PartPackage, RigLink } from '../core/partPackage'
-import { listPackages } from '../core/partRegistry'
-import { registerBundledPackages } from './bundledExamples'
+import { linkFieldOwnership, resolvedBoxSize, resolvedCylinder, rigWorldPoses } from '../core/rig/rigPose'
+import type { RigParams } from '../core/rig/rigPose'
+import { rigInclineRad } from '../core/parts/partGeometry'
+import { resolvePartParams } from '../core/parts/partScript'
+import type { PartPackage, RigLink } from '../core/parts/partPackage'
+import { listPackages } from '../core/parts/partRegistry'
+import { registerBundledPackages } from './parts/bundledExamples'
 
 // core's linkFieldOwnership says which of a link's fields an author may usefully edit. The editor locks what it
 // reports as owned, so a wrong answer either hides a field that works or offers one the part overwrites - the

@@ -1,9 +1,9 @@
 // Which folder each project lives in: the desktop's record of its project folders.
 //
 // On the desktop a project is a folder (docs/projects.md). The renderer names documents by id (its
-// library, src/editor/documentStore.ts). This file maps each id to the folder holding it, plus what the
+// library, src/editor/project/documentStore.ts). This file maps each id to the folder holding it, plus what the
 // two-way sync needs to resume after a restart: the folder's fingerprint and the
-// per-file baselines (src/core/folderSync.ts). File > Open Recent is built from it too.
+// per-file baselines (src/core/project/folderSync.ts). File > Open Recent is built from it too.
 //
 // Kept in main, in userData, rather than in the renderer's IndexedDB, for three reasons:
 //   - main builds the menu that lists it and has no access to the renderer's storage;
@@ -72,7 +72,7 @@ function createFolderRegistry(file) {
 
     /**
      * Record (or update) a document's folder. `patch` may carry path, name, signature, baseline,
-     * trustDisk (see src/editor/projectFolderSync.ts), and `touch: true` to move it to the top of Open
+     * trustDisk (see src/editor/project/projectFolderSync.ts), and `touch: true` to move it to the top of Open
      * Recent. A path another row held moves to this one: a folder belongs to one document at a time.
      */
     remember(docId, patch = {}) {

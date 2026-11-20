@@ -2,6 +2,8 @@
 // poses, rig joints and subPoses, lamps, displays, conveyor speeds and reported values, change-gated.
 
 import type { BoxFrame } from '../../core/frame'
+import { subPoseEq } from '../../core/rig/rigPose'
+import type { SubPose } from '../../core/rig/rigPose'
 import { markBundleDirtyPart } from '../bundleGroups'
 import type { SubPoseMap } from './viewTypes'
 import type { RenderView } from './view'
@@ -27,6 +29,10 @@ export class FrameRoutingState {
   // parts whose visual root a frame basePose moved this run (a driven AGV); resetRunPoses returns
   // them to the authored transform on stop, even if the part exposes no rig appliers
   readonly baseDriven = new Set<string>()
+  /** A run has started since the last stop. A stop with none before it has no run pose to undo: the editor says
+   *  "not running" as it mounts, and resetting then built every jointed part's visual a second time and merged the
+   *  pool again, a quarter of a second on a 420-part line before the first frame. */
+  ranSinceStop = false
   /**
    * Rigs whose joints the editor poses even while the sim runs (applyIdlePose), with the sim's joint frames for them
    * ignored: a flex conveyor the walking character is pulling. Its shape changes every frame and the sim receives it
@@ -61,18 +67,11 @@ function sameFlatValues<T>(a: Record<string, T>, b: Record<string, T>): boolean 
   return true
 }
 
-function sameVec3(a: readonly number[] | undefined, b: readonly number[] | undefined): boolean {
-  if (a === b) return true
-  if (!a || !b) return false
-  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
-}
-
-/** same link names, each with the same position + rotation */
+/** same link names, each with the same position, rotation and instance poses */
 function sameSubPoses(a: SubPoseMap, b: SubPoseMap): boolean {
   for (const k in b) {
     const x = a[k]
-    const y = b[k]!
-    if (!x || !sameVec3(x.position, y.position) || !sameVec3(x.rotation, y.rotation)) return false
+    if (!x || !subPoseEq(x, b[k])) return false
   }
   for (const k in a) if (!(k in b)) return false
   return true
@@ -81,6 +80,8 @@ function sameSubPoses(a: SubPoseMap, b: SubPoseMap): boolean {
 export function applyBoxFrame(view: FrameRoutingHost, frame: BoxFrame): void {
   view.boxes.apply(frame)
   view.simHasFrame = true
+  // (a frame drives poses whoever sent it: a stop after one has them to undo)
+  view.routing.ranSinceStop = true
   // the worker's per-sensor beam results this step - probeBeam serves these while running
   view.lastBeamHits = frame.beamHits
   // the belt/roller/chain scroll advances by the delta of this clock (computed in tick), so a paused
@@ -128,7 +129,7 @@ export function applyBoxFrame(view: FrameRoutingHost, frame: BoxFrame): void {
   if (frame.subPoses) {
     for (const partId in frame.subPoses) {
       const obj = view.entries.get(partId)?.visual.object
-      const applySubPoses = obj?.userData.applySubPoses as ((p: Record<string, { position?: [number, number, number]; rotation?: [number, number, number] }>) => void) | undefined
+      const applySubPoses = obj?.userData.applySubPoses as ((p: Record<string, SubPose>) => void) | undefined
       if (!obj || !applySubPoses) continue
       const sp = frame.subPoses[partId]!
       const rev = (obj.userData.poseRev as number | undefined) ?? 0
@@ -136,6 +137,13 @@ export function applyBoxFrame(view: FrameRoutingHost, frame: BoxFrame): void {
       if (prev && prev.rev === rev && sameSubPoses(prev.poses, sp)) continue
       applySubPoses(sp)
       view.routing.lastRoutedSubPoses.set(applySubPoses, { rev: (obj.userData.poseRev as number | undefined) ?? 0, poses: sp })
+    }
+  }
+  if (frame.copySpeeds) {
+    // conveying copies' belt speeds: the rig rewrites a copy's scroll only when its speed changed
+    for (const partId in frame.copySpeeds) {
+      const apply = view.entries.get(partId)?.visual.object.userData.applyCopySpeeds as ((s: Record<string, number[]>) => void) | undefined
+      apply?.(frame.copySpeeds[partId]!)
     }
   }
   if (frame.lamps) {

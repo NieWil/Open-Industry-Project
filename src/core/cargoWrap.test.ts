@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { fitLoad, webCorner, wrapAnchor, wrapLoad } from './cargoWrap'
 import type { WrapBody } from './cargoWrap'
-import { qFromAxisAngle } from './rigPose'
+import { qFromAxisAngle } from './rig/rigPose'
 
 const flat: [number, number, number, number] = [0, 0, 0, 1]
 const pallet = (x: number, y: number, z: number, yaw = 0): WrapBody => ({ pos: [x, y, z], quat: yaw ? qFromAxisAngle([0, 1, 0], yaw) : flat, half: [0.61, 0.0675, 0.51] })

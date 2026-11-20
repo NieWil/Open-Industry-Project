@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { asCopyOfBuiltIn, asNewPartFrom, builtInChangedSince, builtInFingerprint, variantBase } from './builtInVersion'
-import { PACKAGE_FORMAT } from './partPackage'
-import type { PartPackage } from './partPackage'
+import { PACKAGE_FORMAT } from './parts/partPackage'
+import type { PartPackage } from './parts/partPackage'
 
 const pkg = (over: Partial<PartPackage> = {}): PartPackage =>
   ({

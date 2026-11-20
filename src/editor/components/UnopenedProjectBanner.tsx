@@ -1,4 +1,4 @@
-import type { UnopenedProject } from '../projectFile'
+import type { UnopenedProject } from '../project/projectFile'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('unopenedProject', {

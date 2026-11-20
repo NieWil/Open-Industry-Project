@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartPackage } from '../core/partPackage'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartPackage } from '../core/parts/partPackage'
 import type { SdkPart } from '../core/types'
-import type { RuntimePartDiagnostic } from '../core/partDiagnostics'
+import type { RuntimePartDiagnostic } from '../core/parts/partDiagnostics'
 import { DEFAULT_SIM_HZ, MAX_SIM_HZ } from '../core/types'
 import { collectProblems, type ProblemsInput } from './problems'
-import { PACKAGE_FORMAT } from '../core/partPackage'
-import { partFingerprint } from '../core/partOrigin'
-import { PART_SDK_LEVEL } from '../core/partSdk'
+import { controllerFor } from '../plc'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
+import { partFingerprint } from '../core/parts/partOrigin'
+import { PART_SDK_LEVEL } from '../core/parts/partSdk'
 
 // Synthetic packages, like plc/wiring.test.ts: what the aggregator needs from a package is its
 // declared tag signals, and building real ones here would only test the build.
@@ -75,6 +76,21 @@ describe('collectProblems - a clean document', () => {
     const r = collectProblems(
       input({
         stProgram: 'VAR PE : BOOL; Motor : BOOL; END_VAR\nMotor := PE;',
+        parts: [part('c1', 't.conveyor', { runTag: 'Motor', runningTag: '' }), part('s1', 't.sensor', { tag: 'PE' })],
+      }),
+    )
+    expect(r.problems).toEqual([])
+  })
+
+  it('reports nothing for a sole PROGRAM instance whose plain VARs the parts name bare, as Play binds them', () => {
+    registerPackage(CONVEYOR)
+    registerPackage(SENSOR)
+    const stProgram = 'PROGRAM Main\nVAR PE : BOOL; Motor : BOOL; END_VAR\nMotor := PE;\nEND_PROGRAM'
+    const r = collectProblems(
+      input({
+        stProgram,
+        // the default table, as the Problems panel passes it: it runs Main as the controller's one instance
+        controller: controllerFor(stProgram, null, 10),
         parts: [part('c1', 't.conveyor', { runTag: 'Motor', runningTag: '' }), part('s1', 't.sensor', { tag: 'PE' })],
       }),
     )
@@ -176,6 +192,26 @@ describe('collectProblems - wiring', () => {
     expect(r.warnings).toBeGreaterThan(0)
   })
 
+  it('drops an unread or undriven warning a kept test answers, as check-wiring does', () => {
+    registerPackage(CONVEYOR)
+    registerPackage(SENSOR)
+    // the belt's runningTag Done is read by nothing in the scene, and its runTag Go is driven by nothing
+    const parts = [part('c1', 't.conveyor', { runTag: 'Go', runningTag: 'Done' })]
+    const keys = (r: ReturnType<typeof collectProblems>) => r.problems.map((p) => p.key)
+    expect(keys(collectProblems(input({ parts })))).toEqual(expect.arrayContaining(['wiring:undriven:Go', 'wiring:unread:Done']))
+    const tests = [{ name: 'runs', duration: 1, inputs: [{ at: 0, tag: 'Go', value: true }], checks: [{ at: 1, tag: 'Done', equals: true }] }]
+    const covered = keys(collectProblems(input({ parts, tests })))
+    expect(covered).not.toContain('wiring:undriven:Go')
+    expect(covered).not.toContain('wiring:unread:Done')
+  })
+
+  it('keeps a warning a test does not answer: a test that drives a tag does not read it', () => {
+    registerPackage(CONVEYOR)
+    const parts = [part('c1', 't.conveyor', { runningTag: 'Done' })]
+    const tests = [{ name: 'drives', duration: 1, inputs: [{ at: 0, tag: 'Done', value: true }], checks: [] }]
+    expect(collectProblems(input({ parts, tests })).problems.map((p) => p.key)).toContain('wiring:unread:Done')
+  })
+
   it('reports an unloaded package as unknown tags rather than as a clean part', () => {
     const r = collectProblems(input({ parts: [part('x1', 't.missing', { tag: 'PE' })] }))
     expect(r.notes.join(' ')).toMatch(/t\.missing/)
@@ -190,32 +226,31 @@ describe('collectProblems - the program/scene name bridge', () => {
     expect(row).toMatchObject({ severity: 'warning', group: 'Wiring', subject: 'Motor' })
   })
 
-  it('drops the vaguer unwired row when a wiring row already covers that tag', () => {
+  it('says on the wiring row when the program does not declare the tag, rather than in a second row', () => {
     registerPackage(SENSOR)
-    // Spare is written by two sensors (contested) and the program never declares it, so both checks
-    // fire on one tag; only the wiring row - which names the parts - should survive.
+    // Spare is written by two sensors (contested) and the program never declares it
     const r = collectProblems(
       input({
         stProgram: GOOD_PROGRAM,
         parts: [part('s1', 't.sensor', { tag: 'Spare' }), part('s2', 't.sensor', { tag: 'Spare' })],
       }),
     )
-    expect(r.problems.some((p) => p.key === 'unwired:Spare')).toBe(false)
-    // the wiring rows themselves stay: contested and unread are two different mistakes on one tag
+    // contested and unread are two different mistakes on one tag
     expect(r.problems.filter((p) => p.subject === 'Spare').map((p) => p.key)).toEqual(['wiring:contested:Spare', 'wiring:unread:Spare'])
+    expect(r.problems.find((p) => p.key === 'wiring:unread:Spare')?.message).toMatch(/does not declare it, which is usually a typo$/)
+    expect(r.problems.find((p) => p.key === 'wiring:contested:Spare')?.message).not.toMatch(/typo/)
   })
 
-  it('keeps the unwired row when nothing else reported that tag', () => {
+  it('reports a tag parts both write and read, which the program never declares: a part write reaches no part', () => {
     registerPackage(CONVEYOR)
-    // Typo drives Spare and the conveyor reads it, so wiring is content; the program never declares it
     const r = collectProblems(
       input({
         stProgram: GOOD_PROGRAM,
         parts: [part('c1', 't.conveyor', { runTag: 'Spare', runningTag: 'Spare' })],
       }),
     )
-    const row = r.problems.find((p) => p.key === 'unwired:Spare')
-    expect(row).toMatchObject({ severity: 'warning', parts: ['c1'] })
+    expect(r.problems.filter((p) => p.subject === 'Spare').map((p) => p.key)).toEqual(['wiring:undriven:Spare', 'wiring:unread:Spare'])
+    expect(r.problems.find((p) => p.key === 'wiring:undriven:Spare')).toMatchObject({ severity: 'warning', parts: ['c1'] })
   })
 })
 
@@ -443,7 +478,7 @@ describe('coverage notes for what the panel cannot see', () => {
     const r = collectProblems(input({ runtimeOverflowed: true, heldCode: 1, externalPlc: true }))
     expect(r.notes).toEqual([
       'Part runtime problems stopped being recorded after the first 200, so some may be missing here.',
-      '1 part type from this room is blocked from running its own code, so its runtime problems come from the stand-in that runs instead.',
+      '1 part type in this shared project is blocked from running its own code, so its runtime problems come from the stand-in that runs instead.',
       'An external PLC runs the logic when you press Play, so the program checks above are about the program in this app, which does not run.',
     ])
   })
@@ -470,5 +505,88 @@ describe('a runtime fault of the program', () => {
 
   it('is absent without one', () => {
     expect(collectProblems(input({ stProgram: SRC, plcFault: null })).problems.filter((p) => p.key.startsWith('plcfault:'))).toEqual([])
+  })
+})
+
+describe('a controller the tags name', () => {
+  // `Cell2::%IX0.0` (core/io/controllerTag.ts): Play connects Cell2 only when the project lists it and it is on
+  const parts = () => [part('s1', 't.sensor', { tag: 'Cell2::%IX0.0' }), part('c1', 't.conveyor', { runTag: 'Cell2::%QX0.0' }), part('s2', 't.sensor', { tag: 'PE' })]
+  const rows = (namedPlcs: ProblemsInput['namedPlcs']) => collectProblems(input({ parts: parts(), stProgram: GOOD_PROGRAM, namedPlcs })).problems.filter((p) => p.key.startsWith('controller:'))
+
+  it('is a warning naming its parts when the project does not list it', () => {
+    registerPackage(SENSOR)
+    registerPackage(CONVEYOR)
+    expect(rows([])).toEqual([expect.objectContaining({ severity: 'warning', subject: 'Cell2', parts: ['s1', 'c1'] })])
+    expect(rows([])[0]!.message).toMatch(/project has no controller by that name/)
+  })
+
+  it('says a tag naming the default controller carries a name its tags never do', () => {
+    registerPackage(SENSOR)
+    registerPackage(CONVEYOR)
+    const found = collectProblems(input({ parts: parts(), stProgram: GOOD_PROGRAM, namedPlcs: [], mainPlcName: 'cell2' })).problems.filter((p) => p.key.startsWith('controller:'))
+    expect(found).toEqual([expect.objectContaining({ subject: 'Cell2', parts: ['s1', 'c1'] })])
+    expect(found[0]!.message).toMatch(/default controller/)
+  })
+
+  it('says so when it is set up but switched off, and nothing when Play connects it', () => {
+    registerPackage(SENSOR)
+    registerPackage(CONVEYOR)
+    expect(rows([{ name: 'Cell2', enabled: false }])[0]!.message).toMatch(/switched off/)
+    expect(rows([{ name: 'Cell2', enabled: true }])).toEqual([])
+  })
+
+  it('is not asked without a list, and never blames the program for its tags', () => {
+    registerPackage(SENSOR)
+    registerPackage(CONVEYOR)
+    expect(rows(undefined)).toEqual([])
+    const all = collectProblems(input({ parts: parts(), stProgram: GOOD_PROGRAM })).problems
+    expect(all.filter((p) => p.subject.startsWith('Cell2::'))).toEqual([])
+  })
+})
+
+describe('program instances on other controllers', () => {
+  const LINE = `PROGRAM Line
+VAR_INPUT
+  PE : BOOL;
+END_VAR
+VAR_OUTPUT
+  Motor : BOOL;
+END_VAR
+Motor := PE;
+END_PROGRAM
+`
+  const table = {
+    tasks: [
+      { name: 'T', intervalMs: 10, priority: 1 },
+      { name: 'T2', intervalMs: 10, priority: 1, plc: 'Cell2' },
+    ],
+    programs: [
+      { name: 'LineA', type: 'Line', task: 'T' },
+      { name: 'LineB', type: 'Line', task: 'T2' },
+    ],
+  }
+  const parts = () => [
+    part('s1', 't.sensor', { tag: 'LineA.PE' }),
+    part('c1', 't.conveyor', { runTag: 'LineA.Motor' }),
+    part('s2', 't.sensor', { tag: 'Cell2::LineB.PE' }),
+    part('c2', 't.conveyor', { runTag: 'Cell2::LineB.Motor' }),
+  ]
+  const rows = (runsOn: 'app' | 'plc', enabled = true) =>
+    collectProblems(input({ parts: parts(), stProgram: LINE, controller: table, namedPlcs: [{ name: 'Cell2', enabled, runsOn }], mainPlcName: 'PLC1' })).problems
+
+  it("checks an instance on a simulated controller against that controller's tags, not the default one's", () => {
+    registerPackage(SENSOR)
+    registerPackage(CONVEYOR)
+    expect(rows('app').map((p) => p.key)).toEqual([])
+  })
+
+  it('says an instance on a PLC outside the app does not run here, and a simulated controller that runs nothing', () => {
+    registerPackage(SENSOR)
+    registerPackage(CONVEYOR)
+    const onPlc = rows('plc').filter((p) => p.key.startsWith('instance-plc:'))
+    expect(onPlc).toEqual([expect.objectContaining({ subject: 'LineB', severity: 'warning' })])
+    expect(onPlc[0]!.message).toMatch(/a PLC outside the app/)
+    const idle = collectProblems(input({ parts: parts(), stProgram: LINE, controller: { ...table, programs: table.programs.slice(0, 1) }, namedPlcs: [{ name: 'Cell2', enabled: true, runsOn: 'app' }] })).problems
+    expect(idle.filter((p) => p.key.startsWith('controller-idle:')).map((p) => p.subject)).toEqual(['Cell2'])
   })
 })

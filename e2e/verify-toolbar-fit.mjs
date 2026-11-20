@@ -36,10 +36,9 @@
 // Swept in the row's heaviest state, because its requirement is not a constant and a bare run would
 // check the wrong thing: the demo's tagged label (the label is elastic), a live collab chip (+46) and
 // the VR button on an XR-capable browser (+40). The XR runtime is stubbed, since headless Chromium
-// reports none and the 40px button would never render. The chip only exists in a room, where the
-// project menu reads "Live room"; a long project name only exists outside one. The two halves of the
-// row are sized independently (1fr auto 1fr), so the left group gets a second, solo sweep carrying
-// the long project name instead.
+// reports none and the 40px button would never render. The chip only exists in a shared project. The two halves of the
+// row are sized independently (1fr auto 1fr), so a long project name, shared or not, never meets the chip: the left
+// group gets a second, solo sweep carrying the long project name instead.
 // (5) is included because the shell shares this row and its rules cut differently there. The mark is
 // decoration on the web; in the shell it is the menu button. The shell hides the OS menu bar, so the
 // mark is the only pointer path to File/Edit/Simulation. A branding cut written for the web can shrink
@@ -88,11 +87,16 @@ const measure = () => {
     mobile: document.querySelector('.app').classList.contains('mobile'),
     cut: ctrls.filter((el) => el.getBoundingClientRect().right > window.innerWidth + 0.5).map(name),
     overlaps: (() => {
-      const boxes = ctrls.map((el) => ({ n: name(el), r: el.getBoundingClientRect() })).sort((a, b) => a.r.left - b.r.left)
+      const boxes = ctrls.map((el) => ({ el, n: name(el), r: el.getBoundingClientRect() })).sort((a, b) => a.r.left - b.r.left)
       const hits = []
       for (let i = 1; i < boxes.length; i++) {
-        // 0.5px of tolerance for sub-pixel layout; anything more is a real stack
-        if (boxes[i].r.left < boxes[i - 1].r.right - 0.5) hits.push(`${boxes[i - 1].n} / ${boxes[i].n}`)
+        const a = boxes[i - 1]
+        const b = boxes[i]
+        // a segmented group's buttons share one border on purpose (toolbar.css `.segmented`: each after the first is
+        // pulled 1px left), so neighbours in one group may overlap by that border; anywhere else 0.5px of tolerance
+        // covers sub-pixel layout, and anything more is a real stack
+        const shared = a.el.parentElement === b.el.parentElement && a.el.parentElement?.matches('.segmented')
+        if (b.r.left < a.r.right - (shared ? 1.5 : 0.5)) hits.push(`${a.n} / ${b.n}`)
       }
       return hits
     })(),
@@ -188,7 +192,7 @@ try {
   }
   await solo.close()
   // ── the same ladder in the desktop shell ────────────────────────────────────────────────────────
-  // window.oipMenu is what DESKTOP_SHELL reads (editor/desktopMenuBridge.ts), so stubbing it gives the
+  // window.oipMenu is what DESKTOP_SHELL reads (editor/desktop/desktopMenuBridge.ts), so stubbing it gives the
   // real .desktop-shell / .desktop-mac classes and therefore the real CSS. It cannot reproduce the
   // window-controls inset (env(titlebar-area-*) needs a real Electron window, and reads 0 here), so
   // this pass judges the shell-only rules (what the row keeps and what it cuts) and leaves the inset

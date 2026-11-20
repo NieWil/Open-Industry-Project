@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, servoJointsJson, upgradeStoredPackage, validatePartPackage, type RigJoint } from '../core/partPackage'
+import { PACKAGE_FORMAT, rigJointsJson, type RigJoint } from '../core/parts/partPackage'
+import { validatePartPackage } from '../core/parts/partValidate'
+import { upgradeStoredPackage } from '../core/parts/partUpgrade'
 import type { PackageManifest } from './buildPackage'
 import { create, destroy, stepDirect } from './embeddedBehavior'
 import { validatePart } from './validatePart'
@@ -37,7 +39,7 @@ const MOVER = `definePart({
 })`
 
 function runTicks(source: string, joints: RigJoint[], ticks: number, paramsJson = '{}'): number[] {
-  const h = create(source, paramsJson, servoJointsJson(manifest(joints).geometry))
+  const h = create(source, paramsJson, rigJointsJson(manifest(joints).geometry))
   expect(h).toBeGreaterThan(0)
   const xs: number[] = []
   for (let i = 0; i < ticks; i++) {
@@ -72,7 +74,7 @@ describe('servo joints (ctx.servos)', () => {
   })
 
   it('an unpowered servo holds its joint and refuses motion', () => {
-    const h = create(`definePart({ servos: ['x'], step(ctx) { ctx.display('r', ctx.servos.x.moveAbsolute(0.5, { velocity: 1 })) } })`, '{}', servoJointsJson(manifest([slide]).geometry))
+    const h = create(`definePart({ servos: ['x'], step(ctx) { ctx.display('r', ctx.servos.x.moveAbsolute(0.5, { velocity: 1 })) } })`, '{}', rigJointsJson(manifest([slide]).geometry))
     const out = stepDirect(h, {}, DT)!
     destroy(h)
     expect(out.displays.r).toBe(-1) // not powered
@@ -87,7 +89,7 @@ definePart({ servos: ['x'], params: { len: { type: 'number', default: 1 } }, ste
   if (!x.powered) { x.power(true); id = x.moveAbsolute(0.8, { velocity: 0.5, accel: 2 }) }
   ctx.display('id', id); ctx.display('state', x.state)
 } })`
-    const h = create(src, '{}', servoJointsJson(manifest([narrowed]).geometry))
+    const h = create(src, '{}', rigJointsJson(manifest([narrowed]).geometry))
     let out = stepDirect(h, {}, DT)!
     let peak = 0
     for (let i = 0; i < 300; i++) {
@@ -102,7 +104,7 @@ definePart({ servos: ['x'], params: { len: { type: 'number', default: 1 } }, ste
   })
 
   it('a ctx.joints write to a servo joint is ignored: the servo owns its joint', () => {
-    const h = create(`definePart({ step(ctx) { ctx.joints.x = 0.9 } })`, '{}', servoJointsJson(manifest([slide]).geometry))
+    const h = create(`definePart({ step(ctx) { ctx.joints.x = 0.9 } })`, '{}', rigJointsJson(manifest([slide]).geometry))
     const out = stepDirect(h, {}, DT)!
     destroy(h)
     expect(out.joints.x).toBe(0)
@@ -110,7 +112,7 @@ definePart({ servos: ['x'], params: { len: { type: 'number', default: 1 } }, ste
 
   it('a wrapping servo spins without end at a velocity', () => {
     const src = `definePart({ servos: ['r'], step(ctx) { const r = ctx.servos.r; if (!r.powered) { r.power(true); r.moveVelocity(Math.PI) } } })`
-    const h = create(src, '{}', servoJointsJson(manifest([spin]).geometry))
+    const h = create(src, '{}', rigJointsJson(manifest([spin]).geometry))
     let last = 0
     for (let i = 0; i < 600; i++) last = stepDirect(h, {}, DT)!.joints.r!
     destroy(h)
@@ -127,7 +129,7 @@ definePart({ servos: ['x'], params: { len: { type: 'number', default: 1 } }, ste
       ctx.display('b', x.moveAbsolute(0.5, sneaky))
       ctx.display('reads', reads)
     } })`
-    const h = create(src, '{}', servoJointsJson(manifest([slide]).geometry))
+    const h = create(src, '{}', rigJointsJson(manifest([slide]).geometry))
     const out = stepDirect(h, {}, DT)!
     destroy(h)
     expect(out.displays.a).toBe(-4) // a string target is not a number
@@ -136,7 +138,7 @@ definePart({ servos: ['x'], params: { len: { type: 'number', default: 1 } }, ste
   })
 
   it('ctx.servo(name) reaches a servo by a computed name', () => {
-    const h = create(`definePart({ step(ctx) { ctx.display('has', ctx.servo('x') !== undefined); ctx.display('none', ctx.servo('nope') === undefined) } })`, '{}', servoJointsJson(manifest([slide]).geometry))
+    const h = create(`definePart({ step(ctx) { ctx.display('has', ctx.servo('x') !== undefined); ctx.display('none', ctx.servo('nope') === undefined) } })`, '{}', rigJointsJson(manifest([slide]).geometry))
     const out = stepDirect(h, {}, DT)!
     destroy(h)
     expect(out.displays).toEqual({ has: true, none: true })
@@ -199,7 +201,7 @@ definePart({ servos: ['x'], step(ctx) {
   }
   ctx.display('s', [x.done(a), x.queued(b), x.done(b), x.queued(c), x.done(c), x.aborted(b)].map(Number).join(''))
 } })`
-    const h = create(src, '{}', servoJointsJson(manifest([slide]).geometry))
+    const h = create(src, '{}', rigJointsJson(manifest([slide]).geometry))
     const seen = new Set<string>()
     const xs: number[] = []
     for (let i = 0; i < 600; i++) {

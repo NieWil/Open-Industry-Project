@@ -1,11 +1,11 @@
-import type { PartPackage } from '../core/partPackage'
-import { getPackage } from '../core/partRegistry'
+import type { PartPackage } from '../core/parts/partPackage'
+import { getPackage } from '../core/parts/partRegistry'
 
 // The room's CODE trust gate. A custom part's `behavior` is JavaScript. Where the realm is locked down it runs in
-// the part sandbox (docs/part-sandbox.md), and this gate decides only WHETHER a room's code runs: a browser runs
-// it unless the room is blocked, and the desktop still asks first, because an escape there would reach native
-// file and network access. Where lockdown failed, this gate is the whole protection: part code then runs with the
-// page's access (the determinism guards are not a security boundary).
+// the part sandbox (docs/part-sandbox.md), in a browser or the desktop, and this gate decides only WHETHER a room's
+// code runs: it runs unless this open is a safe one (`?nocode`, or the recovery below). Where lockdown failed, this
+// gate is the whole protection: part code then runs with the page's access (the determinism guards are not a
+// security boundary), so the room's code is held until the user allows it.
 //
 // A room syncs every peer's packages, so without this gate joining one would run everyone's part code on this
 // machine with no prompt, view-only viewers included, and `geometry()` runs on the main thread. A room is reached
@@ -19,7 +19,7 @@ import { getPackage } from '../core/partRegistry'
 // path can run it by accident.
 //
 // Trusted without asking: code this app ships or ever shipped (a first-party part, byte for byte, matched by
-// SHA-256 against every released version - editor/shippedBehaviors.ts), code this client wrote into
+// SHA-256 against every released version - editor/parts/shippedBehaviors.ts), code this client wrote into
 // the room itself, and code the registry already runs for that id. Everything else waits until the user allows
 // the ROOM's code (a per-room decision, remembered in this browser, like an editor's workspace trust).
 
@@ -41,8 +41,8 @@ export interface HeldPackage {
   id: string
   name: string
   /** what its placed parts run meanwhile: no code, this app's own part of the same id, or the version it ran here
-   *  before; `own-code` (only in getForeign) is its author's code, running because the room is allowed */
-  runs: 'nothing' | 'built-in' | 'previous' | 'own-code'
+   *  before */
+  runs: 'nothing' | 'built-in' | 'previous'
 }
 
 /** what the gate needs from the app: which code it ships */
@@ -77,8 +77,8 @@ export class PackageGate {
   private readonly fromRoom = new Set<string>()
   /** what the prompt lists: the packages in the doc right now whose code is held */
   private heldList: readonly HeldPackage[] = []
-  /** the packages in the doc right now whose code is someone else's (held or not): what the sandbox notice names */
-  private foreignList: readonly HeldPackage[] = []
+  /** ids of the packages in the doc right now whose code is someone else's (held or not): what arms the recovery mark */
+  private foreignList: readonly string[] = []
   private readonly listeners = new Set<() => void>()
 
   constructor(
@@ -123,13 +123,12 @@ export class PackageGate {
   review(pkgs: readonly PartPackage[]): PartPackage[] {
     const out: PartPackage[] = []
     const next: HeldPackage[] = []
-    const foreign: HeldPackage[] = []
+    const foreign: string[] = []
     for (const pkg of pkgs) {
       // asked before admitting: once admitted, a trusted room's code is also "what the registry runs"
-      const theirs = !this.own.has(pkg.behavior) && !this.firstParty.isFirstParty(pkg.behavior)
+      if (!this.own.has(pkg.behavior) && !this.firstParty.isFirstParty(pkg.behavior)) foreign.push(pkg.id)
       const admitted = this.admit(pkg)
       out.push(admitted)
-      if (theirs) foreign.push({ id: pkg.id, name: pkg.name, runs: admitted === pkg ? 'own-code' : 'nothing' })
       if (admitted === pkg) continue
       const standIn = admitted.behavior
       const runs = standIn === INERT_BEHAVIOR ? 'nothing' : standIn === this.firstParty.sourceFor(pkg.id) ? 'built-in' : 'previous'
@@ -137,7 +136,8 @@ export class PackageGate {
     }
     const same = (a: readonly HeldPackage[], b: readonly HeldPackage[]): boolean =>
       a.length === b.length && a.every((h, i) => h.id === b[i]!.id && h.name === b[i]!.name && h.runs === b[i]!.runs)
-    if (!same(next, this.heldList) || !same(foreign, this.foreignList)) {
+    const sameIds = foreign.length === this.foreignList.length && foreign.every((id, i) => id === this.foreignList[i])
+    if (!same(next, this.heldList) || !sameIds) {
       this.heldList = next
       this.foreignList = foreign
       this.notify()
@@ -145,8 +145,8 @@ export class PackageGate {
     return out
   }
 
-  /** the packages in the doc whose code someone else wrote, whether held or running (the sandbox notice) */
-  getForeign = (): readonly HeldPackage[] => this.foreignList
+  /** ids of the packages in the doc whose code someone else wrote, whether held or running (editor/main.tsx armRecovery) */
+  getForeign = (): readonly string[] => this.foreignList
 
   /** a scene decoded from the doc, with its embedded packages admitted (the sim runs these when the registry lacks one) */
   admitScene<S extends { packages?: PartPackage[] }>(scene: S): S {
@@ -231,38 +231,10 @@ export function isRoomCodeTrusted(docName: string): boolean {
   return readTrustedRooms().includes(docName)
 }
 
-// --- the opposite answer, where room code runs sandboxed by default (editor/main.tsx bootRoom) ---------------------
-
-const BLOCKED_ROOMS_KEY = 'oip-web/blocked-rooms'
-
-/** has this browser chosen to hold this room's code even though it would run sandboxed? */
-export function isRoomCodeBlocked(docName: string): boolean {
-  try {
-    const raw = localStorage.getItem(BLOCKED_ROOMS_KEY)
-    const list = raw ? (JSON.parse(raw) as unknown) : []
-    return Array.isArray(list) && list.includes(docName)
-  } catch {
-    return false
-  }
-}
-
-/** hold this room's code from now on (the sandbox notice's Block); `false` lets it run sandboxed again */
-export function setRoomCodeBlocked(docName: string, blocked: boolean): void {
-  try {
-    const raw = localStorage.getItem(BLOCKED_ROOMS_KEY)
-    const parsed = raw ? (JSON.parse(raw) as unknown) : []
-    const list = (Array.isArray(parsed) ? parsed : []).filter((x): x is string => typeof x === 'string' && x !== docName)
-    if (blocked) list.push(docName)
-    localStorage.setItem(BLOCKED_ROOMS_KEY, JSON.stringify(list.slice(-TRUSTED_ROOMS_CAP)))
-  } catch {
-    /* blocked storage: the answer lasts for this visit only */
-  }
-}
-
 // --- recovery from a room whose code froze or crashed the page -------------------------------------------------
 // SES confines part code but cannot stop it spinning or allocating (docs/part-sandbox.md). Where a room's code runs
-// on open, a hostile part could freeze the page before its notice's Block can be clicked, on every open. So the
-// boot marks a room as OPENING before its foreign code runs and clears the mark once the page has stayed responsive;
+// on open, a hostile part could freeze the page on every open. So the boot marks a room as OPENING before its
+// foreign code runs and clears the mark once the page has stayed responsive;
 // a mark still there on the next open means the last one never got that far, and that open holds the code instead.
 
 const OPENING_KEY = 'oip-web/room-opening'
@@ -338,24 +310,10 @@ export function trustedRoomCount(): number {
   return storedListLength(TRUSTED_ROOMS_KEY)
 }
 
-/** how many rooms this browser holds the code of */
-export function blockedRoomCount(): number {
-  return storedListLength(BLOCKED_ROOMS_KEY)
-}
-
 /** forget every "allow this room's code": each room asks again on its next open */
 export function forgetTrustedRooms(): void {
   try {
     localStorage.removeItem(TRUSTED_ROOMS_KEY)
-  } catch {
-    /* blocked storage: nothing was remembered */
-  }
-}
-
-/** forget every "hold this room's code": each room runs its code sandboxed again on its next open */
-export function forgetBlockedRooms(): void {
-  try {
-    localStorage.removeItem(BLOCKED_ROOMS_KEY)
   } catch {
     /* blocked storage: nothing was remembered */
   }

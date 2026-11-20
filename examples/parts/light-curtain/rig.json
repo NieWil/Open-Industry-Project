@@ -2,7 +2,6 @@
   "id": "oip.light-curtain",
   "name": "Light Curtain",
   "category": "Devices",
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "links": [

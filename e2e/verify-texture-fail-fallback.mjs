@@ -11,10 +11,15 @@
 //
 // This aborts that one request and asserts:
 //   1. the frame does not go dark (the floor falls through to its material colour instead),
-//   2. the material's map ends up with an image (the neutral 1x1), not an empty texture,
+//   2. the material's map ends up with an image (the neutral 2x2), not an empty texture,
 //   3. the loader retried before giving up, because the failure this guards against is transient.
 // Both backends, because the WebGPU path needs a bundle re-record for the swapped-in image to
 // reach a replayed draw (the "data changed, pixels didn't" class).
+//
+// Twice per backend: failing at once, and failing late, after the viewport has drawn frames with the texture
+// still empty. A failure that lands after the first draw is the one that, on WebGPU, binds three's cached view of
+// the empty default when the fallback is 1x1 (gltf.ts TextureFallback). Failing at once only races that first
+// draw; the late leg makes it certain.
 import { chromium } from 'playwright'
 import { startServer } from './_server.mjs'
 
@@ -56,13 +61,15 @@ const floorMaps = (page) => page.evaluate(() => {
     for (const m of ms) {
       if (!/Floor_01/.test(m.name || '') || seen.has(m.uuid)) continue
       seen.add(m.uuid)
-      out.push({ hasMap: !!m.map, decoded: !!(m.map && (m.map.image ?? m.map.source?.data)) })
+      // the WebGPU floor samples its tile in a colorNode and has no `map`; building.ts hands it over in userData
+      const map = m.map ?? m.userData?.floorMap
+      out.push({ hasMap: !!map, decoded: !!(map && (map.image ?? map.source?.data)) })
     }
   })
   return out
 })
 
-async function load(browser, url, query, { abortFloorTex = false } = {}) {
+async function load(browser, url, query, { abortFloorTex = false, late = false } = {}) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   await page.addInitScript(() => { try { localStorage.setItem('oip-web/tutorial-done', '1') } catch {} })
   await page.addInitScript(() => {
@@ -73,7 +80,19 @@ async function load(browser, url, query, { abortFloorTex = false } = {}) {
     }, 16)
   })
   let attempts = 0
-  if (abortFloorTex) await page.route(FLOOR_TEX, (route) => { attempts++; route.abort('failed') })
+  if (abortFloorTex) {
+    await page.route(FLOOR_TEX, async (route) => {
+      attempts++
+      // hold the first request until the viewport has drawn, so the failure lands on a texture already bound
+      if (late && attempts === 1) {
+        await page.waitForFunction(() => {
+          const info = window.__oip?.view?.renderer?.info
+          return !!info && (info.frame ?? info.render?.frame ?? 0) > 30
+        }, null, { timeout: 120000 }).catch(() => {})
+      }
+      route.abort('failed')
+    })
+  }
   await page.goto(`${url}?${query}`)
   await page.waitForFunction(() => !!(window.__oip && window.__oip.view), null, { timeout: 60000 })
   const backend = await page.evaluate(() => (window.__oip.view.renderer.isWebGPURenderer ? 'webgpu' : 'webgl'))
@@ -97,25 +116,27 @@ async function main() {
         console.log('\nwebgpu: SKIP (renderer fell back to WebGL)')
         continue
       }
-      const broken = await load(browser, url, query, { abortFloorTex: true })
-      const ratio = lum(broken.rgb) / lum(base.rgb)
-      console.log(`\n${label} (${base.backend})`)
-      console.log(`  baseline            mean rgb ${base.rgb}  lum ${lum(base.rgb).toFixed(1)}`)
-      console.log(`  floor texture dead  mean rgb ${broken.rgb}  lum ${lum(broken.rgb).toFixed(1)}  (${(ratio * 100).toFixed(0)}% of baseline)`)
-      console.log(`  floor materials: ${JSON.stringify(broken.maps)}`)
-      console.log(`  requests for the floor texture: ${broken.attempts} (1 = no retry)`)
+      for (const [when, late] of [['at once', false], ['late', true]]) {
+        const broken = await load(browser, url, query, { abortFloorTex: true, late })
+        const ratio = lum(broken.rgb) / lum(base.rgb)
+        console.log(`\n${label} (${base.backend}), failing ${when}`)
+        console.log(`  baseline            mean rgb ${base.rgb}  lum ${lum(base.rgb).toFixed(1)}`)
+        console.log(`  floor texture dead  mean rgb ${broken.rgb}  lum ${lum(broken.rgb).toFixed(1)}  (${(ratio * 100).toFixed(0)}% of baseline)`)
+        console.log(`  floor materials: ${JSON.stringify(broken.maps)}`)
+        console.log(`  requests for the floor texture: ${broken.attempts} (1 = no retry)`)
 
-      if (ratio < LUM_MIN) {
-        fails.push(`${label}: the scene went DARK when the floor texture failed (${(ratio * 100).toFixed(0)}% of baseline luminance - the floor is sampling an empty texture)`)
-      } else if (ratio > LUM_MAX) {
-        fails.push(`${label}: the scene BLEW OUT when the floor texture failed (${(ratio * 100).toFixed(0)}% of baseline luminance - the fallback texel is too bright for the material colour under it)`)
-      }
-      const undecoded = broken.maps.filter((m) => m.hasMap && !m.decoded)
-      if (undecoded.length > 0) {
-        fails.push(`${label}: ${undecoded.length} floor material(s) still carry a map with no image - that samples BLACK`)
-      }
-      if (broken.attempts < 2) {
-        fails.push(`${label}: the failed texture was requested ${broken.attempts}x - the transient-failure retry is gone`)
+        if (ratio < LUM_MIN) {
+          fails.push(`${label} ${when}: the scene went DARK when the floor texture failed (${(ratio * 100).toFixed(0)}% of baseline luminance - the floor is sampling an empty texture)`)
+        } else if (ratio > LUM_MAX) {
+          fails.push(`${label} ${when}: the scene BLEW OUT when the floor texture failed (${(ratio * 100).toFixed(0)}% of baseline luminance - the fallback texel is too bright for the material colour under it)`)
+        }
+        const undecoded = broken.maps.filter((m) => m.hasMap && !m.decoded)
+        if (undecoded.length > 0) {
+          fails.push(`${label} ${when}: ${undecoded.length} floor material(s) still carry a map with no image - that samples BLACK`)
+        }
+        if (broken.attempts < 2) {
+          fails.push(`${label} ${when}: the failed texture was requested ${broken.attempts}x - the transient-failure retry is gone`)
+        }
       }
     }
   } finally {

@@ -1,5 +1,5 @@
 // SES lockdown for every realm that runs part code - the page and the sim worker - and the one switch the part
-// sandbox reads (core/partScript.ts). Design: docs/part-sandbox.md.
+// sandbox reads (core/parts/partScript.ts). Design: docs/part-sandbox.md.
 //
 // A collab room can hand a custom part's JavaScript to anyone who opens its link (collab/codeTrust.ts). lockdown()
 // freezes every shared intrinsic, so part code compiled in a Compartment reaches only what the host hands it: no
@@ -15,12 +15,12 @@
 //
 // Living with a frozen realm, for every module in the app (AGENTS.md, "Dev / prod foot-guns"):
 //   - never assign a property that an intrinsic prototype also has (`map.get = ...` on a Map instance throws: the
-//     "override mistake"); define it with Object.defineProperty (render/viewport/pipelineDedup.ts)
+//     "override mistake"); define it with Object.defineProperty
 //   - never fill a `new Array(n)` hole by hole in a hot loop (~25x slower once Array.prototype is frozen); use
-//     `.fill(...)` first or push (core/geometryShapes.ts transformDescription)
+//     `.fill(...)` first or push (core/geometry/geometryShapes.ts transformDescription)
 //
 // If lockdown cannot run, the app still works: part code compiles unsandboxed, partSandboxActive()
-// (core/partSandbox.ts) says so, and the room keeps asking before it runs a stranger's code.
+// (core/parts/partSandbox.ts) says so, and the room keeps asking before it runs a stranger's code.
 
 import 'ses'
 

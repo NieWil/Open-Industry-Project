@@ -10,7 +10,12 @@ export class BehaviorBus {
   // custom-part behavior scripts (src/sim/embeddedBehavior.ts) driving a deck's surface velocity each
   // tick. Each holds a mutable `linear` ConveyorEntry that the contact listener reads live. Attach order is run order.
   readonly behaviors: BehaviorRecord[] = []
-  // PLC→part device-IO bus: the latest ST tag values, pushed from the controller each scan (setInputTags)
+  // PLC→part device-IO bus: the latest tag values behaviors read. Two writers fill it: the program in the worker,
+  // each scan (setInputTags), and the links to PLCs outside the app, from the main thread (setLinkTags). A run can
+  // have both, the program for the default controller's tags and a named controller's link for `Cell2::...` ones
+  // (core/io/controllerTag.ts), so each keeps its own layer and neither replaces the other's.
+  private programTags: Record<string, number | boolean> = {}
+  private linkTags: Record<string, number | boolean> = {}
   private inputTags: Record<string, number | boolean> = {}
   // Output ownership (ctx.tagDriven): tag keys the attached controller drives (its program outputs), pushed
   // once on attach / cleared on detach. Values are just `true`: behaviors read it with the same lookup as
@@ -45,8 +50,23 @@ export class BehaviorBus {
    *  behaviors hold tag tables by reference (embeddedBehavior ref-swaps cur/prev, so replacing the object
    *  is the change signal). */
   setInputTags(tags: Record<string, number | boolean>): void {
-    if (flatRecEq(this.inputTags, tags)) return
-    this.inputTags = tags
+    if (flatRecEq(this.programTags, tags)) return
+    this.programTags = tags
+    this.joinInputs()
+  }
+
+  /** PLC→part from the links to PLCs outside the app: every tag they drive, as last written. Value-diffed the same way. */
+  setLinkTags(tags: Record<string, number | boolean>): void {
+    if (flatRecEq(this.linkTags, tags)) return
+    this.linkTags = tags
+    this.joinInputs()
+  }
+
+  /** The table behaviors read: one layer as it is when the other is empty (the usual run, and no copy), else both. */
+  private joinInputs(): void {
+    if (Object.keys(this.linkTags).length === 0) this.inputTags = this.programTags
+    else if (Object.keys(this.programTags).length === 0) this.inputTags = this.linkTags
+    else this.inputTags = { ...this.programTags, ...this.linkTags }
   }
 
   /** the tag table the current tick hands every behavior */
@@ -108,6 +128,15 @@ export class BehaviorBus {
       this.conveyorSnapshotRev = this.conveyorSpeedsRev
     }
     return this.conveyorSnapshot
+  }
+
+  /** destroy these behavior instances and drop their records (their part is rebuilt or deleted) */
+  remove(recs: readonly BehaviorRecord[]): void {
+    const gone = new Set(recs)
+    for (const b of recs) behavior.destroy(b.handle)
+    let n = 0
+    for (const b of this.behaviors) if (!gone.has(b)) this.behaviors[n++] = b
+    this.behaviors.length = n
   }
 
   /** destroy every behavior instance and drop the records (the world is going) */

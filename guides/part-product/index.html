@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#17191b" />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <title>Stop product with a moving part | Open Industry Project</title>
+    <meta name="description" content="Step by step: give a moving piece of your part a collider of its own, so it stops boxes on a conveyor, and hold and release each box from a PLC program with a photo eye." />
+    <meta name="keywords" content="custom part, collider, blade stop, photo eye, conveyor, PLC program, Structured Text, simulator, virtual commissioning" />
+    <link rel="canonical" href="https://www.openindustryproject.org/guides/part-product/" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Open Industry Project" />
+    <meta property="og:title" content="Stop product with a moving part | Open Industry Project" />
+    <meta property="og:description" content="Step by step: give a moving piece of your part a collider of its own, so it stops boxes on a conveyor, and hold and release each box from a PLC program with a photo eye." />
+    <meta property="og:url" content="https://www.openindustryproject.org/guides/part-product/" />
+    <meta property="og:image" content="https://www.openindustryproject.org/og-image.jpg?v=20261013" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- A hand-written page. Every label below is read from the app (editor/components/inspector/rigNode.tsx,
+         editor/components/SceneTree.tsx, the Box and Photo Eye parts), and e2e/guide-part-product.mjs follows the page in
+         the desktop app, starting where /guides/part-feedback/ ends. Change those and this goes stale. -->
+
+    <link rel="preload" href="/fonts/plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
+
+    <link rel="stylesheet" href="/src/site/site.css" />
+    <script type="module" src="/src/site/copyCode.js"></script>
+  </head>
+
+  <body class="doc">
+
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
+        <nav class="nav-links" aria-label="Site">
+          <a href="/plc/">PLC reference</a>
+          <a href="/guides/">Guides</a>
+          <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </nav>
+        <a class="btn btn-sm" href="/app/">Open the editor</a>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="hero">
+        <h1>Stopping product with a moving part</h1>
+        <p class="lede">
+          A model is only a picture to the physics. Boxes on a conveyor bump into a part's colliders, the hidden boxes
+          that give it a solid shape. A piece that moves needs a collider that moves with it.
+        </p>
+        <p class="lede">
+          In this guide the blade of your blade stop gets a collider of its own. A box rides the conveyor, a photo eye
+          sees it arrive at the blade, and the program holds it for 3 seconds before it lets it go. It takes about ten
+          minutes.
+        </p>
+
+        <h2>You need</h2>
+        <ul class="dash">
+          <li>The project from <a href="/guides/part-feedback/">Sending a part's state back to the PLC</a>: Blade Stop 900, with <code>RaiseBlade</code>, <code>BladeDown</code> and <code>BladeUp</code> wired.</li>
+        </ul>
+
+        <ul class="toc">
+          <li><a href="#collider">1. Give the blade a collider</a></li>
+          <li><a href="#line">2. Add a box and a photo eye</a></li>
+          <li><a href="#program">3. Write the program</a></li>
+          <li><a href="#run">4. Run it</a></li>
+          <li><a href="#trouble">Troubleshooting</a></li>
+        </ul>
+      </section>
+    </main>
+
+    <section class="section" id="collider">
+      <div class="wrap">
+        <h2>1. Give the blade a collider</h2>
+        <p>
+          The part's only collider is the box around the whole model. It stays where it is when the blade rises, so a box
+          on the rollers would go straight through the raised blade.
+        </p>
+        <ol class="steps">
+          <li>Right-click <b>Blade Stop 900</b> and choose <span class="ui">Open Part Editor</span>.</li>
+          <li>Click <b>Blade</b> in the Scene dock.</li>
+          <li>Near the bottom of the Inspector, set <span class="ui">New node</span> to <b>box</b> and click <span class="ui">Add child node</span>. A box node appears under <b>Blade</b>, selected.</li>
+          <li>Double-click its name in the Scene dock, type <b>bladeCollider</b> and press Enter.</li>
+          <li>Type these into the Inspector, pressing Enter after each:</li>
+        </ol>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Field</th><th>Set to</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Offset</td><td class="m">0.047, 0.071, 0</td><td>X, Y and Z of its centre, measured from the model's origin, where the blade's own pieces are measured from.</td></tr>
+              <tr><td>Box size</td><td class="m">0.025, 0.08, 0.96</td><td>As thick as the blade and a little more, the top 8 cm of it, and as wide as the lane.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Then click the eye beside <b>bladeCollider</b> in the Scene dock to hide it. Like <b>collider</b>, it stays solid
+          while it is hidden.
+        </p>
+        <p>
+          Its top is the blade's top edge. Lowered, it sits under the rollers with the blade, out of the boxes' way.
+          Raised by the joint's 6 cm, it stands 5 cm above the rollers, in their way. It is under <b>Blade</b>, so the joint
+          moves it with the blade.
+        </p>
+        <figure class="shot">
+          <img src="img/collider.webp" width="310" height="171" loading="lazy" decoding="async"
+            alt="The Scene dock in the Part Editor: Blade Stop 900, body, Blade, the hidden bladeCollider under Blade, and collider." />
+          <figcaption>The blade's own collider, under the blade.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="line">
+      <div class="wrap">
+        <h2>2. Add a box and a photo eye</h2>
+        <p>Click <span class="ui">‹ Scene</span>, then:</p>
+        <ol class="steps">
+          <li>From the <span class="ui">Products</span> tab of the Parts dock, drag a <b>Box</b> into the view.</li>
+          <li>From the <span class="ui">Devices</span> tab, drag a <b>Photo Eye</b> into the view.</li>
+          <li>Select each one and type these into the Inspector. Presence Tag is in the Comms group.</li>
+        </ol>
+        <div class="scroll-x">
+          <table class="map">
+            <thead><tr><th>Part</th><th>Field</th><th>Type in</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Box</td><td>Position</td><td class="m">-1.5, 1, 0</td><td>On the rollers, upstream of the blade. A box's position is its centre: the rollers' 0.8 plus half its 0.4 height.</td></tr>
+              <tr><td>Photo Eye</td><td>Position</td><td class="m">0.15, 0.78, 0.56</td><td>On the conveyor's side, just before the blade, where a held box stands.</td></tr>
+              <tr><td>Photo Eye</td><td>Rotation</td><td class="m">0, 180, 0</td><td>Facing across the conveyor.</td></tr>
+              <tr><td>Photo Eye</td><td>Presence Tag</td><td class="m">BoxAtStop</td><td>True while it sees a box.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The conveyor carries boxes toward +X, toward the blade stop at 0.5. The box is 0.6 m long, so held against the
+          blade its centre stands at about 0.15, in the photo eye's beam.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="program">
+      <div class="wrap">
+        <h2>3. Write the program</h2>
+        <p>Open the <span class="ui">PLC</span> tab and replace the program with this one:</p>
+        <pre class="code" translate="no" data-copy><code>PROGRAM Main
+VAR
+  RaiseBlade : BOOL;
+  BladeUp : BOOL;
+  BladeDown : BOOL;
+  BoxAtStop : BOOL;
+  Release : BOOL;
+  Hold : TON;
+  Clear : TON;
+END_VAR
+
+Hold(IN := BoxAtStop AND BladeUp, PT := T#3s);
+IF Hold.Q THEN
+  Release := TRUE;
+END_IF;
+
+Clear(IN := Release AND BladeDown AND NOT BoxAtStop, PT := T#1s);
+IF Clear.Q THEN
+  Release := FALSE;
+END_IF;
+
+RaiseBlade := NOT Release;
+END_PROGRAM</code></pre>
+        <p>
+          The blade is up unless the program is releasing a box. <code>Hold</code> counts 3 seconds from the photo eye
+          seeing a box while the blade is up, then <code>Release</code> lowers it. <code>Clear</code> waits until the blade is down and the
+          box has left the eye, gives it 1 second more to clear the blade, and raises the blade for the next box.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="run">
+      <div class="wrap">
+        <h2>4. Run it</h2>
+        <p>
+          Press <span class="ui">Play</span>. The box rides the rollers to the blade and stops against it. The photo eye's
+          beam turns red on the box. 3 seconds after the beam first caught it, the blade sinks and the box rides on over it,
+          and 1 second after the box has left the beam, the blade rises again.
+        </p>
+        <figure class="shot">
+          <img src="img/held.webp" width="1260" height="630" loading="lazy" decoding="async"
+            alt="A box on the roller conveyor, held against the raised orange blade, with the photo eye's beam across the conveyor on the box." />
+          <figcaption>A box held at the blade stop, seen by the photo eye.</figcaption>
+        </figure>
+        <p>
+          You have built a working part from a model: it moves on a PLC command, reports where it is, and stops product.
+          Compare it with the built-in <b>Blade Stop</b> in the Equipment tab, which does the same in code, and read the
+          <a href="https://github.com/Open-Industry-Project/Open-Industry-Project/blob/main/docs/part-authoring-guide.md" target="_blank" rel="noopener noreferrer">part authoring reference</a>
+          for what a behavior script adds.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="trouble">
+      <div class="wrap">
+        <h2>Troubleshooting</h2>
+        <dl class="trouble">
+          <dt>The box goes through the raised blade.</dt>
+          <dd><b>bladeCollider</b> is not under <b>Blade</b>, so it does not rise. Select it and set its <span class="ui">Parent</span> to Blade in the Inspector.</dd>
+
+          <dt>The box stops while the blade is down, or tips over it.</dt>
+          <dd>The collider reaches above the rollers at rest. Check its Offset Y is 0.071 and its Box size Y is 0.08.</dd>
+
+          <dt>The box never stops: BoxAtStop stays false.</dt>
+          <dd>The photo eye faces away from the conveyor, or its Presence Tag is spelled differently from the program. Check its Rotation is 0, 180, 0.</dd>
+
+          <dt>The blade goes up and down on its own, every 2 seconds.</dt>
+          <dd>The program is still the one from the last guide. Replace it with the one in step 3.</dd>
+
+          <dt>The box falls off the end.</dt>
+          <dd>The conveyor ends at X = 2, and nothing is past it. Make the conveyor longer, or add another one after it.</dd>
+        </dl>
+      </div>
+    </section>
+
+    <footer class="site">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div>
+            <img class="mark" src="/oip-logo.svg" alt="Open Industry Project" />
+            <p class="blurb">A free industrial simulator, in your browser or as a desktop app.</p>
+          </div>
+          <div>
+            <h4>Get it</h4>
+            <ul>
+              <li><a href="https://downloads.openindustryproject.org/desktop/Open-Industry-Project-Setup.exe">Download for Windows</a></li>
+              <li><a href="https://downloads.openindustryproject.org/desktop/open-industry-project_amd64.deb">Download for Linux (.deb)</a></li>
+              <li><a href="/app/">Launch the simulator in the browser</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Explore</h4>
+            <ul>
+              <li><a href="/guides/">All guides</a></li>
+              <li><a href="https://github.com/Open-Industry-Project/Open-Industry-Project/blob/main/docs/part-authoring-guide.md" target="_blank" rel="noopener noreferrer">Part authoring reference</a></li>
+              <li><a href="/plc/">PLC language reference</a></li>
+              <li><a href="/app/?scene=demo">See a PLC-driven line run</a></li>
+              <li><a href="/">Back to the front page</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <span>&copy; Automation Standard LLC and contributors</span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

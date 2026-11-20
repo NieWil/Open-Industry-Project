@@ -1,0 +1,267 @@
+{
+  "format": 6,
+  "id": "oip.box-spawner",
+  "name": "Spawner",
+  "params": {
+    "boxesPerMinute": {
+      "type": "number",
+      "unit": "/min",
+      "default": 45,
+      "min": 0,
+      "max": 1000,
+      "step": 1,
+      "label": "Feed rate",
+      "desc": "Items per minute. 0 halts the feed without pausing the part, so the timer restarts cleanly when you raise it again."
+    },
+    "fixedRate": {
+      "type": "boolean",
+      "default": true,
+      "label": "Fixed rate (off = ±50% jitter)",
+      "desc": "On, items arrive on an exact metronome. Off, each gap is randomised between half and one-and-a-half times the nominal period, which is what an untidy real feed looks like downstream."
+    },
+    "product": {
+      "type": "string",
+      "product": true,
+      "settings": "productSettings",
+      "default": "oip.box",
+      "label": "Product",
+      "desc": "The cargo part every item is, from the parts in the project: dropped as if placed, with its own size, colour, mass and product attributes. Its settings show below it. A Box takes the size, colour and mass under Box instead."
+    },
+    "productSettings": {
+      "type": "string",
+      "hidden": true,
+      "default": "",
+      "label": "Product settings",
+      "desc": "Settings of the chosen product, as JSON. Edited under Product."
+    },
+    "boxColor": {
+      "type": "color",
+      "default": "#ffffff",
+      "label": "Box color",
+      "group": "Box",
+      "visibleWhen": {
+        "param": "product",
+        "is": "oip.box"
+      },
+      "desc": "Tint for every spawned box. Ignored once the cycle list below is non-empty."
+    },
+    "boxColors": {
+      "type": "color",
+      "list": true,
+      "default": "",
+      "label": "Colors (cycle)",
+      "desc": "Colors handed out one per item, in order, overriding the colour of the product (or the Box color). Useful for telling sorted lanes apart at a glance. Leave empty to use the single colour."
+    },
+    "mixAttribute": {
+      "type": "string",
+      "default": "",
+      "label": "Vary attribute",
+      "desc": "A product attribute each item starts with, from the values below: a label code, a destination. A scanner reads it, and a program routes by it. Empty for none."
+    },
+    "mixValues": {
+      "type": "string",
+      "default": "",
+      "label": "Values (cycle)",
+      "desc": "The values handed out one per item, comma-separated, in order: \"1, 2, 2, 3\". Numbers stay numbers, true and false are booleans, anything else is text. They advance with the colour cycle, so item n takes value n and colour n."
+    },
+    "randomColors": {
+      "type": "boolean",
+      "default": false,
+      "label": "Random order",
+      "desc": "Give each item a colour and a value drawn at random from the cycle lists instead of walking them in order."
+    },
+    "length": {
+      "type": "number",
+      "default": 0.6,
+      "min": 0.1,
+      "step": 0.05,
+      "label": "Box length (m)",
+      "group": "Box",
+      "visibleWhen": {
+        "param": "product",
+        "is": "oip.box"
+      },
+      "desc": "Extent along local X of each spawned box. Ignored while Random size is on."
+    },
+    "width": {
+      "type": "number",
+      "default": 0.4,
+      "min": 0.1,
+      "step": 0.05,
+      "label": "Box width (m)",
+      "group": "Box",
+      "visibleWhen": {
+        "param": "product",
+        "is": "oip.box"
+      },
+      "desc": "Extent along local Z of each spawned box. Ignored while Random size is on."
+    },
+    "height": {
+      "type": "number",
+      "default": 0.4,
+      "min": 0.1,
+      "step": 0.05,
+      "label": "Box height (m)",
+      "group": "Box",
+      "visibleWhen": {
+        "param": "product",
+        "is": "oip.box"
+      },
+      "desc": "Extent along local Y of each spawned box. Ignored while Random size is on."
+    },
+    "randomSize": {
+      "type": "boolean",
+      "default": false,
+      "label": "Random size",
+      "group": "Box",
+      "visibleWhen": {
+        "param": "product",
+        "is": "oip.box"
+      },
+      "desc": "Give each box a random size and IGNORE the three dimensions above. The random range is fixed by the part (0.4-0.8 long, 0.3-0.5 high, 0.3-0.5 wide), not derived from them."
+    },
+    "mass": {
+      "type": "number",
+      "default": 10,
+      "min": 0.5,
+      "max": 100,
+      "step": 0.5,
+      "label": "Mass (kg)",
+      "group": "Box",
+      "visibleWhen": {
+        "param": "product",
+        "is": "oip.box"
+      },
+      "desc": "Mass given to every spawned box, whatever its size."
+    },
+    "disable": {
+      "type": "boolean",
+      "default": false,
+      "label": "Paused",
+      "desc": "Stop spawning entirely. Use (C, or E while walking) is a separate hand stop: it pauses and resumes the feed during a run without changing this setting, and is cleared when the run stops."
+    },
+    "release": {
+      "type": "enum",
+      "default": "interval",
+      "label": "Release",
+      "options": [
+        {
+          "value": "interval",
+          "label": "Steady interval"
+        },
+        {
+          "value": "enable",
+          "label": "On each enable"
+        }
+      ],
+      "desc": "What reopening the gate (Paused, Use, the conveyor interlock, the run tag) does. Steady interval: items come at the feed rate and the gap since the last one is always kept, so a short pulse may drop nothing. On each enable: an item drops the moment the gate opens, then more at the feed rate while it stays open, so each pulse of the run tag dispenses one."
+    },
+    "keepSpacing": {
+      "type": "boolean",
+      "default": false,
+      "visibleWhen": {
+        "param": "release",
+        "is": "interval"
+      },
+      "label": "Keep spacing while held",
+      "desc": "Hold the interval while the feed is held instead of letting it run down, so boxes dropped onto a conveyor that stops with this spawner (give both the same run tag) stay one pitch apart however often the pair stops."
+    },
+    "conveyorId": {
+      "type": "partRef",
+      "default": "",
+      "label": "Pause when conveyor stopped",
+      "desc": "Interlock: while the named conveyor is stopped, this spawner holds. Wire that conveyor to the PLC and the feed gates itself, with no tag of its own."
+    },
+    "runTag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "onlyWhenDriven": true,
+      "default": "",
+      "label": "Run tag (spawn only while true)",
+      "group": "Comms",
+      "desc": "Gate the feed from the program. Note this only takes over once a program actually DRIVES the tag - until then the spawner keeps running, so a merely-declared tag is not a stopped feed."
+    },
+    "countTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "DINT",
+      "default": "",
+      "label": "Spawned count tag",
+      "group": "Comms",
+      "desc": "Running total of boxes this spawner has dispensed. Subtract the despawner counts to get the work in progress."
+    }
+  },
+  "behavior": "// Spawner — a hopper that emits a product: boxes by default, or any cargo part in the project. Demonstrates ctx.spawn\n// by product: the behavior runs its own rate timer and emits an item every 60/boxesPerMinute seconds via\n// ctx.spawn({ part, params }); the host creates that part's body at the part's pose + the given local offset, as if\n// placed. A Box takes this part's own size, colour and mass settings (the part's id is still oip.box-spawner). Cargo\n// drops at the exact spawn point (no positional scatter), so downstream handling (picks, aligned queues) sees a\n// repeatable pose. A pilot \"Use\" toggles the feed (a runtime latch, so it resets on stop/reload). Optionally gated by\n// a conveyor interlock (conveyorId → ctx.conveyorRunning) or a PLC run tag.\n//\n// A mixed stream: `mixAttribute` names a product attribute and `mixValues` the values handed out one per item, in\n// order (or at random with Random order). They start as the item's marks (ctx.spawn `marks`), the way a label printed\n// upstream does, so a scanner reads them and a program routes by them. The value list and the colour list advance\n// together: item n takes value n and colour n, so a code can be seen by its colour.\n//\n// Release says what reopening the gate does.\n// - Steady interval: a hopper, PACED. What the author sets is the INTERVAL BETWEEN items, so that is what a hold\n//   preserves. The countdown keeps running while the gate is shut but floors at zero: a hold neither costs a period\n//   nor banks one. Freeze it instead and every release pays out the remainder of an interval the hopper spent\n//   standing still (in the PLC demo: ~2.7 s of empty lane at the top of every row); let it run unfloored and a long\n//   hold banks a burst that all lands in one tick.\n// - On each enable: a magazine, COMMANDED. Every enable re-arms it and it drops at once, then paces while the gate\n//   stays open. That is what makes a command pulse shorter than one period dispense exactly one item, every time.\n//   Carry the countdown across the hold instead and only the first pulse ever dispenses.\n\n// random-size range, full box dimensions (m)\nconst SIZE_MIN = [0.4, 0.3, 0.3]\nconst SIZE_MAX = [0.8, 0.5, 0.5]\n\nlet countdown = 0 // seconds until the next spawn\nlet started = false // steady interval: arm the first item on the first eligible tick\nlet armed = false // on each enable: drop on the first eligible tick after every enable, not a period later\nlet colorIndex = 0\nlet usedOff = false\nlet spawned = 0\n\n// Publish what this feed has dispensed, every tick (a display not republished goes blank): the infeed half\n// of the line's numbers, which a despawner's count is the other half of - the two differ by the work in\n// progress. It counts REQUESTS: past the physics engine's 10,240-body table a spawn is skipped, uncounted\n// by the host but still counted here.\nfunction publish(ctx) {\n  ctx.display('spawned', spawned)\n  if (ctx.params.countTag) ctx.writeNumber(ctx.params.countTag, spawned)\n}\n\n// parse \"#rrggbb\" → [r, g, b] in 0..1\nfunction hexRgb(hex) {\n  const h = (hex || '').replace('#', '')\n  if (h.length < 6) return [1, 1, 1]\n  const v = (i) => { const n = parseInt(h.slice(i, i + 2), 16); return Number.isFinite(n) ? n / 255 : 1 }\n  return [v(0), v(2), v(4)]\n}\n// the product settings param's JSON object (`{\"size\":\"400x300x220\"}`), or {} when it is empty or malformed\nfunction settingsOf(json) {\n  try {\n    const o = JSON.parse(json || '{}')\n    return o && typeof o === 'object' && !Array.isArray(o) ? o : {}\n  } catch {\n    return {}\n  }\n}\n// parse a comma-separated hex list → [[r,g,b], …]\nfunction palette(csv) {\n  return (csv || '').split(',').map((c) => c.trim()).filter((c) => c.length >= 6).map(hexRgb)\n}\n// parse a comma-separated value list: numbers as numbers, true / false as booleans, anything else as text\nfunction valueList(csv) {\n  return (csv || '').split(',').map((c) => c.trim()).filter((c) => c !== '').map((c) => {\n    if (c === 'true' || c === 'false') return c === 'true'\n    const n = Number(c)\n    return Number.isFinite(n) ? n : c\n  })\n}\n\ndefinePart({\n  interactive: true, // a pilot \"Use\" toggles the feed\n  params: {\n    boxesPerMinute: { type: 'number', unit: '/min', default: 45, min: 0, max: 1000, step: 1, label: 'Feed rate', desc: 'Items per minute. 0 halts the feed without pausing the part, so the timer restarts cleanly when you raise it again.' },\n    fixedRate: { type: 'boolean', default: true, label: 'Fixed rate (off = ±50% jitter)', desc: 'On, items arrive on an exact metronome. Off, each gap is randomised between half and one-and-a-half times the nominal period, which is what an untidy real feed looks like downstream.' },\n    product: { type: 'string', product: true, settings: 'productSettings', default: 'oip.box', label: 'Product', desc: 'The cargo part every item is, from the parts in the project: dropped as if placed, with its own size, colour, mass and product attributes. Its settings show below it. A Box takes the size, colour and mass under Box instead.' },\n    productSettings: { type: 'string', hidden: true, default: '', label: 'Product settings', desc: 'Settings of the chosen product, as JSON. Edited under Product.' },\n    boxColor: { type: 'color', default: '#ffffff', label: 'Box color', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Tint for every spawned box. Ignored once the cycle list below is non-empty.' },\n    boxColors: { type: 'color', list: true, default: '', label: 'Colors (cycle)', desc: 'Colors handed out one per item, in order, overriding the colour of the product (or the Box color). Useful for telling sorted lanes apart at a glance. Leave empty to use the single colour.' },\n    mixAttribute: { type: 'string', default: '', label: 'Vary attribute', desc: 'A product attribute each item starts with, from the values below: a label code, a destination. A scanner reads it, and a program routes by it. Empty for none.' },\n    mixValues: { type: 'string', default: '', label: 'Values (cycle)', desc: 'The values handed out one per item, comma-separated, in order: \"1, 2, 2, 3\". Numbers stay numbers, true and false are booleans, anything else is text. They advance with the colour cycle, so item n takes value n and colour n.' },\n    randomColors: { type: 'boolean', default: false, label: 'Random order', desc: 'Give each item a colour and a value drawn at random from the cycle lists instead of walking them in order.' },\n    length: { type: 'number', default: 0.6, min: 0.1, step: 0.05, label: 'Box length (m)', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Extent along local X of each spawned box. Ignored while Random size is on.' },\n    width: { type: 'number', default: 0.4, min: 0.1, step: 0.05, label: 'Box width (m)', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Extent along local Z of each spawned box. Ignored while Random size is on.' },\n    height: { type: 'number', default: 0.4, min: 0.1, step: 0.05, label: 'Box height (m)', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Extent along local Y of each spawned box. Ignored while Random size is on.' },\n    randomSize: { type: 'boolean', default: false, label: 'Random size', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Give each box a random size and IGNORE the three dimensions above. The random range is fixed by the part (0.4-0.8 long, 0.3-0.5 high, 0.3-0.5 wide), not derived from them.' },\n    mass: { type: 'number', default: 10, min: 0.5, max: 100, step: 0.5, label: 'Mass (kg)', group: 'Box', visibleWhen: { param: 'product', is: 'oip.box' }, desc: 'Mass given to every spawned box, whatever its size.' },\n    disable: { type: 'boolean', default: false, label: 'Paused', desc: 'Stop spawning entirely. Use (C, or E while walking) is a separate hand stop: it pauses and resumes the feed during a run without changing this setting, and is cleared when the run stops.' },\n    release: {\n      type: 'enum', default: 'interval', label: 'Release',\n      options: [{ value: 'interval', label: 'Steady interval' }, { value: 'enable', label: 'On each enable' }],\n      desc: 'What reopening the gate (Paused, Use, the conveyor interlock, the run tag) does. Steady interval: items come at the feed rate and the gap since the last one is always kept, so a short pulse may drop nothing. On each enable: an item drops the moment the gate opens, then more at the feed rate while it stays open, so each pulse of the run tag dispenses one.',\n    },\n    keepSpacing: { type: 'boolean', default: false, visibleWhen: { param: 'release', is: 'interval' }, label: 'Keep spacing while held', desc: 'Hold the interval while the feed is held instead of letting it run down, so boxes dropped onto a conveyor that stops with this spawner (give both the same run tag) stay one pitch apart however often the pair stops.' },\n    conveyorId: { type: 'partRef', default: '', label: 'Pause when conveyor stopped', desc: 'Interlock: while the named conveyor is stopped, this spawner holds. Wire that conveyor to the PLC and the feed gates itself, with no tag of its own.' },\n    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (spawn only while true)', group: 'Comms', desc: 'Gate the feed from the program. Note this only takes over once a program actually DRIVES the tag - until then the spawner keeps running, so a merely-declared tag is not a stopped feed.' },\n    countTag: { type: 'tag', dir: 'out', stType: 'DINT', default: '', label: 'Spawned count tag', group: 'Comms', desc: 'Running total of boxes this spawner has dispensed. Subtract the despawner counts to get the work in progress.' },\n  },\n  step(ctx) {\n    const p = ctx.params\n    if (ctx.used()) usedOff = !usedOff\n    // hold while a linked conveyor is stopped, or while a controller DRIVES the run tag de-energized\n    // (ctx.tagDriven = output ownership; gating on the tag NAME alone would stop the spawner the moment one\n    // was typed).\n    const stopped = !ctx.conveyorRunning(p.conveyorId) || (ctx.tagDriven(p.runTag) && !ctx.readTag(p.runTag))\n    const onEnable = p.release === 'enable'\n    if (p.disable || usedOff || stopped || p.boxesPerMinute <= 0) {\n      // on each enable: held off = disarmed, so the next open is a fresh command\n      if (onEnable) armed = false\n      // steady interval: the interval runs on, floored at zero (see the note at the top). Floored is what makes this\n      // safe for an interlock that STUTTERS: at most one item is ever due when the gate reopens, never a burst.\n      // Keep spacing: a feed onto a conveyor that stops WITH it (the same gate) must not run its interval down, or\n      // the first item after a hold lands on the one the stopped belt is still holding under the drop\n      else if (!p.keepSpacing) countdown = Math.max(0, countdown - ctx.dt)\n      publish(ctx)\n      return\n    }\n    const period = 60 / p.boxesPerMinute\n    // the first item drops on the first eligible tick, not after a full period: once per run for a steady interval,\n    // after every enable for on each enable\n    if (onEnable) {\n      if (!armed) { armed = true; countdown = 0 }\n    } else if (!started) { started = true; countdown = 0 }\n    countdown -= ctx.dt\n    const pal = palette(p.boxColors)\n    const values = p.mixAttribute ? valueList(p.mixValues) : []\n    let n = 0\n    while (countdown <= 0 && n < 8) {\n      countdown += p.fixedRate ? period : Math.max(ctx.dt, period * (0.5 + ctx.rng()))\n      n++\n      // one step or one draw per item for both lists, so item n takes colour n and value n (a stream with no values\n      // draws exactly as it did before values existed)\n      let ci = 0\n      let vi = 0\n      if (pal.length > 0 || values.length > 0) {\n        if (p.randomColors) {\n          const r = ctx.rng()\n          ci = Math.floor(r * pal.length)\n          vi = Math.floor(r * values.length)\n        } else {\n          ci = colorIndex % Math.max(1, pal.length)\n          vi = colorIndex % Math.max(1, values.length)\n          colorIndex++\n        }\n      }\n      const color = pal.length > 0 ? pal[ci] : p.product === 'oip.box' ? hexRgb(p.boxColor) : undefined\n      const marks = values.length > 0 ? { [p.mixAttribute]: values[vi] } : undefined\n      if (p.product === 'oip.box') {\n        const rnd = (i) => SIZE_MIN[i] + ctx.rng() * (SIZE_MAX[i] - SIZE_MIN[i])\n        const size = p.randomSize ? [rnd(0), rnd(1), rnd(2)] : [p.length, p.height, p.width]\n        ctx.spawn({ part: 'oip.box', params: { length: size[0], height: size[1], width: size[2] }, color: color, mass: p.mass, offset: [0, -0.2, 0], ...(marks ? { marks } : {}) })\n      } else if (p.product) {\n        // any other product drops as itself, with its settings from the Inspector; a colour only from the cycle list\n        ctx.spawn({ part: p.product, params: settingsOf(p.productSettings), ...(color ? { color } : {}), offset: [0, -0.2, 0], ...(marks ? { marks } : {}) })\n      } else {\n        continue // no product: the feed paces on and drops nothing\n      }\n      spawned++\n    }\n    publish(ctx)\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "marker",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "color": [
+          0.2122,
+          0.4564,
+          0.6939
+        ],
+        "opacity": 0.3,
+        "outline": [
+          0.3467,
+          0.6445,
+          0.8714
+        ],
+        "collision": "none"
+      },
+      {
+        "name": "dropCone",
+        "shape": {
+          "kind": "cone",
+          "radius": 0.07,
+          "height": 0.16
+        },
+        "offset": [
+          0,
+          -0.38,
+          0
+        ],
+        "rotation": [
+          3.141592653589793,
+          0,
+          0
+        ],
+        "color": [
+          0.3467,
+          0.6445,
+          0.8714
+        ],
+        "opacity": 0.8
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 0.5,
+      "width": 0.5,
+      "top": 0.5,
+      "bottom": -0.46
+    }
+  },
+  "category": "Products",
+  "interactive": true,
+  "materials": [],
+  "sdk": {
+    "level": 6,
+    "of": "v2:13856:2ebmv63il9h"
+  }
+}

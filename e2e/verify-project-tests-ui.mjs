@@ -1,4 +1,4 @@
-// Verifies the in-app project-test run (src/editor/projectTestsRun.ts + TestResultsOverlay) end to
+// Verifies the in-app project-test run (src/editor/project/projectTestsRun.ts + TestResultsOverlay) end to
 // end in a real browser:
 //   - the command is disabled while the project carries no tests, and reachable once it does
 //   - running it loads jolt lazily, steps real physics + the ST scan in-tab, and shows a verdict

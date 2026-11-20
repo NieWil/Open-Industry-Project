@@ -1,11 +1,11 @@
 // Test fixture loader for the committed first-party parts: the parity tests read the same committed source
 // the app loads (examples/parts/<dir>/{rig.json, behavior.ts}), keyed by package id. This is the render-layer
-// counterpart of editor/bundledPackageData.ts (the app's loader): a separate small glob, because the enforced
+// counterpart of editor/parts/bundledPackageData.ts (the app's loader): a separate small glob, because the enforced
 // import boundary forbids render importing the editor layer.
 // examples/ is not a source layer, so globbing it crosses nothing; core types only.
 
-import type { SnapSpec } from '../../core/partApi'
-import type { ConveyorDecl, PartAsset, PartMaterial, PartPackageGeometry } from '../../core/partPackage'
+import type { SnapSpec } from '../../core/parts/partApi'
+import type { ConveyorDecl, PartAsset, PartMaterial, PartPackageGeometry } from '../../core/parts/partPackage'
 
 export type RigGeo = Extract<PartPackageGeometry, { kind: 'rig' }>
 export type FuncGeo = Extract<PartPackageGeometry, { kind: 'drawn' }>

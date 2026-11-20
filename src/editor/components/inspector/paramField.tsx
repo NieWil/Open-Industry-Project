@@ -1,19 +1,22 @@
 // --- ParamField: one spec-driven property row, plus the group-tree sections around it ---
 
-import { lazy, Suspense, useContext, useMemo } from 'react'
+import { lazy, Suspense, useContext, useEffect, useMemo, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import type { BuildingWallRule, EnumParamSpec, ParamSpec, ParamValue, PartInstance } from '../../../core/types'
 import { labelHead, partParamSpecs } from '../../../core/packageParams'
-import { listPackages } from '../../../core/partRegistry'
-import { isCargoPackage } from '../../../core/partPackage'
-import { canonicalAddress, looksLikeAddress, parseDirectAddress } from '../../../core/iecAddress'
+import { listPackages } from '../../../core/parts/partRegistry'
+import { isCargoPackage } from '../../../core/parts/partPackage'
+import { canonicalAddress, looksLikeAddress, parseDirectAddress } from '../../../core/io/iecAddress'
+import { controllerOf, controllerTag, splitControllerTag } from '../../../core/io/controllerTag'
 import { normalizeHexColorList } from '../../../core/math'
-import { partDisplayNames } from '../../../core/partDisplayName'
+import { partDisplayNames } from '../../../core/parts/partDisplayName'
+import { commsOn } from '../../../core/conveyor/conveyorDirection'
+import type { ProgramCheck, TagVerdict } from '../../program/tagVerdicts'
 import type { LiveSetpoints } from '../../controller/setpoints'
 import { paramDesc } from '../paramDescriptions'
 import { ColorListField, NumberGrid, RowSetField, WallRuleArray } from './arrays'
 import { ProgramField } from './program'
-import { joinNames, removeTableRow, splitNames } from './programLogic'
+import { joinNames, moveTableRow, removeTableRow, splitNames } from './programLogic'
 import { ColorField } from './color'
 import { BitsField, BoolRow, DisplayUnitsContext, Fold, GuardOpeningsModeContext, NumberField, RevertButton, RevertSlot, TextField } from './fields'
 import type { OpenCtx } from './menu'
@@ -35,8 +38,12 @@ import type { GroupNode, SceneTagIndex } from './paramLogic'
 import { decimalsForStep, titleCase } from './shared'
 import type { Update } from './shared'
 import { runCommand } from '../../commands'
-import { closestOpcUaTagNames, matchOpcUaTag } from '../../../core/opcUa'
-import { TagField, TagSourcesContext } from './tagField'
+import type { EditorStore } from '../../store/store'
+import { useLiveValue } from '../../useLiveValue'
+import { closestOpcUaTagNames, matchOpcUaTag } from '../../../core/io/opcUa'
+import { ControllerRowContext, TagField, TagSourcesContext } from './tagField'
+import { TagForce } from './tagForce'
+import type { TagForcing } from './tagForce'
 import { defineMessages, t } from '../../../core/i18n'
 
 const M = defineMessages('inspector.paramField', {
@@ -45,7 +52,7 @@ const M = defineMessages('inspector.paramField', {
   authored: 'Authored: {value} (restored on Stop)',
   differs: 'Differs across {count} parts. Select one to edit.',
   plcCommanded: 'PLC-commanded: the program is driving “{tag}”, which replaces this value while the scene runs.',
-  plcComms: 'PLC comms: this part reads “{tag}” instead of this value, and nothing is driving that tag, so it is running at {value}.',
+  plcComms: 'Not driven: this part reads “{tag}” instead of this value, and nothing drives that tag, so it is running at {value}.',
   plcCommandedDevice: 'PLC-commanded: the program is driving “{tag}”, which owns this device while the scene runs.',
   on: 'On',
   off: 'Off',
@@ -56,16 +63,23 @@ const M = defineMessages('inspector.paramField', {
   dirWrite: 'write',
   typeClash: 'Wired to a tag other parts declare as {types}. One of them is reading the wrong thing.',
   writerClash: 'Another part writes this tag too. The last one to run wins, and which that is depends on part order.',
-  clash: 'clash',
-  badAddress: 'bad address',
   declaresAt: 'The program declares {name} AT {address}',
   leaveGuardMode: 'Leave guard-openings mode (G or Esc)',
   enterGuardMode: 'Draw, resize and remove openings on the guards in the viewport (G)',
   doneEditing: 'Done editing',
   editInViewport: 'Edit in viewport',
   closest: '{error}. Closest: {names}',
-  notOnPlc: 'not on PLC',
-  ambiguous: 'ambiguous',
+  notInProgram: 'The program does not declare {tag}, so it neither reads nor drives it. Usually a typo, or a variable not written yet.',
+  wrongType: 'The program declares {tag} as {programType}, and this field carries {fieldType}.',
+  notDriven: 'The program does not drive {tag}, so this part reads it as {zero}.',
+  notDrivenSetpoint: 'The program does not drive {tag}, so while the scene runs this part uses 0 in place of its {param}.',
+  notDrivenGated: 'The program does not drive {tag}, so this part ignores it and runs on its own setting.',
+  notRead: 'The program does not read {tag}, so what this part writes there goes nowhere.',
+  driven: 'Connected: the program drives {tag}, and this part follows it while the scene runs.',
+  drivenSetpoint: 'Connected: the program drives {tag}, and this part follows it in place of its {param} while the scene runs.',
+  read: 'Connected: the program reads {tag}, and gets what this part writes each scan.',
+  noProgram: 'No program yet. This part connects to {tag} once a program declares it.',
+  setpointBound: 'While the scene runs, this part reads “{tag}” instead of this value. It reads 0 while nothing drives that tag.',
 })
 
 export { buildGroupTree } from './paramLogic'
@@ -74,8 +88,9 @@ export { buildGroupTree } from './paramLogic'
 const ProductSettings = lazy(() => import('./productSettings').then((m) => ({ default: m.ProductSettings })))
 
 export function ParamField({
+  store,
   spec,
-  parts,
+  parts: committedParts,
   allParts,
   tagIndex,
   liveSetpoints,
@@ -84,7 +99,9 @@ export function ParamField({
   onContext,
   capturePose,
   previewPose,
+  forcing,
 }: {
+  store: EditorStore
   spec: ParamSpec
   parts: readonly PartInstance[]
   /** every part in the scene - a `partRef` picker lists these (the selection alone isn't enough) */
@@ -103,7 +120,10 @@ export function ParamField({
   capturePose?: () => number[] | null
   /** show a joint row on the selected rig (controller.previewRigPose): a waypoint's or a Move step's pose */
   previewPose?: (row: readonly number[]) => void
+  /** the controller while the scene runs, so a tag field can force the program variable its tag names; else null */
+  forcing?: TagForcing | null
 }) {
+  const parts = useLiveParam(store, committedParts, spec.key)
   const part = parts[0]!
   // the row shows the label's head (core labelHead: no explaining bracket, which truncated it), the tooltip the
   // whole label as its first line
@@ -112,6 +132,7 @@ export function ParamField({
   // to the host's table, which now only carries the rows/types the packages don't own.
   const system = useContext(DisplayUnitsContext)
   const guardMode = useContext(GuardOpeningsModeContext)
+  const controllerRow = useContext(ControllerRowContext)
   const tooltip = buildParamTooltip(spec, titleCase(spec.label), spec.desc ?? paramDesc(part.type, spec.key), system)
   const { value: shared, mixed } = sharedParam(parts, spec.key)
   const setParam = (value: ParamValue) =>
@@ -179,13 +200,21 @@ export function ParamField({
     [tooltip, '', t(M.liveProduct), t(M.authored, { value: authoredText })].join('\n')
 
   const row = (node: ReactNode) => (
-    <div
-      className={`prop-row${live ? ' prop-row-plc' : ''}`}
-      data-param={spec.key}
-      onContextMenu={ctx}
-    >
-      {node}
-    </div>
+    <>
+      {/* the part's Controller row sits above its first tag field, with the tags (controllerRow.tsx) */}
+      {controllerRow?.above === spec.key && (
+        <div className="prop-row" data-param="controller">
+          {controllerRow.row}
+        </div>
+      )}
+      <div
+        className={`prop-row${live ? ' prop-row-plc' : ''}`}
+        data-param={spec.key}
+        onContextMenu={ctx}
+      >
+        {node}
+      </div>
+    </>
   )
 
   // A table has no "mixed" display, and its editors write the whole table, so one cell edit would stamp the
@@ -207,6 +236,9 @@ export function ParamField({
   switch (spec.kind) {
     case 'number': {
       const authored = typeof shared === 'number' ? shared : spec.default
+      // Stopped, a bound setpoint tag (a speed tag) is said here too: once the scene runs this value is not what the
+      // part uses, and an undriven tag makes it use 0, so a belt with a speed tag and no program sits still.
+      const setpointTag = live || parts.length !== 1 ? '' : boundSetpointTag(part, spec.key)
       // Show what the part is actually using, read-only (an edit would silently do nothing) - and keep the
       // authored value one hover away, since that is what the field returns to on Stop.
       const liveTip = product
@@ -220,7 +252,10 @@ export function ParamField({
               : t(M.plcComms, { tag: live.tag, value: typeof live.value === 'number' ? formatQuantity(spec, live.value, system) : String(live.value) }),
             t(M.authored, { value: formatQuantity(spec, authored, system) }),
           ].join('\n')
+        : setpointTag
+        ? [tooltip, '', t(M.setpointBound, { tag: setpointTag })].join('\n')
         : tooltip
+      const numberBadge = live ? (product ? 'live' : 'plc') : setpointTag ? 'tag' /* i18n-ok: badge, its words are the title */ : undefined
       // a bitmask (ParamSpec.bits): a checkbox per bit, the count literal or read off the param it names
       if (spec.bits !== undefined) {
         const bitsSpec = typeof spec.bits === 'string' ? partParamSpecs(part).find((s) => s.key === spec.bits) : undefined
@@ -232,7 +267,7 @@ export function ParamField({
             value={typeof live?.value === 'number' ? live.value : authored}
             mixed={mixed}
             tooltip={liveTip}
-            badge={live ? (product ? 'live' : 'plc') : undefined}
+            badge={numberBadge}
             disabled={disabled || live !== undefined}
             extra={live ? revertSlot : revertArrow}
             onToggle={(bit, on) =>
@@ -258,7 +293,7 @@ export function ParamField({
           step={shownStep}
           mixed={mixed}
           tooltip={liveTip}
-          badge={live ? (product ? 'live' : 'plc') : undefined}
+          badge={numberBadge}
           extra={live ? revertSlot : revertArrow}
           value={shownNumber(spec, typeof live?.value === 'number' ? live.value : authored)}
           disabled={disabled || live !== undefined}
@@ -440,13 +475,11 @@ export function ParamField({
     case 'tagRef': {
       const current = typeof shared === 'string' ? shared : spec.default
       const { suggestions: pool, signals, located } = tagIndex()
-      // Suggestions = tags already bound elsewhere, minus this field's own value (never offer a dupe) and
-      // minus any tag another part declares as a different ST type: the one filter that can't hide a
-      // legitimate pick. Not filtered by direction: the ST program's own tags are invisible
-      // from here, so dropping "nothing in the scene writes it" would hide the commonest correct answer
-      // (a conveyor's runTag bound to the program's Motor output).
+      // Suggestions = tags already bound in the scene, this field's own among them (it is what is typed until a
+      // commit, so leaving it out hid the name while it was being retyped), minus any tag another part declares as a
+      // different ST type: the one filter that can't hide a legitimate pick. Not filtered by direction: a tag no part writes is most often one the program drives
+      // (a conveyor's runTag bound to the program's Motor output). The program's own tags are TagField's.
       const suggestions = pool.filter((t) => {
-        if (!mixed && t === current) return false
         const types = signals.get(t)?.types
         return !spec.stType || !types || types.size === 0 || types.has(spec.stType)
       })
@@ -461,9 +494,14 @@ export function ParamField({
           : null
       // A tag that is an I/O address (%IX100.0) is wired to that point; say what the program calls it, or what
       // is wrong with the address. The full direction and size check is the wiring check's (Problems panel).
-      const address = !mixed && looksLikeAddress(current) ? parseDirectAddress(current) : null
+      // behind a controller's name (`Cell2::%IX0.0`) the address is the same; only the default controller's is this program's
+      const { controller: onController, local } = splitControllerTag(current)
+      const address = !mixed && looksLikeAddress(local) ? parseDirectAddress(local) : null
       const addressError = address && 'error' in address ? address.error : null
-      const locatedName = address && !('error' in address) ? located.get(address.text) : undefined
+      const locatedName = address && !('error' in address) && onController === null ? located.get(address.text) : undefined
+      // the param a setpoint tag stands in for (a speed tag's Speed), named when the tag is undriven
+      const replacedSpec = spec.setpointFor ? partParamSpecs(part).find((s) => s.key === spec.setpointFor) : undefined
+      const replaces = replacedSpec ? labelHead(replacedSpec.label) : undefined
       // Committed on Enter / blur / a suggestion pick, not per keystroke: every commit persists the whole
       // project, and each half-typed name ("M", "Mo", "Mot") would be bound, wired and checked in turn.
       return row(
@@ -473,24 +511,17 @@ export function ParamField({
           mixed={mixed}
           tooltip={tooltip}
           disabled={disabled}
-          sceneNames={suggestions}
+          sceneUses={new Map(suggestions.map((name) => [name, signals.get(name)?.uses ?? 0]))}
+          written={new Set([...signals].filter(([, s]) => s.writers > 0).map(([name]) => name))}
           stType={spec.stType}
+          dir={spec.dir}
           labelExtra={
             <>
               {dirHint && (
                 <span className="field-badge">
                   {dirHint}
                   {spec.stType ? ` ${spec.stType}` : ''}
-                </span>
-              )}
-              {problem && (
-                <span className="field-badge field-badge-warn" title={problem}>
-                  {t(M.clash)}
-                </span>
-              )}
-              {addressError && (
-                <span className="field-badge field-badge-warn" title={addressError}>
-                  {t(M.badAddress)}
+                  {spec.unit && <span className="field-badge-unit"> {spec.unit}</span>}
                 </span>
               )}
               {locatedName && (
@@ -498,14 +529,29 @@ export function ParamField({
                   = {locatedName}
                 </span>
               )}
-              {!mixed && !address && <PlcTagBadge tag={current} />}
             </>
           }
-          extra={revertArrow}
+          extra={
+            <>
+              <TagMark
+                tag={mixed ? '' : current}
+                spec={spec}
+                replaces={replaces}
+                parts={allParts}
+                reasons={[...(problem ? [{ kind: 'clash' as const, why: problem }] : []), ...(addressError ? [{ kind: 'address' as const, why: addressError }] : [])]}
+                byName={!mixed && !address}
+                connected={commsOn(part)}
+              />
+              {/* one part only: a multi-selection may name several tags, and one button cannot say which it holds. A custom
+                  part whose comms switch (its package's commsParam) is off reads none of its tags, so a force reaches nothing */}
+              {forcing && parts.length === 1 && !mixed && current !== '' && commsOn(part) && <TagForce forcing={forcing} tag={current} paramKey={spec.key} />}
+              {revertArrow}
+            </>
+          }
           onCommit={(v) => {
             // an address is kept in its one spelling, which is how the tag tables meet it
-            const t = v.trim()
-            setParam(looksLikeAddress(t) ? (canonicalAddress(t) ?? t) : t)
+            const { controller: c, local: tag } = splitControllerTag(v.trim())
+            setParam(controllerTag(c, looksLikeAddress(tag) ? (canonicalAddress(tag) ?? tag) : tag))
           }}
         />,
       )
@@ -595,6 +641,10 @@ export function ParamField({
               : undefined
           }
           onRemoveRow={spec.rows === undefined ? (i) => setMany(removeTableRow(specs, params, spec.key, i)) : undefined}
+          onMoveRow={(i, dir) => {
+            const patch = moveTableRow(specs, params, spec.key, i, dir)
+            if (patch) setMany(patch)
+          }}
           onPreviewRow={canCapture && previewPose ? (i) => previewPose(rows[i]!) : undefined}
         />
       )
@@ -644,6 +694,7 @@ export function ParamField({
 }
 
 export function GroupSection({
+  store,
   node,
   depth,
   collapsed,
@@ -657,7 +708,9 @@ export function GroupSection({
   onContext,
   capturePose,
   previewPose,
+  forcing,
 }: {
+  store: EditorStore
   node: GroupNode
   depth: number
   collapsed: Record<string, boolean>
@@ -671,15 +724,17 @@ export function GroupSection({
   onContext: OpenCtx
   capturePose?: () => number[] | null
   previewPose?: (row: readonly number[]) => void
+  forcing?: TagForcing | null
 }) {
   return (
     <Fold title={titleCase(node.name)} path={node.path} depth={depth} collapsed={collapsed} toggle={toggle}>
       {node.specs.map((spec) => (
-        <ParamField key={spec.key} spec={spec} parts={parts} allParts={allParts} tagIndex={tagIndex} liveSetpoints={liveSetpoints} disabled={disabled} update={update} onContext={onContext} capturePose={capturePose} previewPose={previewPose} />
+        <ParamField key={spec.key} store={store} spec={spec} parts={parts} allParts={allParts} tagIndex={tagIndex} liveSetpoints={liveSetpoints} disabled={disabled} update={update} onContext={onContext} capturePose={capturePose} previewPose={previewPose} forcing={forcing} />
       ))}
       {node.children.map((child) => (
         <GroupSection
           key={child.path}
+          store={store}
           node={child}
           depth={depth + 1}
           collapsed={collapsed}
@@ -693,34 +748,183 @@ export function GroupSection({
           onContext={onContext}
           capturePose={capturePose}
           previewPose={previewPose}
+          forcing={forcing}
         />
       ))}
     </Fold>
   )
 }
 
+const MISSING = Symbol('missing')
+
+// One id index per scene parts array, shared by every field: a find per field per selected part costs
+// ~8 ms a frame with 20 parts selected in a 2000-part scene, the index ~0.1 ms.
+const partIndexes = new WeakMap<readonly PartInstance[], Map<string, PartInstance>>()
+function partIndexOf(parts: readonly PartInstance[]): Map<string, PartInstance> {
+  let index = partIndexes.get(parts)
+  if (!index) {
+    index = new Map()
+    for (const p of parts) index.set(p.id, p)
+    partIndexes.set(parts, index)
+  }
+  return index
+}
+
 /**
- * On a tag field, when the scene's OPC UA PLC has been read: a tag the PLC does not hold, or holds more than once,
- * says so where it is typed, with the names closest to it. The link would refuse it at Play anyway
- * (core/opcUa.ts matchOpcUaTag); this is the same verdict, before Play.
+ * The selected parts with `key` read from the live scene. A gizmo drag (a conveyor's length handle) streams
+ * transient scenes the React stream skips, so the committed parts lag the drag until release. Only this
+ * param's value is taken from the live scene, so a field re-renders when its own value moves and every
+ * other field of the part stays as committed.
  */
-function PlcTagBadge({ tag }: { tag: string }) {
+function useLiveParam(store: EditorStore, parts: readonly PartInstance[], key: string): readonly PartInstance[] {
+  const read = (p: PartInstance): unknown => (p.params as unknown as Record<string, unknown>)[key]
+  const live = useLiveValue(
+    store,
+    (s) => {
+      const byId = partIndexOf(s.scene.parts)
+      return parts.map((c) => {
+        const p = byId.get(c.id)
+        return p ? read(p) : MISSING
+      })
+    },
+    (a, b) => a.length === b.length && a.every((v, i) => Object.is(v, b[i])),
+  )
+  if (live.every((v, i) => v === MISSING || Object.is(v, read(parts[i]!)))) return parts
+  return parts.map((p, i) =>
+    live[i] === MISSING || Object.is(live[i], read(p)) ? p : ({ ...p, params: { ...p.params, [key]: live[i] } } as PartInstance),
+  )
+}
+
+/** The tag a part's setpoint tag param names for `key` (a speed tag for `speed`), or '' when none is bound or comms are off. */
+function boundSetpointTag(part: PartInstance, key: string): string {
+  if (!commsOn(part)) return ''
+  const params = part.params as Record<string, unknown>
+  for (const s of partParamSpecs(part)) {
+    if (s.kind !== 'tagRef' || s.setpointFor !== key) continue
+    const tag = params[s.key]
+    if (typeof tag === 'string' && tag.trim() !== '') return tag.trim()
+  }
+  return ''
+}
+
+/** How long the scene and the program hold still before a tag field asks the program about its tag, as Problems waits. */
+const VERDICT_DELAY_MS = 250
+
+// one answer for every tag field of a render, kept until the scene or the program changes
+let verdictsFor: { parts: readonly PartInstance[]; check: ProgramCheck; verdicts: ReadonlyMap<string, TagVerdict> } | null = null
+
+/** The program's verdict on each wired tag (program/tagVerdicts.ts), once the scene and the program settle. */
+function useProgramVerdicts(parts: readonly PartInstance[], check: ProgramCheck | undefined): ReadonlyMap<string, TagVerdict> | null {
+  const fresh = check && verdictsFor?.parts === parts && verdictsFor.check === check ? verdictsFor.verdicts : null
+  // the last answer stays up while the next one waits: a drag streams scenes, and a badge must not flicker under it
+  const [held, setHeld] = useState<ReadonlyMap<string, TagVerdict> | null>(fresh)
+  useEffect(() => {
+    if (!check || fresh) return
+    let live = true
+    const timer = setTimeout(() => {
+      void import('../../program/tagVerdicts').then(async ({ programTagVerdicts }) => {
+        // the program is compiled in a worker (program/programWorkerClient.ts), so the answer comes a moment later
+        if (verdictsFor?.parts !== parts || verdictsFor.check !== check) verdictsFor = { parts, check, verdicts: await programTagVerdicts(parts, check) }
+        if (live) setHeld(verdictsFor.verdicts)
+      }).catch((e: unknown) => console.warn('[oip] checking the tag against the program failed', e))
+    }, VERDICT_DELAY_MS)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [parts, check, fresh])
+  return fresh ?? held
+}
+
+type TagWarning = { kind: 'clash' | 'address' | 'plc' | 'undeclared' | 'type' | 'undriven' | 'unread'; why: string }
+/** What a sound binding does: connected either way, or waiting on a program that does not exist yet. */
+type TagStatus = { kind: 'driven' | 'read' | 'no-program'; why: string }
+
+/** The field's tag-param shape the mark reads: which way the part uses the tag, and what it carries. */
+type TagMarkSpec = { dir?: 'in' | 'out'; stType?: string; onlyWhenDriven?: boolean }
+
+/**
+ * One mark beside a tag field's box saying what its binding does. A warning (`!`, which outlines the box) lists
+ * everything wrong with the tag, each reason a line of its title. Otherwise the mark says the binding is sound: the
+ * program drives the tag or reads it (✓), or there is no program yet (○). Without that a field that works and one that does nothing look the same. A mark rather than a chip on
+ * the label, because the label column ellipsizes its chips. `reasons` are the scene's own (parts disagreeing over the
+ * tag, a malformed address); the mark adds the PLC's and the program's when the tag is a name (`byName`).
+ * `connected` is whether the part's comms are on: a part with comms off is wired to nothing, so the program has
+ * nothing to say about its tag.
+ */
+function TagMark({ tag, spec, replaces, parts, reasons, byName, connected }: { tag: string; spec: TagMarkSpec; replaces?: string; parts: readonly PartInstance[]; reasons: readonly TagWarning[]; byName: boolean; connected: boolean }) {
+  const plc = usePlcTagWarning(byName ? tag : '')
+  const program = useProgramTagWord(byName && connected ? tag : '', spec, replaces, parts)
+  const programWarning = program && 'warn' in program ? program.warn : null
+  const all = [...reasons, ...(plc ? [plc] : []), ...(programWarning ? [programWarning] : [])]
+  if (all.length > 0) {
+    const title = all.map((w) => w.why).join('\n')
+    return (
+      <span className="tag-warn" role="img" title={title} aria-label={title} data-testid="tag-warn" data-kinds={all.map((w) => w.kind).join(' ')}>
+        {'!' /* i18n-ok: a mark, its words are the title */}
+      </span>
+    )
+  }
+  const status = program && 'status' in program ? program.status : null
+  if (!status) return null
+  const connectedNow = status.kind === 'driven' || status.kind === 'read'
+  return (
+    <span className={`tag-status${connectedNow ? ' on' : ''}`} role="img" title={status.why} aria-label={status.why} data-testid="tag-status" data-kind={status.kind}>
+      {connectedNow ? '✓' : '○' /* i18n-ok: a mark, its words are the title */}
+    </span>
+  )
+}
+
+/**
+ * The program's word on a tag (program/tagVerdicts.ts), as the field's direction reads it. A warning for a name it
+ * does not declare, one it declares as the other kind of value (a bit where the field carries a number, or the
+ * reverse), a tag the part reads that the program does not drive, or one the part writes that it does not read. A
+ * declared tag is undriven only when the program has it on the wrong side (a VAR_INPUT, or a tag another part
+ * writes), so a tag the part reads only while driven (`onlyWhenDriven`) warns too, worded by what the part does
+ * instead. The Problems panel says the same on its wiring rows. With no program, a status saying so. Nothing for a
+ * program that does not compile (Problems says why), or for '' (no tag, or not one to ask about).
+ */
+function useProgramTagWord(tag: string, spec: TagMarkSpec, replaces: string | undefined, parts: readonly PartInstance[]): { warn: TagWarning } | { status: TagStatus } | null {
+  const sources = useContext(TagSourcesContext)
+  const check = sources?.check
+  const verdict = useProgramVerdicts(parts, tag === '' ? undefined : check)?.get(tag)
+  // a tag on another controller is that PLC's: the program here says nothing about it
+  if (tag === '' || !check || controllerOf(tag) !== null) return null
+  // with an external PLC on, the part is wired to the PLC's tags, so an empty program says nothing about it
+  if (!verdict) return check.source.trim() === '' && !sources.external ? { status: { kind: 'no-program', why: t(M.noProgram, { tag }) } } : null
+  if (!verdict.declared) return { warn: { kind: 'undeclared', why: t(M.notInProgram, { tag }) } }
+  const { stType } = spec
+  if (stType && verdict.type && (verdict.type === 'BOOL') !== (stType === 'BOOL')) {
+    return { warn: { kind: 'type', why: t(M.wrongType, { tag, programType: verdict.type, fieldType: stType }) } }
+  }
+  if (spec.dir === 'in') {
+    if (verdict.drives) return { status: { kind: 'driven', why: replaces ? t(M.drivenSetpoint, { tag, param: replaces }) : t(M.driven, { tag }) } }
+    const why = spec.onlyWhenDriven
+      ? t(M.notDrivenGated, { tag })
+      : replaces ? t(M.notDrivenSetpoint, { tag, param: replaces }) : t(M.notDriven, { tag, zero: stType === 'BOOL' ? 'FALSE' : '0' /* i18n-ok: IEC literals */ })
+    return { warn: { kind: 'undriven', why } }
+  }
+  if (spec.dir === 'out') {
+    return verdict.reads ? { status: { kind: 'read', why: t(M.read, { tag }) } } : { warn: { kind: 'unread', why: t(M.notRead, { tag }) } }
+  }
+  return null
+}
+
+/**
+ * When the scene's OPC UA PLC has been read: a tag the PLC does not hold, or holds more than once, with the names
+ * closest to it. The link would refuse it at Play anyway (core/io/opcUa.ts matchOpcUaTag); this is the same verdict,
+ * before Play. Not over ADS or EtherNet/IP: their lists leave out the members of structures, which a tag may still name.
+ */
+function usePlcTagWarning(tag: string): TagWarning | null {
   const plc = useContext(TagSourcesContext)?.plc
-  const verdict = useMemo(() => {
-    if (!plc || plc.state !== 'ready' || tag === '' || tag.includes('/')) return null
+  return useMemo(() => {
+    if (!plc || plc.protocol !== 'opcua' || plc.state !== 'ready' || tag === '' || tag.includes('/') || controllerOf(tag) !== null) return null
     const m = matchOpcUaTag(tag, plc.variables)
     if (!('error' in m)) return null
     const missing = m.error.startsWith('the PLC has no tag')
     // a browse that stopped at its limit cannot say a name is missing, only that it did not reach it
     if (missing && plc.truncated) return null
     const close = missing ? closestOpcUaTagNames(tag, plc.names) : []
-    const title = close.length > 0 ? t(M.closest, { error: m.error, names: close.join(', ') }) : m.error
-    return { text: t(missing ? M.notOnPlc : M.ambiguous), title }
+    return { kind: 'plc', why: close.length > 0 ? t(M.closest, { error: m.error, names: close.join(', ') }) : m.error }
   }, [plc, tag])
-  if (!verdict) return null
-  return (
-    <span className="field-badge field-badge-warn" title={verdict.title} data-testid="tag-plc-badge">
-      {verdict.text}
-    </span>
-  )
 }

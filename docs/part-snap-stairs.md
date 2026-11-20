@@ -45,12 +45,12 @@ Like [surfaces](part-snap-surfaces.md) and [edge-mount](part-snap-edge-mount.md)
   - **`opens` / `notch` / `lift`**: what meeting the edge does to the platform and the flight (below).
 
 A package declaring the format 2 `snap.stairMount` fails validation by name
-([partPackage.ts](../src/core/partPackage.ts)). A stored format 2 package is rewritten on load by
+([partValidate.ts](../src/core/parts/partValidate.ts)). A stored format 2 package is rewritten on load by
 `upgradeCutsToFormat3`.
 
 ## How a match happens
 
-`snapEdgeMountInto` (in [snapFeatures.ts](../src/core/snapFeatures.ts)) works in the SDK stair's
+`snapEdgeMountInto` (in [snapEdges.ts](../src/core/snap/snapEdges.ts)) works in the SDK stair's
 **foot-origin, +X-up-slope** frame:
 
 1. Read the target's `surfaces` entry whose `kind === accepts` and carries a `heightParam` → deck length/width
@@ -118,7 +118,7 @@ applies the declared effects:
 
 ## Proof
 
-[snapFeatures.test.ts](../src/core/snapFeatures.test.ts) drops an SDK stair near a deck host advertising a
+[snapFeatures.test.ts](../src/core/snap/snapFeatures.test.ts) drops an SDK stair near a deck host advertising a
 height and asserts: the top seats on the nearest edge with the foot `run` outward and on the deck's floor,
 `+X` pointing into the deck, `numSteps` fitted to the deck, the slide clamps by half the width, a
 shorter deck yields fewer steps, and the snap is inert against a deck advertising no height / a drop out of

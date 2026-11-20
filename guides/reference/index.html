@@ -38,7 +38,7 @@
         <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
         <nav class="nav-links" aria-label="Site">
           <a href="/plc/">PLC reference</a>
-          <a href="/guides/">Connection guides</a>
+          <a href="/guides/">Guides</a>
           <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
         <a class="btn btn-sm" href="/app/">Open the editor</a>
@@ -62,6 +62,7 @@
           <li><a href="#ua-server">OPC UA server</a></li>
           <li><a href="#ua-client">OPC UA by name</a></li>
           <li><a href="#s7">S7 PUT/GET</a></li>
+          <li><a href="#slmp">SLMP</a></li>
           <li><a href="#ads">ADS</a></li>
           <li><a href="#io-list">I/O list</a></li>
         </ul>
@@ -71,7 +72,7 @@
     <section class="section" id="ways">
       <div class="wrap">
         <h2>1. Connection types</h2>
-        <p>All of them are in <span class="ui">Simulation &gt; External PLC…</span>, and all need the desktop app, because a browser tab cannot open a network connection or listen on a port.</p>
+        <p>All of them are in <span class="ui">Simulation &gt; PLC Controllers…</span>, and all need the desktop app, because a browser tab cannot open a network connection or listen on a port.</p>
         <div class="scroll-x">
           <table class="map">
             <thead><tr><th>In the dialog</th><th>Who serves</th><th>Carries</th><th>Guide</th></tr></thead>
@@ -81,6 +82,7 @@
               <tr><td>OPC UA, tags by name</td><td>The PLC, OPC UA</td><td>Variables, by name</td><td><a href="/guides/plc-server/#opcua">A PLC that serves, part B</a></td></tr>
               <tr><td>EtherNet/IP, tags by name</td><td>A Logix controller, EtherNet/IP</td><td>Controller tags, by name</td><td>None yet</td></tr>
               <tr><td>S7 PUT/GET</td><td>An S7-1200 or S7-1500, port 102</td><td>I, Q, M and data blocks, by address</td><td><a href="/guides/s7/">S7-1200 / S7-1500</a></td></tr>
+              <tr><td>SLMP</td><td>A MELSEC CPU (Q, L, iQ-R, iQ-F), port 5000</td><td>X, Y, M and D devices, by address</td><td><a href="/guides/slmp/">MELSEC</a></td></tr>
               <tr><td>ADS, tags by name</td><td>A TwinCAT runtime, through the TwinCAT router on this PC</td><td>Variables, by name</td><td><a href="/guides/ads/">TwinCAT</a></td></tr>
             </tbody>
           </table>
@@ -107,12 +109,16 @@
               <tr data-key="inputBase"><td>Holding register 0 is %IW</td><td class="m">0</td></tr>
               <tr data-key="outputBase"><td>Input register 0 is %QW</td><td class="m">0</td></tr>
               <tr data-key="opcUaEndpoint"><td>PLC's OPC UA server, tags by name</td><td class="m">opc.tcp://127.0.0.1:4840</td></tr>
-              <tr data-key="eipGateway"><td>Logix controller's address, EtherNet/IP</td><td class="m">127.0.0.1</td></tr>
-              <tr data-key="eipPath"><td>Route to the controller, EtherNet/IP</td><td class="m">1,0</td></tr>
+              <tr data-key="opcUaBrowseFrom" data-empty="1"><td>Where the OPC UA tag browse starts</td><td class="m">empty: Objects</td></tr>
+              <tr data-key="eipGateway"><td>Logix or Micro800 controller's address, EtherNet/IP</td><td class="m">127.0.0.1</td></tr>
+              <tr data-key="eipPath"><td>Route to the controller, EtherNet/IP (not used for a Micro800)</td><td class="m">1,0</td></tr>
+              <tr data-key="eipFamily"><td>Controller family, EtherNet/IP: logix or micro800</td><td class="m">logix</td></tr>
               <tr data-key="s7Host"><td>S7 CPU's address (a new CPU's)</td><td class="m">192.168.0.1</td></tr>
               <tr data-key="s7Port"><td>S7 CPU's port</td><td class="m">102</td></tr>
               <tr data-key="s7Rack"><td>S7 CPU's rack</td><td class="m">0</td></tr>
               <tr data-key="s7Slot"><td>S7 CPU's slot</td><td class="m">1</td></tr>
+              <tr data-key="slmpHost"><td>MELSEC CPU's address, SLMP</td><td class="m">192.168.0.1</td></tr>
+              <tr data-key="slmpPort"><td>MELSEC CPU's SLMP port</td><td class="m">5000</td></tr>
               <tr data-key="adsNetId" data-empty="1"><td>TwinCAT PLC's AMS Net ID</td><td class="m">empty: the runtime on this PC</td></tr>
               <tr data-key="adsPort"><td>TwinCAT PLC's AMS port (the first PLC project)</td><td class="m">851</td></tr>
               <tr data-key="uaServerPort"><td>Port of the simulator's own OPC UA server</td><td class="m">4843</td></tr>
@@ -253,7 +259,7 @@
           <li>When the PLC goes quiet, every tag it drives is set OFF (a coil false, a register 0) and the line coasts to a stop; the run continues, and the PLC's values come back the moment it answers.</li>
           <li>The watchdog is not armed before the first poll. Until the PLC has connected once, the status line says what it is waiting for instead.</li>
           <li>An OPC UA server, or a TwinCAT runtime over ADS, can hide a stopped program. Each belongs to the runtime and keeps answering with the last values; only a lost connection or a silent server trips the watchdog.</li>
-          <li>A real PLC scans on its own clock, so the simulation speed is held at 1x while one is connected.</li>
+          <li>A real PLC scans on its own clock, so Play starts at 1x. Another speed can still be chosen during the run, and the speed button turns amber: the PLC's timers and reaction times no longer match the simulation's.</li>
         </ul>
       </div>
     </section>
@@ -358,9 +364,61 @@
       </div>
     </section>
 
+    <section class="section" id="slmp">
+      <div class="wrap">
+        <h2>10. SLMP devices</h2>
+        <p>
+          A part's tag is the CPU's own device address. <a href="/guides/slmp/">The MELSEC guide</a> has the CPU's
+          side. SLMP has no authentication and no encryption: use it on this machine or a test bench.
+        </p>
+        <div class="scroll-x">
+          <table class="map" data-check="slmp-points">
+            <thead><tr><th>Scene tag</th><th>On the CPU</th><th>Travels as</th><th>The simulator</th></tr></thead>
+            <tbody>
+              <tr data-writers="1"><td class="m">X1A</td><td class="m">X1A</td><td class="m">BOOL</td><td>written to the PLC</td></tr>
+              <tr data-writers="0"><td class="m">Y10</td><td class="m">Y10</td><td class="m">BOOL</td><td>read from the PLC</td></tr>
+              <tr data-writers="1"><td class="m">M10</td><td class="m">M10</td><td class="m">BOOL</td><td>written to the PLC</td></tr>
+              <tr data-writers="1"><td class="m">D100</td><td class="m">D100</td><td class="m">INT</td><td>written to the PLC</td></tr>
+              <tr data-type="DINT" data-writers="0"><td class="m">D200</td><td class="m">D200-D201</td><td class="m">DINT</td><td>read from the PLC</td></tr>
+              <tr data-type="REAL"><td class="m">D300</td><td class="m">D300-D301</td><td class="m">REAL</td><td>written to the PLC</td></tr>
+              <tr data-writers="1"><td class="m">B1A</td><td class="m">B1A</td><td class="m">BOOL</td><td>written to the PLC</td></tr>
+              <tr data-type="INT"><td class="m">W10</td><td class="m">W10</td><td class="m">INT</td><td>written to the PLC</td></tr>
+              <tr><td class="m">SM10 / SD5</td><td class="m">SM10, SD5</td><td class="m">BOOL / INT</td><td>the direction the parts use them in</td></tr>
+              <tr><td class="m">TS3 / TC3 / TN3</td><td class="m">TS3, TC3, TN3</td><td class="m">BOOL / BOOL / INT</td><td>A timer's contact, coil and current value</td></tr>
+              <tr><td class="m">CS1 / CC1 / CN1</td><td class="m">CS1, CC1, CN1</td><td class="m">BOOL / BOOL / INT</td><td>A counter's contact, coil and current value</td></tr>
+              <tr><td class="m">STS0 / STC0 / STN0</td><td class="m">STS0, STC0, STN0</td><td class="m">BOOL / BOOL / INT</td><td>An accumulated timer; also spelled SS/SC/SN</td></tr>
+              <tr><td class="m">S0, L0, F0, V0</td><td class="m">S0, L0, F0, V0</td><td class="m">BOOL</td><td>Step, latch, annunciator and edge relays</td></tr>
+              <tr><td class="m">SB1A, SW1A, DX0, DY0</td><td class="m">SB1A, SW1A, DX0, DY0</td><td class="m">BOOL / INT</td><td>Link special and direct access I/O</td></tr>
+              <tr><td class="m">R0, ZR0, Z0</td><td class="m">R0, ZR0, Z0</td><td class="m">INT</td><td>File registers and the index register</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul class="dash">
+          <li>Hexadecimal: X, Y, B, W, SB, SW, DX and DY. Decimal: everything else. X1A is the input 0x1A; M1A is not an address. A tag reads as an address when a digit follows its letters, so Safe1 stays a program name while X0FF spells input 0xFF.</li>
+          <li>Every device takes the wiring's direction. X is the CPU's inputs: on a CPU with input modules at that address, the refresh overwrites what a part published every scan, so use X addresses no module occupies.</li>
+          <li>A bit device carries a BOOL; a register carries words. A DINT or REAL takes two registers, low word first; values are little-endian, the CPU's own byte order, with no scaling.</li>
+          <li>The long devices (LTS/LTC/LTN, LSTS/LSTC/LSTN, LCS/LCC/LCN, LZ) are not carried: only the extended frame names them.</li>
+          <li>Every request covers one device and is cut to 960 word registers or 1024 bits; a longer span goes out as several requests.</li>
+          <li>A refused request keeps the connection and is asked again once a second, its end code in the status line.</li>
+        </ul>
+        <p>Not carried, each reported in the dialog with the reason:</p>
+        <div class="scroll-x">
+          <table class="map" data-check="slmp-refused">
+            <thead><tr><th>Scene tag</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td class="m">X2000</td><td>Past the last X address an iQ-R reaches (X1FFF)</td></tr>
+              <tr><td class="m">M1A</td><td>M addresses are decimal</td></tr>
+              <tr><td class="m">D400</td><td>Asked to carry a BOOL: a BOOL travels on a bit device</td></tr>
+              <tr><td class="m">LTS0</td><td>A long device: only the extended frame names it</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section class="section" id="ads">
       <div class="wrap">
-        <h2>10. ADS tags by name</h2>
+        <h2>11. ADS tags by name</h2>
         <p>
           The simulator reads and writes a TwinCAT 3 PLC's variables through the TwinCAT router on its own PC, with
           Beckhoff's own ADS library, so TwinCAT has to be installed there. A PLC on another computer is reached through the
@@ -401,7 +459,7 @@
 
     <section class="section" id="io-list">
       <div class="wrap">
-        <h2>11. The I/O list</h2>
+        <h2>12. The I/O list</h2>
         <p>
           <span class="ui">File &gt; Export I/O List (.csv)</span> writes the points the scene serves, one per row, with the
           columns <code>Tag,Address,Type,Direction,Modbus point,Device</code>. <code>Device</code> names the part and parameter
@@ -436,7 +494,7 @@
             <ul>
               <li><a href="/guides/opcua/">Guide: connect a SCADA or HMI over OPC UA</a></li>
               <li><a href="/guides/plc-server/">Guide: connect a PLC that serves its I/O</a></li>
-              <li><a href="/guides/">All connection guides</a></li>
+              <li><a href="/guides/">All guides</a></li>
               <li><a href="/guides/reference/">Reference: defaults, address rules, timings</a></li>
               <li><a href="/plc/">PLC language reference</a></li>
               <li><a href="/app/?scene=demo">See a PLC-driven line run</a></li>

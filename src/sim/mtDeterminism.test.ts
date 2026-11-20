@@ -1,13 +1,13 @@
 import initJoltST from 'jolt-physics/wasm-compat'
 import initJoltMT from 'jolt-physics/wasm-compat-multithread'
 import { afterAll, describe, expect, it } from 'vitest'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartPackage } from '../core/partPackage'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartPackage } from '../core/parts/partPackage'
 import { SCENE_VERSION } from '../core/types'
 import type { PartInstance, SceneJSON } from '../core/types'
 import { SimWorld } from './world'
 import type { JoltModule } from './world'
-import { PACKAGE_FORMAT } from '../core/partPackage'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 
 // Gate for defaulting ?joltthreads on: the multithreaded Jolt build must produce bit-identical
 // simulation to the single-threaded build. The validation surfaces (project tests, node goldens) run
@@ -17,12 +17,11 @@ import { PACKAGE_FORMAT } from '../core/partPackage'
 // ConveyorContactListener, linear + arc carry, box-box contacts). e2e/mt-determinism.mjs is the
 // browser twin of this check.
 //
-// Node can run the MT build only on the fork >= 1.1.0-oip.3. Upstream artifacts (incl. stock npm)
-// drop the parens in emscripten's node pthread detection (`.workerData` reads off the import()
-// promise), so pthread workers never self-identify and init hangs forever (fix: REPLACE_IMPORT in
-// the fork's CMakeLists). Pool constraint: PTHREAD_POOL_SIZE=16 and one MT world takes cores−1
-// job threads, so NEVER hold two MT worlds at once (deadlock); the repeat check runs
-// sequentially over recorded checkpoints.
+// Node can run the MT build on the fork, and on upstream from the commit the fork is based on.
+// Upstream 1.1.0 and earlier (incl. that npm release) hang at init under node: their pthread
+// workers never identify themselves. Pool constraint: the pthread pool is sized to the machine
+// (at most 9) and one MT world takes most of it, so never hold two MT worlds at once (deadlock);
+// the repeat check runs sequentially over recorded checkpoints.
 
 const JoltST = (await initJoltST()) as unknown as JoltModule
 const JoltMT = (await initJoltMT()) as unknown as JoltModule

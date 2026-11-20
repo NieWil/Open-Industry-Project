@@ -1,5 +1,5 @@
 // Scaffold discoverable extras into an existing project FOLDER (docs/project-tests.md). This is a
-// deliberate GENERATIVE act - kept OUT of the export/spill path (core/projectFolder.ts), which must
+// deliberate GENERATIVE act - kept OUT of the export/spill path (core/project/projectFolder.ts), which must
 // stay a faithful, byte-reproducible mirror of project data. Export mirrors; scaffolding generates.
 //
 //   npm run scaffold-project -- <project-folder>
@@ -124,7 +124,7 @@ predicates:
     { "always": true, "max": 0,
       "probe": { "passed": { "zone": { "min": [5.5, 0.8, -1.2], "max": [6.5, 1.5, -1] }, "color": "red" } } }
 
-\`count\` filters (\`zone\`, \`part\`, \`kind\`, \`color\`: red/green/blue or "#rrggbb") are all optional and AND
+\`count\` filters (\`zone\`, \`part\`, \`kind\`, \`color\`: red/green/blue/yellow or "#rrggbb") are all optional and AND
 together; \`passed\` takes the same filters and needs a \`zone\`; \`pose\` axes are \`x\`/\`y\`/\`z\`/\`yaw\`. Part ids
 are the ids in \`scene.json\`. \`npm run test-project -- <folder> --cargo 5,10\` lists where every box is at those times.
 

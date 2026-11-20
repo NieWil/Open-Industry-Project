@@ -1,15 +1,15 @@
-import type { PackageManifest } from '../core/partPackage'
+import type { PackageManifest } from '../core/parts/partPackage'
 import { describe, expect, it } from 'vitest'
 import type { SdkPart } from '../core/types'
-import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/partPackage'
+import type { PartMaterial, PartPackage, PartPackageGeometry } from '../core/parts/partPackage'
 import { FRAME_WALL_THICKNESS, SPUR_SIDE_GAP } from '../core/types'
-import { createSdkPart } from '../core/scene'
-import { registerPackage } from '../core/partRegistry'
+import { createSdkPart } from '../core/scene/scene'
+import { registerPackage } from '../core/parts/partRegistry'
 import { buildPackage } from './buildPackage'
-import { computeSceneOpenings } from '../core/guardOpenings'
-import { computeSceneExtents } from '../core/guardExtents'
-import { conveyorEndsOf, spurConveyorView, toLocalXZ, toWorldXZ } from '../core/partGeometry'
-import { findSnap } from '../core/snapFeatures'
+import { computeSceneOpenings } from '../core/guards/guardOpenings'
+import { computeSceneExtents } from '../core/guards/guardExtents'
+import { bedView, conveyorEndsOf, toLocalXZ, toWorldXZ } from '../core/parts/partGeometry'
+import { findSnap } from '../core/snap/snapFeatures'
 
 /**
  * The spur side merge, for both shipped spur families.
@@ -82,7 +82,7 @@ const FAMILIES: [string, PartPackage][] = [
 
 describe('spur side merge onto a straight roller host', () => {
   it.each(FAMILIES)('%s declares no bespoke sideGap - every spur takes the flange clearance', (_name, pkg) => {
-    const v = spurConveyorView(spurOf(pkg))
+    const v = bedView(spurOf(pkg), 'spur')?.spur ?? null
     expect(v).not.toBeNull()
     expect(v!.sideGap).toBeCloseTo(SPUR_SIDE_GAP, 6)
   })
@@ -116,7 +116,7 @@ describe('spur side merge onto a straight roller host', () => {
   // The structural invariant behind all of the above, stated once: the parked gap is spent from the
   // resolvers' contact budget, so it must leave room to spare rather than merely fit.
   it.each(FAMILIES)('%s parked gap leaves most of the 0.15 contact tolerance unspent', (_name, pkg) => {
-    const v = spurConveyorView(spurOf(pkg))!
+    const v = bedView(spurOf(pkg), 'spur')!.spur
     expect(v.sideGap).toBeLessThan(0.15 / 2)
   })
 
@@ -137,7 +137,7 @@ describe('spur side merge onto a straight roller host', () => {
     const opening = computeSceneOpenings([h, s]).get('rc_1')!.right[0]
     expect(opening).toBeDefined()
 
-    const v = spurConveyorView(s)!
+    const v = bedView(s, 'spur')!.spur
     const wallZ = HOST_HW + FRAME_WALL_THICKNESS // host outer wall plane, host-local
     // two points along this side's guard line (the spur's +X axis at its guard offset), taken into the
     // host's frame, then linearly interpolated to where that line crosses the host's wall plane

@@ -7,8 +7,8 @@
 // renderer places it off the anchor's pose every frame, so a wrapped load carries its film down a lane, onto a
 // truck's forks and into a rack.
 
-import { qApply, qConjugate, qMul } from './rigPose'
-import type { Quat, Vec3 } from './rigPose'
+import { qApply, qConjugate, qMul } from './rig/rigPose'
+import type { Quat, Vec3 } from './rig/rigPose'
 
 /** one cargo body as the wrap sees it: world centre, orientation, half extents */
 export interface WrapBody {

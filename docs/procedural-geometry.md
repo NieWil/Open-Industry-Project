@@ -67,7 +67,7 @@ Two tempting arguments are **not** reasons either way:
   in [optimize-assets.mjs](../scripts/optimize-assets.mjs)), and together they are about 2 MB. Converting
   one saves bytes nobody waits on, and adds the CPU work of building it.
 - **Draw cost, in the common case.** `geometry()` submeshes join the scene-global pool by geometry content,
-  the same as a GLB's leaves ([rig.ts](../src/render/parts/sdk/rig.ts), "Pool opt-in, the function tier's
+  the same as a GLB's leaves ([rigProcedural.ts](../src/render/parts/sdk/rigProcedural.ts), "Pool opt-in, the function tier's
   rule"), so identical copies merge and an extra copy costs the same draws in code as from a GLB. The exceptions
   stay one draw per copy each: a `lamp` submesh, the belt fabric, and anything with `scroll` or `spin`.
   [verify-draw-budget.mjs](../e2e/verify-draw-budget.mjs) holds an extra copy to 3 draws, so count those before
@@ -96,7 +96,7 @@ a boundary between core and render, not a portability concern. The same reasons 
 3. **One definition for physics, collision, snapping and the editor.** Geometry as a description lives in
    `core/` (which bans `three`), so **one** definition feeds Jolt physics, the collider, drop-raycast,
    vertex-snap, the Inspector and gizmos, and serialization
-   ([collisionShapes.ts](../src/core/collisionShapes.ts) is the single source of truth). A
+   ([collisionShapes.ts](../src/core/geometry/collisionShapes.ts) is the single source of truth). A
    `THREE.BufferGeometry` feeds only the renderer, so the geometry would be kept twice and drift.
 4. **Validation, caps, caching and editing.** A description can be capped in vertices and instances before it is
    realized, the same way the determinism guard and spawn caps bound behavior. A host that understands it can
@@ -123,7 +123,7 @@ Two more parts of the description:
 - **Animated surfaces.** A `MeshPart` declares `scroll` (a scrolling surface, such as belt fabric) or `spin` (a
   turning roller), and the host animates it.
 - **Guard merges.** A rig link declares `sideGuard: 'left' | 'right'` (package format 4), and `rigGuardSide` in
-  [guardOpenings.ts](../src/core/guardOpenings.ts) reads it for any part, so a custom part's guards join the host
+  [guardOpenings.ts](../src/core/guards/guardOpenings.ts) reads it for any part, so a custom part's guards join the host
   guard-merge system.
 
 ## The description is the canonical definition

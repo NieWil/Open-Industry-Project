@@ -14,33 +14,36 @@
 //
 // A lazy chunk: only desktopAgent.ts imports it, and only once the shell says an agent host exists.
 
-import { subtreeIds } from '../../core/hierarchy'
-import { uniqueSiblingName } from '../../core/partDisplayName'
-import { partFootprint, toWorldXZ } from '../../core/partGeometry'
-import { findSnap } from '../../core/snapFeatures'
-import { commitSnap, snapAttaches } from '../../core/snapCommit'
-import { getPackage } from '../../core/partRegistry'
-import { createSdkPart, nextId } from '../../core/scene'
-import { validateTestSpec, type TestSpec } from '../../core/projectTest'
-import { AGENT_GUIDE, projectToFolderFiles } from '../../core/projectFolder'
-import type { PartPackage } from '../../core/partPackage'
-import type { ParamSpec } from '../../core/partApi'
-import type { PartInstance, SceneJSON, SdkPart } from '../../core/types'
+import { subtreeIds } from '../../core/scene/hierarchy'
+import { uniqueSiblingName } from '../../core/parts/partDisplayName'
+import { partFootprint, toWorldXZ } from '../../core/parts/partGeometry'
+import { findSnap } from '../../core/snap/snapFeatures'
+import { commitSnap, snapAttaches } from '../../core/snap/snapCommit'
+import { getPackage } from '../../core/parts/partRegistry'
+import { createSdkPart, defaultBuilding, nextId } from '../../core/scene/scene'
+import { dockDoors, editBuildingParams, perimeterSides } from '../../core/building/buildingEdit'
+import { validateTestSpec, type TestSpec } from '../../core/project/projectTest'
+import { AGENT_GUIDE, projectToFolderFiles } from '../../core/project/projectFolder'
+import type { PartPackage } from '../../core/parts/partPackage'
+import type { ParamSpec } from '../../core/parts/partApi'
+import type { BuildingPart, PartInstance, SceneJSON, SdkPart } from '../../core/types'
 import { controllerFor, runnableSource } from '../../plc/controller'
 import { defaultController, setTaskTiming } from '../../plc'
 import { isKnownDialect } from '../../core/dialect'
-import { LocalPlcLink } from '../../plc/plcLink'
+import { LocalPlcLink } from '../../plc/link/plcLink'
 import { wiredBindings } from '../../plc/wiring'
-import { commitControllerEdit } from '../controllerCommit'
-import { planTagRename, testsNamingTag } from '../tagRename'
-import { assignIo, importIoList, ioListCsv, ioTargetFor, reportSummary } from '../ioAssign'
-import type { EditorStore } from '../store'
-import type { ProjectTestRun } from '../projectTestsRun'
-import { FOLDER_OPTIONS } from '../folderOptions'
+import { commitControllerEdit } from '../program/controllerCommit'
+import { planTagRename, testsNamingTag } from '../program/tagRename'
+import { assignIo, importIoList, ioListCsv, ioTargetFor, reportSummary } from '../program/ioAssign'
+import type { EditorStore } from '../store/store'
+import type { ProjectTestRun } from '../project/projectTestsRun'
+import { catalogFrame } from '../../core/parts/partCatalog'
+import { FOLDER_OPTIONS } from '../project/folderOptions'
 import {
   AGENT_LABEL,
   AgentImageResult,
   AgentToolError,
+  agentResultText,
   assertEditable,
   catalogPackages,
   findPart,
@@ -59,12 +62,16 @@ import {
   type JsonSchema,
 } from './toolKit'
 import { checkPart, createPart, editPartDefinition, getPartSdk, getPartSource, importModel } from './partTools'
+import { getRobotPose, importRobot, solveRobotPose } from './robotAgentTools'
 import { installLibraryPart, listLibraryParts } from './libraryTools'
+import { installShelfPart, listShelfParts, putPartOnShelf } from './shelfTools'
 import { checkProgram, getPou, listPous, setPou, traceTags } from './programTools'
-import { captureView, deleteTest, duplicatePartsTool, getCargo, undoTool } from './viewTools'
-import { getContext } from './contextTools'
+import { CARGO_LIST_MAX, captureView, deleteTest, duplicatePartsTool, getCargo, undoTool } from './viewTools'
+import { pauseTool, resumeTool, stepTool } from './simTools'
+import { getContext, syncFolder } from './contextTools'
+import { assignControllerTool, listControllers, runInstanceOnTool, setControllerTool } from './controllerTools'
 
-export { AGENT_LABEL, AgentImageResult, AgentToolError }
+export { AGENT_LABEL, AgentImageResult, AgentToolError, agentResultText }
 export type { AgentController, AgentImage, AgentShell, AgentTool, AgentToolContext, JsonSchema } from './toolKit'
 
 /** A param declaration as the agent needs it: type, default, range, and for a tag its direction and ST type. */
@@ -75,6 +82,8 @@ function describeParam(spec: ParamSpec): Record<string, unknown> {
     if (v !== undefined) out[k] = v
   }
   if (spec.options) out.options = spec.options.map((o) => o.value)
+  // what each number a tag publishes means (a colour sensor's 1 = red)
+  if (Array.isArray(spec.values)) out.values = spec.values.map((v) => ({ value: v.value, label: v.label }))
   return out
 }
 
@@ -140,27 +149,58 @@ const getGuide: AgentTool = {
   name: 'get_guide',
   description:
     'Read the project guide: units and conventions, the tags this scene wires and which way each flows, the parts ' +
-    'placed, what the ST dialect allows and the test spec format. The same AGENTS.md a saved project folder carries, ' +
-    'derived from the open document. Read it first.',
+    'placed, what the ST dialect allows, the test spec format, and which tool does what. Derived from the open ' +
+    "document, like the AGENTS.md a saved project folder carries, but written for these tools. Read it first.",
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   run: ({ store }) => {
-    const guide = projectToFolderFiles(store.snapshotProject(), FOLDER_OPTIONS).find((f) => f.path === AGENT_GUIDE)
+    const guide = projectToFolderFiles(store.snapshotProject(), { ...FOLDER_OPTIONS, guideDoor: 'tools' }).find((f) => f.path === AGENT_GUIDE)
     return guide?.contents ?? ''
   },
 }
+
+/** get_scene lists at most this many parts: a large scene came to 79k characters, more than a client takes in one result */
+const SCENE_LIST_MAX = 200
 
 const getScene: AgentTool = {
   name: 'get_scene',
   description:
     'List the open scene: every part with its id, name, package, position [x,y,z] in metres (+Y up), rotationY in ' +
-    'radians, parent, and the PLC tags it is wired to. Also whether the simulation is running.',
-  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  run: ({ store }) => {
+    'radians, parent, and the PLC tags it is wired to. Also whether the simulation is running. A large scene lists ' +
+    `its first ${SCENE_LIST_MAX} parts, says how many it left out and counts every part by package: narrow it with ` +
+    '`package` (a package id or type), `within` (a box { min:[x,y,z], max:[x,y,z] } the part\'s origin is inside) or ' +
+    '`parent` (the children of one part).',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      package: { type: 'string', description: 'only parts of this package id (or type, for a group or a building)' },
+      within: { type: 'object', description: '{ min: [x,y,z], max: [x,y,z] } in metres' },
+      parent: { type: 'string', description: 'only the children of this part id' },
+    },
+    additionalProperties: false,
+  },
+  run: ({ store }, args) => {
     const s = store.getState()
+    const pkgWanted = optStr(args, 'package')
+    const parent = optStr(args, 'parent')
+    const within = optObj(args, 'within')
+    const min = within ? optVec3(within, 'min') : undefined
+    const max = within ? optVec3(within, 'max') : undefined
+    if (within && (!min || !max)) throw new AgentToolError("'within' needs min and max, each [x, y, z]")
+    const kindOf = (p: PartInstance): string => (p.type === 'part' ? (p as SdkPart).packageId : p.type)
+    const matched = s.scene.parts.filter(
+      (p) =>
+        (pkgWanted === undefined || kindOf(p) === pkgWanted) &&
+        (parent === undefined || p.parent === parent) &&
+        (!min || !max || p.position.every((v, k) => v >= min[k]! && v <= max[k]!)),
+    )
+    const shown = matched.slice(0, SCENE_LIST_MAX)
+    const byPackage: Record<string, number> = {}
+    if (shown.length < matched.length) for (const p of matched) byPackage[kindOf(p)] = (byPackage[kindOf(p)] ?? 0) + 1
     return {
       project: s.projectName,
       running: s.running,
-      parts: s.scene.parts.map((p) => {
+      ...(matched.length < s.scene.parts.length ? { sceneParts: s.scene.parts.length } : {}),
+      parts: shown.map((p) => {
         const pkg = p.type === 'part' ? getPackage((p as SdkPart).packageId) : undefined
         const tags = wiredTags(p, pkg)
         return {
@@ -173,13 +213,16 @@ const getScene: AgentTool = {
           ...(Object.keys(tags).length > 0 ? { tags } : {}),
         }
       }),
+      ...(shown.length < matched.length ? { omitted: matched.length - shown.length, byPackage } : {}),
     }
   },
 }
 
 const getPart: AgentTool = {
   name: 'get_part',
-  description: "Read one part in full: its pose, every param value, and its package's param declarations (type, default, range, tag direction).",
+  description:
+    "Read one part in full: its pose, every param value, and its package's param declarations (type, default, range, tag direction). " +
+    "For the building: which perimeter cells each wall holds (what a wall rule's `start` counts) and every dock door with the key `openDoors` names.",
   inputSchema: {
     type: 'object',
     properties: { id: { type: 'string', description: 'part id, from get_scene' } },
@@ -188,6 +231,10 @@ const getPart: AgentTool = {
   },
   run: ({ store }, args) => {
     const part = findPart(store.getState().scene, str(args, 'id'))
+    if (part.type === 'building') {
+      const b = part as BuildingPart
+      return { part, perimeter: perimeterSides(b.params.lengthSections, b.params.widthSections), dockDoors: dockDoors(b) }
+    }
     const pkg = part.type === 'part' ? getPackage((part as SdkPart).packageId) : undefined
     return { part, ...(pkg ? { params: visibleParams(pkg) } : {}) }
   },
@@ -221,7 +268,10 @@ const listCatalog: AgentTool = {
 
 const getPackageTool: AgentTool = {
   name: 'get_package',
-  description: 'Read one catalog part in full: every param with its type, default, range, unit and, for a tag, its direction and ST type.',
+  description:
+    'Read one catalog part in full: every param with its type, default, range, unit and, for a tag, its direction, ' +
+    "ST type and what each value means (`values`). `frame` gives the part's own frame at its defaults: footprint " +
+    'extents, where the origin sits, conveying ends, detection zones and sensor beams, all part-local in metres.',
   inputSchema: {
     type: 'object',
     properties: { id: { type: 'string', description: 'package id from list_catalog' } },
@@ -232,7 +282,13 @@ const getPackageTool: AgentTool = {
     const id = str(args, 'id')
     const pkg = knownPackages(store).find((p) => p.id === id) ?? getPackage(id)
     if (!pkg) throw new AgentToolError(`no package '${id}' (list_catalog lists them)`)
-    return { id: pkg.id, name: pkg.name, ...(pkg.category ? { category: pkg.category } : {}), params: visibleParams(pkg) }
+    let frame: Record<string, unknown>
+    try {
+      frame = { frame: catalogFrame(pkg) }
+    } catch (e) {
+      frame = { frameError: e instanceof Error ? e.message : String(e) }
+    }
+    return { id: pkg.id, name: pkg.name, ...(pkg.category ? { category: pkg.category } : {}), params: visibleParams(pkg), ...frame }
   },
 }
 
@@ -241,7 +297,9 @@ const addPart: AgentTool = {
   description:
     'Place a part from the catalog. position is [x, y, z] in metres with +Y up; for a conveyor, y is its belt ' +
     'height and a legged stand is sized to reach the floor. rotationY is radians about +Y. params are checked ' +
-    'against the package (list_catalog). One undo step. Returns the new part id.',
+    'against the package (list_catalog). One undo step. Returns the new part id. package "building" places the ' +
+    'warehouse shell (at most one per scene; position is its floor centre); its params are lengthSections, ' +
+    'widthSections, heightSections, columnSpacing, rules (wall rules) and openDoors (dock door keys, from get_part).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -258,6 +316,7 @@ const addPart: AgentTool = {
   run: ({ store }, args) => {
     assertEditable(store)
     const id = str(args, 'package')
+    if (id === 'building') return addBuilding(store, args)
     const pkg = getPackage(id)
     if (!pkg) throw new AgentToolError(`no package '${id}' (list_catalog lists them)`)
     const position = optVec3(args, 'position')!
@@ -291,7 +350,8 @@ const updatePart: AgentTool = {
   name: 'update_part',
   description:
     'Change a part: any of position, rotationY (radians), name, params (checked against its package; a tag param ' +
-    'takes the PLC tag name to wire it to, "" unwires it). One undo step.',
+    'takes the PLC tag name to wire it to, "" unwires it). On the building, params are checked against its own ' +
+    'params; openDoors takes the dock door keys get_part lists. One undo step.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -312,7 +372,13 @@ const updatePart: AgentTool = {
     const rotationY = optNum(args, 'rotationY')
     const patch = optObj(args, 'params')
     let params: Record<string, unknown> | undefined
-    if (patch) {
+    const notes: string[] = []
+    if (patch && part.type === 'building') {
+      const r = buildingParams(part as BuildingPart, patch)
+      // the building's whole params: an edit can drop openDoors
+      params = { ...r.params }
+      notes.push(...r.notes)
+    } else if (patch) {
       if (part.type !== 'part') throw new AgentToolError(`'${part.id}' is a ${part.type}, which has no package params`)
       const pkg = getPackage((part as SdkPart).packageId)
       if (!pkg) throw new AgentToolError(`the package of '${part.id}' is not loaded`)
@@ -326,15 +392,41 @@ const updatePart: AgentTool = {
         ...part,
         ...(position ? { position } : {}),
         ...(rotationY !== undefined ? { rotationY } : {}),
-        ...(params ? { params: { ...(part as SdkPart).params, ...params } } : {}),
+        ...(params ? { params: part.type === 'building' ? params : { ...(part as SdkPart).params, ...params } } : {}),
         ...(name ? { name } : {}),
       } as PartInstance
       if (name === '') delete next.name
       // one call, one step: the rename rides the same commit, so the step is the agent's and undo takes it whole
       store.commit(`${AGENT_LABEL}: edit ${part.name ?? part.id}`, { ...scene, parts: scene.parts.map((p) => (p.id === part.id ? next : p)) })
     }
-    return { id: part.id, name: store.getState().scene.parts.find((p) => p.id === part.id)?.name ?? null }
+    return { id: part.id, name: store.getState().scene.parts.find((p) => p.id === part.id)?.name ?? null, ...(notes.length > 0 ? { notes } : {}) }
   },
+}
+
+/** a building's params with `patch` applied (core/building/buildingEdit.ts), and what it noted */
+function buildingParams(part: BuildingPart, patch: Record<string, unknown>): { params: BuildingPart['params']; notes: string[] } {
+  const notes: string[] = []
+  try {
+    return { params: editBuildingParams(part, patch, notes).params, notes }
+  } catch (e) {
+    throw new AgentToolError((e as Error).message.replace(/^params: /, ''))
+  }
+}
+
+/** add_part for package 'building': the shell New makes, at most one per scene */
+function addBuilding(store: EditorStore, args: Record<string, unknown>): { id: string; notes?: string[] } {
+  const scene = store.getState().scene
+  const has = scene.parts.find((p) => p.type === 'building')
+  if (has) throw new AgentToolError(`the scene already has a building ('${has.id}'); change it with update_part`)
+  if (optStr(args, 'parent') !== undefined) throw new AgentToolError('the building cannot be parented')
+  const part = defaultBuilding(nextId(scene, 'building'))
+  part.position = optVec3(args, 'position')!
+  part.rotationY = optNum(args, 'rotationY') ?? 0
+  const { params, notes } = buildingParams(part, optObj(args, 'params') ?? {})
+  const name = optStr(args, 'name')?.trim()
+  const placed = { ...part, params, ...(name ? { name } : {}) } as BuildingPart
+  store.commit(`${AGENT_LABEL}: place the building`, { ...scene, parts: [placed, ...scene.parts] })
+  return { id: placed.id, ...(notes.length > 0 ? { notes } : {}) }
 }
 
 /** The top of a part's footprint, over its centre, in world space: where a person drops a part onto it. */
@@ -383,7 +475,7 @@ const snapPart: AgentTool = {
       const hint = turn !== undefined ? ` It would seat with rotationY ${round(turn)} (a quarter turn: the mount faces the other way).` : ' Try `near` closer to where it should mount, or another host.'
       throw new AgentToolError(`nothing ${host ? `on '${host.id}' ` : ''}engages '${part.id}' from [${position.map(round).join(', ')}].${hint}`)
     }
-    // what the editor's drop writes: pose, fits, host fits, attach (core/snapCommit)
+    // what the editor's drop writes: pose, fits, host fits, attach (core/snap/snapCommit)
     const parent = snapAttaches(scene.parts, part.id, c) ? c.targetId : undefined
     const parts = [...commitSnap(scene.parts, part.id, c)]
     const seated = parts.find((p) => p.id === part.id)!
@@ -575,12 +667,18 @@ const getProblems: AgentTool = {
     'Check the scene the way the Problems panel does: program compile errors, wiring (tags nothing drives or reads, ' +
     'two writers, type clashes), part build and runtime errors. Also notes on what could not be checked. `flowFacts` ' +
     '(not shown in the panel) lists what physically happened in the current or last run (a box dropped, tipped, held still on a running ' +
-    'conveyor, an eye flickering): facts, not errors, so judge them against what the line is meant to do.',
+    'conveyor, an eye flickering): facts, not errors, so judge them against what the line is meant to do. ' +
+    '`folderError` (the project folder cannot be read or synced, so edits made there do not load) and `folderNote` ' +
+    '(files in the folder that project.json does not list, so loading ignored them) are the folder banner\'s text.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   run: (ctx) => {
     const r = problems(ctx)
     const facts = ctx.controller?.sim?.flowFacts.all() ?? []
+    // the folder banner: an agent writing files into the folder has no other way to learn a write did nothing
+    const { folderError, folderNote } = ctx.store.getState()
     return {
+      ...(folderError ? { folderError } : {}),
+      ...(folderNote ? { folderNote } : {}),
       ...(facts.length > 0
         ? {
             flowFacts: facts.slice(-AGENT_FLOW_FACTS).map((f) => ({ kind: f.kind, t: f.t, message: f.message, ...(f.part ? { part: f.part } : {}) })),
@@ -622,23 +720,56 @@ const stop: AgentTool = {
   },
 }
 
+import { watchHas, watchKeysOf } from '../../core/watchTable'
+
+/** the most variables get_tags returns when no names are asked for */
+const MAX_UNNAMED_TAGS = 2000
+
 const getTags: AgentTool = {
   name: 'get_tags',
   description:
     "Read the running PLC program's variables (a ~10 Hz mirror, so a pulse shorter than ~0.15 s can be missed). " +
-    'Optional names filter. Empty while stopped.',
+    'Optional names filter: pass it for a large program, since without it at most ' + MAX_UNNAMED_TAGS + ' variables are returned ' +
+    'and `tagsOmitted` counts the rest. Empty while stopped. Also returns `scanTimes`: per task, how long its scans take to execute ' +
+    '(last, average, max in ms of real time) and its interval, and `forces`: the variables force_tag holds, if any.',
   inputSchema: {
     type: 'object',
     properties: { names: { type: 'array', items: { type: 'string' } } },
     additionalProperties: false,
   },
   run: (ctx, args) => {
-    const watch = needController(ctx).plcWatch
+    const controller = needController(ctx)
+    const watch = controller.plcWatch
     const names = args.names === undefined ? null : strList(args, 'names')
     if (!watch) return { running: ctx.store.getState().running, tags: {} }
     const tags: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(watch)) if (!names || names.includes(k)) tags[k] = v
-    return { running: true, tags, ...(names ? { missing: names.filter((n) => !(n in watch)) } : {}) }
+    let tagsOmitted = 0
+    if (names) {
+      for (const k of names) if (watchHas(watch, k)) tags[k] = watch[k]
+    } else {
+      // a large program holds hundreds of thousands of values, which is no answer to read
+      const keys = watchKeysOf(watch)
+      for (const k of keys.slice(0, MAX_UNNAMED_TAGS)) tags[k] = watch[k]
+      tagsOmitted = Math.max(0, keys.length - MAX_UNNAMED_TAGS)
+    }
+    const us = (ms: number): number => Math.round(ms * 1000) / 1000
+    const scanTimes = (controller.plcScanTimes ?? []).map((s) => ({
+      task: s.task,
+      intervalMs: s.kind === 'continuous' ? null : us(s.periodSec * 1000),
+      scans: s.scans,
+      lastMs: us(s.lastMs),
+      avgMs: us(s.avgMs),
+      maxMs: us(s.maxMs),
+    }))
+    const forces = controller.plcForces ?? {}
+    return {
+      running: true,
+      tags,
+      ...(tagsOmitted > 0 ? { tagsOmitted } : {}),
+      ...(names ? { missing: names.filter((n) => !watchHas(watch, n)) } : {}),
+      ...(scanTimes.length > 0 ? { scanTimes } : {}),
+      ...(Object.keys(forces).length > 0 ? { forces } : {}),
+    }
   },
 }
 
@@ -663,21 +794,82 @@ const setTag: AgentTool = {
   },
 }
 
+const forceTag: AgentTool = {
+  name: 'force_tag',
+  description:
+    'Force a variable of the running PLC program: hold it at a value across scans until released, whatever the program ' +
+    'writes or the parts feed (commissioning: run a conveyor by hand, block a sensor). Omit `value` to hold the value it ' +
+    'has now. It stays until release_forces, through stop and into the next run from its first scan; opening another ' +
+    'project releases it. Never written to the document.',
+  inputSchema: {
+    type: 'object',
+    properties: { name: { type: 'string' }, value: { type: ['boolean', 'number'] } },
+    required: ['name'],
+    additionalProperties: false,
+  },
+  run: (ctx, args) => {
+    const name = str(args, 'name')
+    const value = args.value
+    if (value !== undefined && typeof value !== 'boolean' && typeof value !== 'number') throw new AgentToolError("'value' must be a boolean or a number")
+    const controller = needController(ctx)
+    if (!controller.forcePlcValue) throw new AgentToolError('forcing is not available here')
+    const why = controller.forcePlcValue(name, value === undefined ? undefined : String(value))
+    if (why) throw new AgentToolError(why)
+    return { forces: controller.plcForces ?? {} }
+  },
+}
+
+const releaseForces: AgentTool = {
+  name: 'release_forces',
+  description: 'Release a forced variable (name), or every one (no name). The program writes it again from its next scan.',
+  inputSchema: {
+    type: 'object',
+    properties: { name: { type: 'string' } },
+    additionalProperties: false,
+  },
+  run: (ctx, args) => {
+    const controller = needController(ctx)
+    controller.releasePlcForces?.(args.name === undefined ? undefined : str(args, 'name'))
+    return { forces: controller.plcForces ?? {} }
+  },
+}
+
 /** One run's verdict as the agent reads it. */
 function verdict(r: ProjectTestRun): Record<string, unknown> {
   if (r.error) return { name: r.name, ok: false, error: r.error }
   // what physically happened: a summary always, and for a failure the facts leading up to it (often the cause)
   const facts = r.facts && r.facts.total > 0 ? { flowFacts: r.facts.summary, ...(r.facts.beforeFailure ? { factsBeforeFailure: r.facts.beforeFailure.lines } : {}) } : {}
-  return { name: r.name, ok: r.ok, checks: r.result?.checks.map((c) => ({ ok: c.ok, detail: c.detail, ...(c.failedAt !== undefined ? { failedAt: c.failedAt } : {}) })), ...facts }
+  return { name: r.name, ok: r.ok, checks: r.result?.checks.map((c) => ({ ok: c.ok, detail: c.detail, ...(c.warning ? { warning: c.warning } : {}), ...(c.failedAt !== undefined ? { failedAt: c.failedAt } : {}) })), ...facts }
+}
+
+/** One line an agent reads first: tests and checks passed of those run. */
+function summary(runs: readonly ProjectTestRun[]): string {
+  const checks = runs.flatMap((r) => r.result?.checks ?? [])
+  const errors = runs.filter((r) => r.error).length
+  const tests = `${runs.filter((r) => r.ok).length}/${runs.length} test${runs.length === 1 ? '' : 's'} pass`
+  return `${tests}, ${checks.filter((c) => c.ok).length}/${checks.length} checks${errors > 0 ? `, ${errors} could not run` : ''}`
+}
+
+/** run_test's `trace`: a tag that changes more than this many times keeps its first and last halves (an encoder) */
+const TRACE_MAX_CHANGES = 200
+
+/** run_test's `cargo`: at most this many times, each snapshot capped like get_cargo */
+const CARGO_TIMES_MAX = 20
+
+function traceView(trace: ProjectTestRun['trace'], asked: readonly string[]): Record<string, unknown> {
+  if (!trace) return {}
+  const cut = (changes: { t: number; v: unknown }[]) =>
+    changes.length <= TRACE_MAX_CHANGES ? changes : [...changes.slice(0, TRACE_MAX_CHANGES / 2), { omitted: changes.length - TRACE_MAX_CHANGES }, ...changes.slice(-TRACE_MAX_CHANGES / 2)]
+  const missing = asked.filter((t) => !trace.some((x) => x.tag === t))
+  return {
+    trace: trace.map((t) => ({ tag: t.tag, start: t.start ?? null, changes: cut(t.changes.map((c) => ({ t: round(c.t), v: c.v }))) })),
+    ...(missing.length > 0 ? { traceMissing: `never published in the run: ${missing.join(', ')}` } : {}),
+  }
 }
 
 function checkedSpec(args: Record<string, unknown>): TestSpec {
   const v = validateTestSpec(optObj(args, 'spec'))
-  if (!v.ok) {
-    // the most common error in a first spec: a check is one predicate, so a range is two checks
-    const range = v.errors.some((e) => /exactly one of/.test(e)) ? '\n(A range is two checks on the same source, one `min` and one `max`, or one `near` with a `tolerance`.)' : ''
-    throw new AgentToolError(`invalid test spec:\n${v.errors.map((e) => `- ${e}`).join('\n')}${range}`)
-  }
+  if (!v.ok) throw new AgentToolError(`invalid test spec:\n${v.errors.map((e) => `- ${e}`).join('\n')}`)
   return v.spec
 }
 
@@ -688,28 +880,66 @@ const runTest: AgentTool = {
     'simulated seconds, drive `inputs` at set times, fail devices, comms or cargo flow with `faults`, and evaluate `checks` on tags and world probes. The spec ' +
     'format is in get_guide. It runs the open scene as it is now, unsaved edits included. An input ' +
     'reaches the program only through its inputs (VAR_INPUT, or a variable a part is wired to). Without `spec` it ' +
-    'runs every test the project keeps (save_test). This is how to prove a change works. The editor is busy while it runs.',
+    'runs every test the project keeps (save_test). This is how to prove a change works. The editor is busy while it runs. ' +
+    "`summary` says how many tests and checks passed. `trace` records tags through the whole run (each one's value " +
+    'at the start and every change with its time): how to read what a value was, or why a check failed. `cargo` ' +
+    'lists every box, tote and pallet at chosen sim times: id, part, kind, colour, centre [x,y,z] in metres, ' +
+    'tilt from upright in degrees, heading `yawDeg` about +Y in degrees, velocity `vel` [x,y,z] in m/s and what it is ' +
+    '`touching` (part ids, `cargo <id>`, `floor`), so a box tipping, turning, falling or launched, and what pushed it, can be ' +
+    'followed step by step through the same run. Every run of a spec is the same run, so this is how to inspect the ' +
+    'cargo at a known time; the live sim (run, get_cargo) runs on wall-clock time.',
   inputSchema: {
     type: 'object',
-    properties: { spec: { type: 'object', description: 'a test spec: { name?, duration, inputs?, faults?, checks, scanMs? }' } },
+    properties: {
+      spec: { type: 'object', description: 'a test spec: { name?, duration, inputs?, faults?, checks, scanMs? }' },
+      trace: { type: 'array', items: { type: 'string' }, description: 'tag names to record through the run' },
+      cargo: { type: 'array', items: { type: 'number' }, description: `sim times (s) at which to list the cargo, at most ${CARGO_TIMES_MAX}` },
+    },
     additionalProperties: false,
   },
   run: async ({ store }, args) => {
     const project = store.snapshotProject()
-    const { runProjectTests } = await import('../projectTestsRun')
+    const trace = args.trace === undefined ? undefined : strList(args, 'trace')
+    const cargo = cargoTimes(args)
+    const opts = trace || cargo ? { ...(trace ? { trace } : {}), ...(cargo ? { cargo } : {}) } : undefined
+    const { runProjectTests } = await import('../project/projectTestsRun')
     if (args.spec === undefined) {
       if ((project.tests ?? []).length === 0) throw new AgentToolError('the project keeps no tests yet: pass a `spec`, or keep one with save_test')
-      const runs = await runProjectTests(project)
-      return { ok: runs.every((r) => r.ok), tests: runs.map(verdict) }
+      const runs = await runProjectTests(project, undefined, opts)
+      return { ok: runs.every((r) => r.ok), summary: summary(runs), tests: runs.map((r) => ({ ...verdict(r), ...traceView(r.trace, trace ?? []), ...cargoView(r) })) }
     }
     const spec = checkedSpec(args)
     const warnings = unreachableInputs(store, spec.inputs ?? [])
-    const [r] = await runProjectTests({ ...project, tests: [spec] })
+    const [r] = await runProjectTests({ ...project, tests: [spec] }, undefined, opts)
     if (!r) throw new AgentToolError('the test did not run')
     if (r.error) throw new AgentToolError(r.error)
     const { name: _name, ...v } = verdict(r)
-    return { ...v, ...(warnings.length > 0 ? { warnings } : {}) }
+    return { summary: summary([r]), ...v, ...(warnings.length > 0 ? { warnings } : {}), ...traceView(r.trace, trace ?? []), ...cargoView(r) }
   },
+}
+
+function cargoTimes(args: Record<string, unknown>): number[] | undefined {
+  const v = args.cargo
+  if (v === undefined) return undefined
+  if (!Array.isArray(v) || v.length === 0 || !v.every((t) => typeof t === 'number' && Number.isFinite(t) && t >= 0)) {
+    throw new AgentToolError("'cargo' must be a non-empty array of sim times in seconds, each 0 or more")
+  }
+  if (v.length > CARGO_TIMES_MAX) throw new AgentToolError(`'cargo' takes at most ${CARGO_TIMES_MAX} times; run the test again for more`)
+  return v as number[]
+}
+
+function cargoView(r: ProjectTestRun): Record<string, unknown> {
+  if (!r.cargo) return {}
+  return {
+    cargo: r.cargo.map((s) => ({
+      at: s.at,
+      t: round(s.t),
+      count: s.bodies.length,
+      bodies: s.bodies.slice(0, CARGO_LIST_MAX),
+      ...(s.bodies.length > CARGO_LIST_MAX ? { omitted: s.bodies.length - CARGO_LIST_MAX } : {}),
+    })),
+    ...(r.cargoMissed && r.cargoMissed.length > 0 ? { cargoMissed: `the run ended before t=${r.cargoMissed.join(', ')}` } : {}),
+  }
 }
 
 const saveTest: AgentTool = {
@@ -728,7 +958,7 @@ const saveTest: AgentTool = {
     assertEditable(store)
     const spec = checkedSpec(args)
     if (!spec.name) throw new AgentToolError('a kept test needs a `name` (the Tests overlay and the CLI list it by name)')
-    if (!store.saveProjectTest(spec)) throw new AgentToolError('this editor cannot keep tests (a live room keeps none)')
+    if (!store.saveProjectTest(spec)) throw new AgentToolError('this editor cannot keep tests (it is view-only, or in a shared project of someone else\'s, which keeps none)')
     return { name: spec.name, tests: (store.snapshotProject().tests ?? []).map((t) => t.name ?? '(unnamed)') }
   },
 }
@@ -767,6 +997,7 @@ function unreachableInputs(store: EditorStore, inputs: readonly { tag: string }[
 export const AGENT_TOOLS: readonly AgentTool[] = [
   getGuide,
   getContext,
+  syncFolder,
   getScene,
   getPart,
   listCatalog,
@@ -782,8 +1013,14 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   createPart,
   editPartDefinition,
   importModel,
+  importRobot,
+  solveRobotPose,
+  getRobotPose,
   listLibraryParts,
   installLibraryPart,
+  listShelfParts,
+  installShelfPart,
+  putPartOnShelf,
   getProgram,
   setProgram,
   listPous,
@@ -794,12 +1031,21 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   setTask,
   assignIoTool,
   getIoList,
+  listControllers,
+  assignControllerTool,
+  setControllerTool,
+  runInstanceOnTool,
   getProblems,
   captureView,
   run,
   stop,
+  pauseTool,
+  resumeTool,
+  stepTool,
   getTags,
   setTag,
+  forceTag,
+  releaseForces,
   traceTags,
   getCargo,
   runTest,

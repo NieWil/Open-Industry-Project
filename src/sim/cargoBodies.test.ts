@@ -6,9 +6,9 @@ import initJolt from 'jolt-physics'
 import type Jolt from 'jolt-physics'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CARGO_CAP_FORK_POCKETS, CARGO_CAP_HEAVY, CARGO_CAP_LOAD_BASE, CARGO_CAP_SEPARATE_CONTACTS, CARGO_KIND_BOX, CARGO_KIND_PALLET, CARGO_KIND_PART, CARGO_KIND_TOTE, capsOfKind, cargoSeatOn, cargoView } from '../core/frame'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PackageManifest, PartPackage } from '../core/partPackage'
-import { createSdkPart } from '../core/scene'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PackageManifest, PartPackage } from '../core/parts/partPackage'
+import { createSdkPart } from '../core/scene/scene'
 import { SCENE_VERSION } from '../core/types'
 import type { PartInstance } from '../core/types'
 import { buildPackage } from './buildPackage'
@@ -60,6 +60,10 @@ function shove(w: SimWorld, id: string, vz: number): void {
   const bi = (w as unknown as { bodyInterface: Jolt.BodyInterface }).bodyInterface
   const v = new J.Vec3(0, 0, vz)
   bi.SetLinearVelocity(live(w, id).body.GetID(), v)
+  // A velocity set on an awake body leaves its sleep timer running, and after half a second at rest the body sleeps
+  // within the step and loses the shove. At 60 Hz the settle above happens to end asleep, which SetLinearVelocity
+  // wakes with a fresh timer; at 120 Hz it ends awake and the drum stopped dead.
+  bi.ResetSleepTimer(live(w, id).body.GetID())
   J.destroy(v)
 }
 
@@ -122,6 +126,30 @@ describe('cargo with its own body', () => {
     const keys = new Set(['d0', 'd1', 'd2'].map((id) => live(world!, id).shapeKey))
     expect(keys.size).toBe(1)
     expect([...keys][0]).toMatch(/^acme\.drum-side\|/)
+  })
+
+  // Jolt frees a shape with the last body that uses it. A line whose sink removed every carton of one product then
+  // built the next carton on the freed collider, and the step after it read a body record something else had
+  // overwritten ("memory access out of bounds", and a world that never finished disposing).
+  it('keeps the shared collider when the last body of its shape is removed', { timeout: 60000 }, () => {
+    const drum = load(drumManifest(true))
+    const parts = [0, 1].map((i) => createSdkPart(drum, `d${i}`, [i * 1.2, R + 0.01, 0], 0))
+    world = new SimWorld(J, { version: SCENE_VERSION, parts, packages: [drum] }, { hz: 60 })
+    const shape = live(world, 'd0').body.GetShape()
+    // Jolt.js holds the last shape result it handed out, and so a reference to that shape, until the next one
+    const other = new J.StaticCompoundShapeSettings()
+    const at = new J.Vec3(0, 0, 0)
+    const turn = new J.Quat(0, 0, 0, 1)
+    const half = new J.Vec3(0.1, 0.1, 0.1)
+    other.AddShapeShape(at, turn, new J.BoxShape(half, 0.01), 0)
+    other.Create()
+    for (const o of [other, at, turn, half]) J.destroy(o)
+    // the two bodies, and the cache
+    expect(shape.GetRefCount()).toBe(3)
+    const cargo = (world as unknown as { cargo: { removeBox(index: number): void } }).cargo
+    cargo.removeBox(1)
+    cargo.removeBox(0)
+    expect(shape.GetRefCount()).toBe(1)
   })
 })
 

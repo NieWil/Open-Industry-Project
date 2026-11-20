@@ -104,6 +104,14 @@ describe('rankPaletteItems', () => {
     expect(hits[0]!.label).toBe('Problems')
   })
 
+  it('finds a translated row by its English alias, below an equal hit on the shown label', () => {
+    const save: PaletteItem = { key: 'cmd:save', kind: 'command', group: 'File', label: 'Speichern', alias: 'Save', target: { kind: 'command', id: 'file.save' } }
+    const shown: PaletteItem = { key: 'part:s', kind: 'part', group: 'Scene', label: 'Save', target: { kind: 'part', id: 's' } }
+    expect(rankPaletteItems([save], 'save').map((i) => i.key)).toEqual(['cmd:save'])
+    expect(rankPaletteItems([save], 'speich').map((i) => i.key)).toEqual(['cmd:save'])
+    expect(rankPaletteItems([save, shown], 'save').map((i) => i.key)).toEqual(['part:s', 'cmd:save'])
+  })
+
   it('a group hit never outranks a direct label hit', () => {
     // 'Scene' is the parts group; a command literally called "Scene Tree" must win the query 'scene'
     const hits = rankPaletteItems([item('part', 'Diverter', 'Scene'), item('command', 'Scene Tree', 'View')], 'scene')

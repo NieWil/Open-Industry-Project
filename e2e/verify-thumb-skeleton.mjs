@@ -7,7 +7,7 @@
 // path: it 404s the roller's static thumb, which the card reports (onPackageThumbnailMissing) and App
 // answers by rendering that one package in-browser - the same pendingThumbs → skeleton → data URL
 // flow a desktop-folder or in-app authored part takes.
-/* global process, console, window, document, localStorage */
+/* global process, console, window, document, localStorage, MutationObserver */
 import { startServer } from './_server.mjs'
 import { chromium } from 'playwright'
 
@@ -21,6 +21,14 @@ async function main() {
   await page.addInitScript(() => {
     try { localStorage.setItem('oip-web/tutorial-done', '1') } catch { /* harmless */ }
   })
+  // The Parts dock opens on Equipment, so the roller card misses its static thumb and renders during boot. Watch for
+  // its skeleton from the first paint: polling only once the app reports ready can start after the render has landed.
+  await page.addInitScript((sel) => {
+    window.__sawRollerSkeleton = false
+    new MutationObserver(() => {
+      if (document.querySelector(`${sel} .catalog-card-skeleton`)) window.__sawRollerSkeleton = true
+    }).observe(document, { childList: true, subtree: true })
+  }, ROLLER_CARD)
   page.on('console', (m) => {
     // the forced 404 below logs its own "Failed to load resource", which is expected
     if (m.type() === 'error' && !m.location().url?.includes(`/thumbnails/pkg/${ROLLER}.webp`)) console.log('  console.error:', m.text().slice(0, 140))
@@ -40,11 +48,10 @@ async function main() {
 
     // 1) the roller card must show the shimmer while its offscreen render is in flight. Scoped to that
     //    card, not any skeleton on the page, so the verdict is about the render this gate caused.
-    let sawSkeleton = false
-    for (let i = 0; i < 400 && !sawSkeleton; i++) {
-      sawSkeleton = await page.evaluate((sel) => !!document.querySelector(`${sel} .catalog-card-skeleton`), ROLLER_CARD)
-      if (!sawSkeleton) await page.waitForTimeout(50)
-    }
+    const sawSkeleton = await page.waitForFunction(() => window.__sawRollerSkeleton === true, null, { timeout: 20000 }).then(
+      () => true,
+      () => false,
+    )
     console.log(`staticMisses=${staticMisses} sawSkeleton=${sawSkeleton}`)
     if (staticMisses === 0) console.log('  the route never fired: the roller card no longer requests /thumbnails/pkg/*.webp, so this gate forces nothing')
 

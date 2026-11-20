@@ -171,6 +171,30 @@ describe('settleIdlePose (subPose + lamp devices)', () => {
 // A stopped-scene Use (the editor's C and the walking character's E, one model): a live session of the device's
 // behavior, opened at its authored state, pressed, and stepped frame by frame. It must behave the way the device
 // does in a run, stay where a press leaves it, and say when it is back at its design (atRest: nothing held).
+describe('settleIdlePose (a posable array that never settles)', () => {
+  // a chain of copies that keeps running while stopped (a sorter whose slats move until a program says otherwise),
+  // with one whole link that also never settles
+  const CHAIN = `
+let t = 0
+definePart({
+  params: { length: { type: 'number', default: 2 } },
+  step(ctx) {
+    t += ctx.dt
+    const n = ctx.arrayCount('slat')
+    for (let i = 0; i < n; i++) ctx.setSubPose('slat', { position: [(i * 0.5 + t) % 2, 0, 0] }, i)
+    ctx.setSubPose('arm', { rotation: [0, t, 0] })
+  },
+})`
+  const arrays = JSON.stringify([{ name: 'slat', array: { pitch: { axis: 0, spanParam: 'length', pitch: 0.5 }, posable: true } }])
+
+  it('keeps where its copies stood, not their rest row, and drops the whole-link pose that never settled', () => {
+    const pose = settleIdlePose(CHAIN, {}, 0, undefined, undefined, arrays)
+    expect(pose?.subPoses.slat?.instances).toHaveLength(4)
+    expect(pose?.subPoses.slat?.instances?.every((p) => p?.position !== undefined)).toBe(true)
+    expect(pose?.subPoses.arm).toBeUndefined()
+  })
+})
+
 describe('IdleUseSession', () => {
   const FRAME = 1 / 60
   /** step `seconds` of frames, returning every pose along the way */

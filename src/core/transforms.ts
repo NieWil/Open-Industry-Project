@@ -2,7 +2,7 @@
 //
 // Positions are world meters (see PartBase.position). The scene has no true local-transform
 // hierarchy: a `parent` is a soft reference and the editor treats a parent + its subtree as a
-// rigid group (translate/yaw carries the subtree - see core/hierarchy.subtreeIds). Every place
+// rigid group (translate/yaw carries the subtree - see core/scene/hierarchy.subtreeIds). Every place
 // that composes that planar rotation - partGeometry's local<->world helpers, prefab
 // relativize/stamp, and the editor's group move/rotate - routes through `rotateXZ` here, so
 // there is one definition of the rotation convention.

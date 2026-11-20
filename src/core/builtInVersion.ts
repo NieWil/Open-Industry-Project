@@ -5,10 +5,10 @@
 // new id would mean rewriting every reference to it. Keeping the id means the project's copy hides the built-in,
 // so when a later app ships a better built-in, a project that ever touched it would quietly keep the old one.
 // So the copy records a fingerprint of the built-in it came from (`PartPackage.origin.app`), and the app can
-// tell - and say - when the built-in has changed since. The app is one source among others (core/partOrigin.ts).
+// tell - and say - when the built-in has changed since. The app is one source among others (core/parts/partOrigin.ts).
 
-import { matchesRecord, originOf, partFingerprint, sourceStatus, withOrigin } from './partOrigin'
-import type { PartPackage } from './partPackage'
+import { matchesRecord, originOf, partFingerprint, sourceStatus, withOrigin } from './parts/partOrigin'
+import type { PartPackage } from './parts/partPackage'
 
 /** A fingerprint of a built-in package's content: equal for the same part, different once the app ships a change. */
 export function builtInFingerprint(pkg: PartPackage): string {

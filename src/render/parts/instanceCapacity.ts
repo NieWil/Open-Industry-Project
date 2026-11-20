@@ -14,7 +14,7 @@
  * ## The floor is 128 because capacity is baked into the shader
  *
  * The WGSL declares `array<mat4x4<f32>, CAPACITY>`, so identical banks at different capacities are
- * different shaders and separate cold compiles. `pipelineDedup.ts` cannot normalise this, because a shader may
+ * different shaders and separate cold compiles. No cache key can merge them, because a shader may
  * never be bound a buffer smaller than it declares. The fix is fewer distinct capacities.
  *
  * Measured on the demo (`e2e/probes/shader-similarity.mjs`): floor 128 puts its banks on two capacities and

@@ -23,13 +23,14 @@
     <meta name="twitter:card" content="summary_large_image" />
 
     <!-- A hand-written page, unlike /plc/. Every label, default and address below is read from the app
-         (editor/components/ExternalPlcSection.tsx, editor/commands.ts, core/externalIo.ts); the setup is the
+         (editor/components/plc/ExternalPlcSection.tsx, editor/commands.ts, core/io/externalIo.ts); the setup is the
          one `npm run openplc-loop` runs against a real OpenPLC Runtime v4. Change those and this goes stale. -->
 
     <link rel="preload" href="/fonts/plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
 
     <link rel="stylesheet" href="/src/site/site.css" />
+    <script type="module" src="/src/site/copyCode.js"></script>
   </head>
 
   <body class="doc">
@@ -39,7 +40,7 @@
         <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
         <nav class="nav-links" aria-label="Site">
           <a href="/plc/">PLC reference</a>
-          <a href="/guides/">Connection guides</a>
+          <a href="/guides/">Guides</a>
           <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
         <a class="btn btn-sm" href="/app/">Open the editor</a>
@@ -90,8 +91,7 @@
         </ol>
         <p>
           Now give the two devices I/O addresses instead of names. Select each one, find the
-          <span class="ui">Comms</span> group in the Inspector, tick <span class="ui">Enable Comms</span>, and type the address
-          into its tag field:
+          <span class="ui">Comms</span> group in the Inspector, and type the address into its tag field:
         </p>
         <div class="scroll-x">
           <table class="map">
@@ -108,8 +108,8 @@
           <code>Eye</code>, is only seen by the program running inside the simulator.
         </p>
         <figure class="shot">
-          <img src="img/inspector-comms.webp" width="376" height="248" loading="lazy" decoding="async"
-            alt="The Inspector's Comms group for the Belt Conveyor: Enable Comms ticked and the Run Tag set to %QX0.0." />
+          <img src="img/inspector-comms.webp" width="376" height="214" loading="lazy" decoding="async"
+            alt="The Inspector's Comms group for the Belt Conveyor, with the Run Tag set to %QX0.0." />
           <figcaption>The Belt Conveyor's Comms group, with its Run Tag on an output address.</figcaption>
         </figure>
         <div class="note tip">
@@ -127,10 +127,10 @@
     <section class="section" id="serve">
       <div class="wrap">
         <h2>2. Serve the I/O over Modbus TCP</h2>
-        <p>Open <span class="ui">Simulation &gt; External PLC…</span> (or double-click the Controller node at the top of the PLC panel's organizer) and set:</p>
+        <p>Open <span class="ui">Simulation &gt; PLC Controllers…</span> (or double-click the Controller node at the top of the PLC panel's organizer) and set:</p>
         <ol class="steps">
           <li><span class="ui">Runs on</span>: <b>An external PLC</b>. On Play, the simulator hands the scene's I/O to your PLC instead of running the program in its own PLC panel.</li>
-          <li><span class="ui">PLC connection</span>: <b>The PLC polls the simulator</b> (the PLC is the Modbus master).</li>
+          <li>Under it, how the PLC connects: <b>The PLC polls the simulator</b> (the PLC is the Modbus master).</li>
           <li><span class="ui">Port</span>: <b>5020</b> is the default. Any free port works, and the PLC needs the same number.</li>
           <li>
             <span class="ui">Reachable from the network</span>: leave it off if the PLC runs on this computer. Tick it if the PLC is a
@@ -140,11 +140,11 @@
         <p>
           The list underneath shows what Play will serve. For this scene it should read
           <code>%IX0.0&nbsp;&nbsp;discrete input 0</code> and <code>%QX0.0&nbsp;&nbsp;coil 0</code>. If it says no part is wired yet,
-          check that <span class="ui">Enable Comms</span> is ticked on both parts.
+          check that both parts have their address typed into the tag field.
         </p>
         <figure class="shot">
-          <img src="img/external-plc.webp" width="680" height="458" loading="lazy" decoding="async"
-            alt="The External PLC settings: Runs on An external PLC, PLC connection The PLC polls the simulator, Port 5020, Reachable from the network off, and the list of served points: %IX0.0 discrete input 0 and %QX0.0 coil 0." />
+          <img src="img/external-plc.webp" width="680" height="383" loading="lazy" decoding="async"
+            alt="The External PLC settings: Runs on An external PLC, connecting with The PLC polls the simulator, Port 5020, Reachable from the network off, and the list of served points: %IX0.0 discrete input 0 and %QX0.0 coil 0." />
           <figcaption>Set up to serve, with the two points this scene puts on the wire.</figcaption>
         </figure>
         <p class="sub">
@@ -200,7 +200,7 @@
           <li>Addresses are 0-based protocol addresses. Tools that print 1-based labels show discrete input 0 as <code>10001</code> and coil 0 as <code>00001</code>.</li>
           <li>A REAL or DINT takes two registers, low word first. Some masters call this "swapped words" or "little-endian word order". A REAL travels as its IEEE 754 bit pattern, with no scaling.</li>
           <li>The unit ID is ignored. Use 1, or whatever your master defaults to.</li>
-          <li>Bytes (<code>%IB</code>), 64-bit values (<code>%IL</code>) and memory (<code>%M</code>) are not sent. The External PLC dialog lists anything it cannot carry, and why.</li>
+          <li>Bytes (<code>%IB</code>), 64-bit values (<code>%IL</code>) and memory (<code>%M</code>) are not sent. Controller Properties lists anything it cannot carry, and why.</li>
         </ul>
       </div>
     </section>
@@ -209,7 +209,7 @@
       <div class="wrap">
         <h2>4. Set up the PLC</h2>
         <p>The program is one line of logic. It runs the belt until the sensor sees the box.</p>
-        <pre class="code" translate="no"><code>PROGRAM main
+        <pre class="code" translate="no" data-copy><code>PROGRAM main
 VAR
   Eye AT %IX0.0 : BOOL;
   Run AT %QX0.0 : BOOL;
@@ -304,7 +304,7 @@ END_PROGRAM</code></pre>
     <section class="section" id="run">
       <div class="wrap">
         <h2>5. Run it</h2>
-        <p>Back in the simulator, press Play. The status line in the External PLC dialog (and the link status in the toolbar) shows each stage:</p>
+        <p>Back in the simulator, press Play. The status line in Controller Properties (and the link status in the toolbar) shows each stage:</p>
         <ul class="dash">
           <li><code>Serving on 127.0.0.1:5020: no PLC connected yet</code> means the port is open and waiting. Start the PLC now if it is not running.</li>
           <li><code>Serving on 127.0.0.1:5020: 1 connected (...)</code>, with a count of requests, means the PLC is polling.</li>
@@ -333,8 +333,9 @@ END_PROGRAM</code></pre>
             does the same. The simulator keeps stepping, so the line coasts to a halt the way it would on the floor.
           </p>
           <p>
-            While an external PLC is connected, simulation speed is fixed at real time, because the PLC scans on its own clock
-            and the simulator cannot run faster than it.
+            The PLC scans on its own clock, so Play with an external PLC starts at real time (1x). You can still change the
+            speed during the run, to fill a buffer quickly or watch a handoff slowly, and the speed button turns amber: away
+            from 1x the PLC's timers and reaction times no longer match the simulation, so the line can behave differently.
           </p>
         </div>
       </div>
@@ -351,13 +352,13 @@ END_PROGRAM</code></pre>
           <table class="map">
             <thead><tr><th>Part</th><th>Field</th><th>Type in</th><th>Modbus point</th></tr></thead>
             <tbody>
-              <tr><td>Laser Sensor</td><td>Distance Tag (M)</td><td class="m">%ID50</td><td>Input registers 100-101, REAL</td></tr>
-              <tr><td>Belt Conveyor</td><td>Speed Tag (M/S)</td><td class="m">%QD50</td><td>Holding registers 100-101, REAL</td></tr>
+              <tr><td>Laser Sensor</td><td>Distance Tag</td><td class="m">%ID50</td><td>Input registers 100-101, REAL</td></tr>
+              <tr><td>Belt Conveyor</td><td>Speed Tag</td><td class="m">%QD50</td><td>Holding registers 100-101, REAL</td></tr>
             </tbody>
           </table>
         </div>
         <p>Then slow the belt down while the laser sees a box within a metre:</p>
-        <pre class="code" translate="no"><code>PROGRAM main
+        <pre class="code" translate="no" data-copy><code>PROGRAM main
 VAR
   Eye   AT %IX0.0 : BOOL;
   Run   AT %QX0.0 : BOOL;
@@ -403,7 +404,7 @@ END_PROGRAM</code></pre>
           <dd>You are in a browser tab. Connecting needs the desktop app. You can still wire the scene and run Assign I/O in the browser, then open the scene in the desktop app.</dd>
 
           <dt>"Could not serve: ..." when you press Play.</dt>
-          <dd>Something else is using the port. Pick another one in the External PLC dialog, and give the PLC the same number.</dd>
+          <dd>Something else is using the port. Pick another one in Controller Properties, and give the PLC the same number.</dd>
 
           <dt>It stays on "no PLC connected yet".</dt>
           <dd>
@@ -415,7 +416,7 @@ END_PROGRAM</code></pre>
           <dt>The PLC is connected, but the belt never runs or never stops.</dt>
           <dd>
             The addresses on the two sides do not match. The usual causes are off-by-one (a 1-based tool shows discrete input 0 as <code>10001</code>), mixing up bit and byte numbers (<code>%IX1.0</code> is point 8, not 1), or
-            <span class="ui">Enable Comms</span> left off on a part. The External PLC dialog lists exactly which points it serves.
+            a tag field left empty on a part. Controller Properties lists exactly which points it serves.
           </dd>
 
           <dt>Analog values are nonsense, like a huge number or a tiny fraction.</dt>
@@ -447,7 +448,7 @@ END_PROGRAM</code></pre>
             <ul>
               <li><a href="/guides/opcua/">Guide: connect a SCADA or HMI over OPC UA</a></li>
               <li><a href="/guides/plc-server/">Guide: connect a PLC that serves its I/O</a></li>
-              <li><a href="/guides/">All connection guides</a></li>
+              <li><a href="/guides/">All guides</a></li>
               <li><a href="/guides/reference/">Reference: defaults, address rules, timings</a></li>
               <li><a href="/plc/">PLC language reference</a></li>
               <li><a href="/app/?scene=demo">See a PLC-driven line run</a></li>

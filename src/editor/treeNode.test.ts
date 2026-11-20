@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildTreeNode, buildTreeNodes, matchesTreeFilter, placedCopiesOf, sessionDefinitionScope } from './treeNode'
-import { rigNodeKey } from './store'
+import { rigNodeKey } from './store/store'
 import type { TreeNodeController, TreeNodeSource, TreeNodeStore } from './treeNode'
-import type { EditorState } from './store'
+import type { EditorState } from './store/store'
 import type { PartInstance } from '../core/types'
-import type { RigLink } from '../core/partPackage'
+import type { RigLink } from '../core/parts/partPackage'
 import type { RigGeometry } from './rigTree'
 
 // The kind-erased TreeNode adapter of the unified scene-tree node model. These specs pin the two axes that

@@ -77,7 +77,7 @@ export function ViewportLoadingCover() {
           if (!cancelled) setReady(true)
         })
       })
-    })
+    }).catch((e: unknown) => console.warn('[oip] waiting for the scene to load failed', e))
     // One budget for the whole wait. The signals above carry their own internal caps (20 s on the
     // building assets, then a further 20 s on the pre-warm, armed only once the first resolved), so
     // chained they allow ~40 s of logo before either times out. Whatever is stuck, the user

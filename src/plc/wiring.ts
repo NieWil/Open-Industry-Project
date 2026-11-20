@@ -8,30 +8,43 @@
 //               which one that is depends on part order. Always a bug.
 //   type-clash  two parts declare the same tag as different ST types. Always a bug.
 //   program-type  a part says BOOL and the program declares that var numeric (or the reverse).
-//   undriven    a part reads a tag nothing writes - it will sit at the zero value forever.
-//   unread      a part publishes a tag nobody consumes.
+//   undriven    a part reads a tag the program does not drive - it reads the zero value, or, for a tag the part
+//               reads only while a program drives it (`onlyWhenDriven`), the part runs on its own setting.
+//   unread      a part publishes a tag the program does not read.
+//
+// A part's tag connects only to the program: parts read the program's outputs, and what a part writes goes only to
+// the program's inputs (sim/behaviorBus.ts). So another part writing a tag neither drives it for a part that reads
+// it nor reads it for that part.
 //   undeclared  a part's tag param has no declared direction, so none of the above can be asked of it. Only a
-//               stored package can have one: an authored part is refused without `dir` (core/partAuthoringChecks.ts).
+//               stored package can have one: an authored part is refused without `dir` (core/parts/partAuthoringChecks.ts).
 //   address     a part's tag is a direct address (%IX100.0) that cannot carry it: malformed, memory,
 //               the wrong way round (a sensor is the PLC's input, so %I; an actuator its output, %Q),
 //               or the wrong size for the value (a BOOL is a bit, a REAL a double word).
+//   controller  a part's tag has `::` in it but no controller name before it (core/io/controllerTag.ts), or names
+//               a controller in a spelling other tags spell differently (`cell2::` beside `Cell2::`). IEC names
+//               ignore case, but the sim matches tags exactly, so the two would not meet.
+//
+// A tag that names another controller (`Cell2::%IX0.0`) is checked as that controller's: its address, its writers
+// and its type, but not against the program here, which does not run it. Whether Cell2 drives it is Cell2's business.
 //
 // The first three, and address, are errors. Undriven and unread are warnings: an undeclared program tag is
 // a forward reference (see TagRefParamSpec's doc), mid-authoring scenes are full of them, and a check that cries wolf
 // gets switched off. Undeclared is a warning too: the part runs, this check just can't see it.
 //
 // Scope limits, reported rather than hidden (a silent skip reads as "checked and clean"):
-//   • only parts whose PLC link is on (a declared `commsParam` that is true, or none declared);
-//   • only tag params with a non-empty value - an unset tag is unwired by intent, not by error;
-//   • only parts whose package is loaded: `unresolvedPackages` carries the others out so the caller can say so.
+//   â€¢ only parts whose PLC link is on (a declared `commsParam` that is true, or none declared);
+//   â€¢ only tag params with a non-empty value - an unset tag is unwired by intent, not by error;
+//   â€¢ only parts whose package is loaded: `unresolvedPackages` carries the others out so the caller can say so.
 
-import { canonicalAddress, looksLikeAddress, parseDirectAddress, sizeWord } from '../core/iecAddress'
-import type { IoSize } from '../core/iecAddress'
-import { packageParamSpecs } from '../core/packageParams'
-import { commsOn } from '../core/conveyorDirection'
-import { getPackage } from '../core/partRegistry'
+import { badControllerPrefix, controllerOf, controllerTag, splitControllerTag } from '../core/io/controllerTag'
+import { canonicalAddress, looksLikeAddress, parseDirectAddress, sizeWord } from '../core/io/iecAddress'
+import type { IoSize } from '../core/io/iecAddress'
+import { labelHead, packageParamSpecs } from '../core/packageParams'
+import { commsOn } from '../core/conveyor/conveyorDirection'
+import { getPackage } from '../core/parts/partRegistry'
 import type { TaggedPart } from './bindings'
-import type { PlcLink, WiredBindings } from './plcLink'
+import type { PlcLink, WiredBindings } from './link/plcLink'
+import { valueKinds } from './link/plcLink'
 
 /** A scene part as the wiring walk needs it - {@link TaggedPart} plus its display name. */
 export interface WiringPart extends TaggedPart {
@@ -39,7 +52,7 @@ export interface WiringPart extends TaggedPart {
   name?: string
 }
 
-export type WiringKind = 'contested' | 'type-clash' | 'program-type' | 'undriven' | 'unread' | 'undeclared' | 'address' | 'overlap'
+export type WiringKind = 'contested' | 'type-clash' | 'program-type' | 'undriven' | 'unread' | 'undeclared' | 'address' | 'overlap' | 'controller'
 
 export interface WiringProblem {
   severity: 'error' | 'warning'
@@ -75,9 +88,19 @@ export interface WiringReport {
 interface Decl {
   partId: string
   partLabel: string
-  paramKey: string
+  /** the param's label as its Inspector row shows it (core labelHead), which is what the problem text names */
+  paramLabel: string
   dir: 'in' | 'out'
   stType?: 'BOOL' | 'INT' | 'DINT' | 'REAL'
+  /** the label of the param this tag replaces while bound (`setpointFor`): undriven, the part uses 0 in its place */
+  replaces?: string
+  /** the part reads the tag only while a program drives it (`onlyWhenDriven`): undriven, it runs on its own setting */
+  gated?: boolean
+}
+
+/** A tag param as the problem text names it: the part, then the param as its Inspector row reads ("Belt1 (Run tag)"). */
+function named(d: Pick<Decl, 'partLabel' | 'paramLabel'>): string {
+  return `${d.partLabel} (${d.paramLabel})`
 }
 
 function paramsOf(p: WiringPart): Record<string, unknown> {
@@ -105,11 +128,30 @@ export function addressProblem(raw: string, dir: 'in' | 'out', stType: Decl['stT
 }
 
 /**
+ * What an undriven tag does to the parts that read it. One read whenever it names a tag reads 0, and a setpoint then
+ * runs on 0 in place of the param it replaces. One read only while a program drives it (`gated`) runs on its own
+ * setting instead, so "stays at its zero value" would be wrong for it.
+ */
+function undrivenCost(readers: readonly Decl[]): string {
+  const zero = readers.filter((r) => !r.gated)
+  const own = readers.filter((r) => r.gated)
+  const out: string[] = []
+  if (zero.length > 0) {
+    const hit = zero.filter((r) => r.replaces !== undefined)
+    const setpoints = hit.length > 0 ? `, so ${hit.map((r) => `${r.partLabel} uses 0 in place of its ${r.replaces}`).join(', ')}` : ''
+    out.push(`${own.length > 0 ? `for ${zero.map(named).join(', ')} ` : ''}it stays at its zero value${setpoints}`)
+  }
+  const names = [...new Set(own.map((r) => r.partLabel))]
+  if (names.length > 0) out.push(`${names.join(', ')} ${names.length === 1 ? 'ignores it and runs on its' : 'ignore it and run on their'} own setting`)
+  return out.join('; ')
+}
+
+/**
  * Walk a scene's declared tag signals and report what doesn't connect. `link` is optional: without a
  * compiled program the part-vs-part checks still run (contested writers, type clashes), and the
  * program-side ones are not attempted.
  */
-export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, 'inputs' | 'outputs' | 'watch' | 'aliases'>): WiringReport {
+export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, 'inputs' | 'outputs' | 'watch' | 'aliases' | 'declaredKind'>): WiringReport {
   const byTag = new Map<string, Decl[]>()
   const unresolved = new Set<string>()
 
@@ -125,7 +167,8 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
       continue
     }
     if (!commsOn(p as { type: string; packageId?: string; params: unknown })) continue
-    for (const spec of packageParamSpecs(pkg)) {
+    const specs = packageParamSpecs(pkg)
+    for (const spec of specs) {
       if (spec.kind !== 'tagRef') continue
       const raw = params[spec.key]
       let tag = typeof raw === 'string' ? raw.trim() : ''
@@ -140,20 +183,32 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
         })
         continue
       }
-      if (looksLikeAddress(tag)) {
-        const why = addressProblem(tag, spec.dir, spec.stType)
+      const bad = badControllerPrefix(tag)
+      if (bad !== null) {
+        const why = `${bad} before the :: is not a controller name (a letter or underscore, then letters, digits and underscores)`
+        problems.push({ severity: 'error', kind: 'controller', tag, message: `${named({ partLabel: p.name ?? p.id, paramLabel: labelHead(spec.label) })}: ${why}`, parts: [p.id] })
+        continue
+      }
+      const { controller, local } = splitControllerTag(tag)
+      if (looksLikeAddress(local)) {
+        const why = addressProblem(local, spec.dir, spec.stType)
         if (why) {
-          problems.push({ severity: 'error', kind: 'address', tag, message: `${p.name ?? p.id}.${spec.key}: ${why}`, parts: [p.id] })
+          problems.push({ severity: 'error', kind: 'address', tag, message: `${named({ partLabel: p.name ?? p.id, paramLabel: labelHead(spec.label) })}: ${why}`, parts: [p.id] })
           continue
         }
-        tag = canonicalAddress(tag) ?? tag
+        tag = controllerTag(controller, canonicalAddress(local) ?? local)
       }
       const list = byTag.get(tag) ?? []
-      list.push({ partId: p.id, partLabel: p.name ?? p.id, paramKey: spec.key, dir: spec.dir, stType: spec.stType })
+      const replaced = spec.setpointFor ? specs.find((s) => s.key === spec.setpointFor) : undefined
+      list.push({ partId: p.id, partLabel: p.name ?? p.id, paramLabel: labelHead(spec.label), dir: spec.dir, stType: spec.stType, ...(replaced ? { replaces: labelHead(replaced.label) } : {}), ...(spec.onlyWhenDriven ? { gated: true } : {}) })
       byTag.set(tag, list)
     }
   }
 
+  // What each tag holds, from its declaration where that says: a link builds its whole value table on each read
+  // (reading it per tag made Play take wired tags x table size), and even one read is a third of a second on a large
+  // program. The reader builds it at most once, for a tag only the table can answer.
+  const programKind = link ? valueKinds(link) : undefined
   const programReadSet = new Set(link?.inputs ?? [])
   const programWriteSet = new Set(link?.outputs ?? [])
   const tags: WiredTag[] = []
@@ -161,8 +216,10 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
   for (const [tag, decls] of [...byTag.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const writers = decls.filter((d) => d.dir === 'out')
     const readers = decls.filter((d) => d.dir === 'in')
-    const programWrites = programWriteSet.has(tag)
-    const programReads = programReadSet.has(tag)
+    // another controller's tag is that controller's to drive and read, not the program's here
+    const ours = controllerOf(tag) === null
+    const programWrites = ours && programWriteSet.has(tag)
+    const programReads = ours && programReadSet.has(tag)
 
     // types: agreement across every declaration of this tag
     const declaredTypes = [...new Set(decls.map((d) => d.stType).filter((t): t is 'BOOL' | 'INT' | 'DINT' | 'REAL' => t !== undefined))]
@@ -172,7 +229,7 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
         severity: 'error',
         kind: 'type-clash',
         tag,
-        message: `declared as ${declaredTypes.join(' and ')} by different parts (${decls.map((d) => `${d.partLabel}.${d.paramKey}`).join(', ')})`,
+        message: `declared as ${declaredTypes.join(' and ')} by different parts (${decls.map(named).join(', ')})`,
         parts: [...new Set(decls.map((d) => d.partId))],
       })
     }
@@ -180,7 +237,7 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
     // two things driving one tag: last writer wins, and which one that is depends on part order
     const driverCount = writers.length + (programWrites ? 1 : 0)
     if (driverCount > 1) {
-      const who = [...writers.map((w) => `${w.partLabel}.${w.paramKey}`), ...(programWrites ? ['the ST program'] : [])]
+      const who = [...writers.map(named), ...(programWrites ? ['the ST program'] : [])]
       problems.push({
         severity: 'error',
         kind: 'contested',
@@ -192,9 +249,9 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
 
     // a part's declared type vs what the program declared. `watch` is a snapshot of the program's scalars,
     // so it separates BOOL from numeric but not INT from REAL - only the mismatch it can prove is reported.
-    const seen = link?.watch?.[link.aliases?.get(tag) ?? tag]
-    if (type !== null && seen !== undefined && typeof seen !== 'string') {
-      const programIsBool = typeof seen === 'boolean'
+    const seen = ours ? programKind?.(tag) : undefined
+    if (type !== null && seen !== undefined && seen !== 'string') {
+      const programIsBool = seen === 'boolean'
       const partIsBool = type === 'BOOL'
       if (programIsBool !== partIsBool) {
         problems.push({
@@ -207,21 +264,23 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
       }
     }
 
-    if (readers.length > 0 && driverCount === 0) {
+    // a part writing the tag does not count: what a part writes reaches only the program, never another part
+    const partsOnly = writers.length > 0 && readers.length > 0 ? ` (a part's write reaches only the program, never another part)` : ''
+    if (ours && readers.length > 0 && !programWrites) {
       problems.push({
         severity: 'warning',
         kind: 'undriven',
         tag,
-        message: `read by ${readers.map((r) => `${r.partLabel}.${r.paramKey}`).join(', ')} but nothing writes it - it stays at its zero value`,
+        message: `read by ${readers.map(named).join(', ')} but the program does not drive it - ${undrivenCost(readers)}${partsOnly}`,
         parts: readers.map((r) => r.partId),
       })
     }
-    if (writers.length > 0 && readers.length === 0 && !programReads) {
+    if (ours && writers.length > 0 && !programReads) {
       problems.push({
         severity: 'warning',
         kind: 'unread',
         tag,
-        message: `written by ${writers.map((w) => `${w.partLabel}.${w.paramKey}`).join(', ')} but nothing reads it`,
+        message: `written by ${writers.map(named).join(', ')} but the program does not read it${partsOnly}`,
         parts: writers.map((w) => w.partId),
       })
     }
@@ -237,21 +296,23 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
   }
 
   // A word inside a double word: %ID100 is the two words %IW200 and %IW201, in the PLC's memory and on every
-  // Modbus link (core/externalIo.ts), so two tags there overwrite each other. In the sim they are separate
-  // names and nothing collides, which is exactly why it has to be said here. Only this overlap is universal:
+  // Modbus link (core/io/externalIo.ts), so two tags there overwrite each other. In the sim they are separate
+  // names and nothing collides, which is exactly why it has to be said here. Each controller has memory of its
+  // own, so the overlap is looked for within one controller. Only this overlap is universal:
   // a bit inside a word collides on a byte-addressed PLC and in a register image, but not in OpenPLC, whose
   // bits and words are separate tables, so that one is left to the link that would carry it.
-  const wordAt = new Map<string, string>() // `${area}:${word}` -> the word tag there
-  const doubles: [string, string, number][] = [] // [tag, area, first word]
+  const wordAt = new Map<string, string>() // `${controller}|${area}:${word}` -> the word tag there
+  const doubles: [string, string, string, number][] = [] // [tag, controller, area, first word]
   for (const tag of byTag.keys()) {
-    const a = looksLikeAddress(tag) ? parseDirectAddress(tag) : null
+    const { controller, local } = splitControllerTag(tag)
+    const a = looksLikeAddress(local) ? parseDirectAddress(local) : null
     if (!a || 'error' in a || a.area === 'M') continue
-    if (a.size === 'W') wordAt.set(`${a.area}:${a.fields[0]}`, tag)
-    else if (a.size === 'D') doubles.push([tag, a.area, a.fields[0]! * 2])
+    if (a.size === 'W') wordAt.set(`${controller ?? ''}|${a.area}:${a.fields[0]}`, tag)
+    else if (a.size === 'D') doubles.push([tag, controller ?? '', a.area, a.fields[0]! * 2])
   }
-  for (const [dword, area, first] of doubles) {
+  for (const [dword, controller, area, first] of doubles) {
     for (const w of [first, first + 1]) {
-      const word = wordAt.get(`${area}:${w}`)
+      const word = wordAt.get(`${controller}|${area}:${w}`)
       if (word === undefined) continue
       problems.push({
         severity: 'error',
@@ -259,6 +320,29 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
         tag: word,
         message: `is half of ${dword} (the two words %${area}W${first} and %${area}W${first + 1}), so on a real PLC and over the external link the two overwrite each other. Give one of them an address of its own`,
         parts: [...new Set([...(byTag.get(word) ?? []), ...(byTag.get(dword) ?? [])].map((d) => d.partId))],
+      })
+    }
+  }
+
+  // one controller in two spellings: each spelling after the first that appears, sorted, is the one reported
+  const spellings = new Map<string, Map<string, string[]>>() // lower-case name -> spelling -> part ids
+  for (const [tag, decls] of byTag) {
+    const c = controllerOf(tag)
+    if (c === null) continue
+    const bySpelling = spellings.get(c.toLowerCase()) ?? new Map<string, string[]>()
+    bySpelling.set(c, [...(bySpelling.get(c) ?? []), ...decls.map((d) => d.partId)])
+    spellings.set(c.toLowerCase(), bySpelling)
+  }
+  for (const bySpelling of spellings.values()) {
+    if (bySpelling.size < 2) continue
+    const [first, ...others] = [...bySpelling.keys()].sort()
+    for (const other of others) {
+      problems.push({
+        severity: 'error',
+        kind: 'controller',
+        tag: other,
+        message: `names the controller ${first!} spelled another way. Names ignore case, but tags must be spelled alike to meet, so write ${first!}`,
+        parts: [...new Set(bySpelling.get(other))],
       })
     }
   }
@@ -274,7 +358,7 @@ export function checkWiring(parts: readonly WiringPart[], link?: Pick<PlcLink, '
  * A part wired to one of the program's own tags by name (`CompiledProgram.bindable`: a controller tag, a
  * global, `Main.Eye`) is connected to it, and the parts say which way: a tag a part publishes is the
  * program's input, written in before each scan; one that parts only read is its output, which the program
- * drives and owns (ctx.tagDriven). That is the rule the OPC UA link already follows (core/opcUa.ts), and the
+ * drives and owns (ctx.tagDriven). That is the rule the OPC UA link already follows (core/io/opcUa.ts), and the
  * one a programmer expects of controller tags that carry no direction at all: a tag is a tag, and the
  * device on the other end decides.
  *

@@ -2,7 +2,6 @@
   "id": "oip.agv",
   "name": "AGV",
   "category": "Equipment",
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "links": [

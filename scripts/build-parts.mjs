@@ -14,7 +14,7 @@
 // parts/_shared/). From it this writes (scripts/lib/buildPart.mjs):
 //   behavior.js   part.js with its imports joined in and `manifest` / `rig()` left out (scripts/lib/bundlePart.mjs),
 //                 the script the app ships
-//   manifest.json the manifest, its rig compiled from rig() (src/core/rigCompile.ts)
+//   manifest.json the manifest, its rig compiled from rig() (src/core/rig/rigCompile.ts)
 // In this repo's examples/parts/<dir>/ the same two files are named behavior.ts and rig.json, as the built-ins have
 // always been. Both are OUTPUT: in a folder with a part.js, edit the part.js, and --check fails on an edit made to
 // either file. A folder with no part.js is hand-authored: its manifest and behavior are the source.
@@ -88,8 +88,8 @@ const broken = []
 const stale = [] // { label, path }
 const edited = [] // { label, path }: changed after the sources, so a build would undo that change
 try {
-  const { instantiatePartScript } = await vite.ssrLoadModule('/src/core/partScript.ts')
-  const { compileRig } = await vite.ssrLoadModule('/src/core/rigCompile.ts')
+  const { instantiatePartScript } = await vite.ssrLoadModule('/src/core/parts/partScript.ts')
+  const { compileRig } = await vite.ssrLoadModule('/src/core/rig/rigCompile.ts')
   const norm = (s) => s.replace(/\r\n/g, '\n')
   const read = (path) => {
     try {

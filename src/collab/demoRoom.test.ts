@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { createPart } from '../core/scene'
-import type { PartPackage } from '../core/partPackage'
+import { createPart } from '../core/scene/scene'
+import type { PartPackage } from '../core/parts/partPackage'
 import { DEFAULT_SIM_HZ, SCENE_VERSION } from '../core/types'
 import { claimRoomBuild, docToScene, orderArray, partsMap, readStDoc } from './schema'
 import { seedIfEmpty } from './provider'
 import { DEMO_SEED_META, demoFingerprint, isDemoRoom, roomFingerprint, syncDemoRoom } from './demoRoom'
 import type { DemoSeed } from './demoRoom'
-import { PACKAGE_FORMAT } from '../core/partPackage'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 
 function pkg(id: string): PartPackage {
   return { format: PACKAGE_FORMAT, id, name: id, params: {}, behavior: 'definePart({ step(){} })', geometry: { kind: 'rig', links: [{ name: 'deck', shape: { kind: 'box', size: [2, 0.1, 1] }, offset: [0, -0.05, 0], conveys: true }], joints: [], bounds: { length: 2, width: 1, top: 0.05, bottom: -0.1 } } }

@@ -4,9 +4,9 @@
 // are cast from and reads the cargo through the registry's step caches. SimWorld owns one.
 import type { FrameBeamHit, ZoneMix, ZoneTally } from '../core/frame'
 import { cargoKindName } from '../core/frame'
-import type { PartPackage } from '../core/partPackage'
-import type { ParamValue } from '../core/partApi'
-import type { Quat, Vec3 } from '../core/rigPose'
+import type { PartPackage } from '../core/parts/partPackage'
+import type { ParamValue } from '../core/parts/partApi'
+import type { Quat, Vec3 } from '../core/rig/rigPose'
 import type { SdkPart } from '../core/types'
 import type { BodyHolds } from './bodyHolds'
 import type { CargoRegistry } from './cargoRegistry'
@@ -44,6 +44,8 @@ export class SensorRegistry {
   /** the last countZone()'s count and summed age by product (package id) and by kind name, for ctx.zone's filter;
    *  null when the zone was empty, so an empty zone allocates nothing */
   lastZoneMix: ZoneMix | null = null
+  /** the cargo body the last castBeam() hit, or null when it was clear or saw only the pilot (→ ctx.markHit) */
+  readonly lastBeamHit: { box: LiveBox | null } = { box: null }
 
   /** `boxes` is the registry's cargo list; `holds` says which cargo a person carries; `pilot` is a body beams see */
   constructor(
@@ -80,9 +82,10 @@ export class SensorRegistry {
   }
 
   // Cast one world beam against every cargo box; return the nearest hit (or a clear result at full range).
-  castBeam(origin: Vec3, dir: Vec3, range: number): FrameBeamHit {
+  // `prev` is the beam's last reading, returned as it is when the beam reads the same (castBeamRows).
+  castBeam(origin: Vec3, dir: Vec3, range: number, prev?: FrameBeamHit): FrameBeamHit {
     const cargo = this.cargo
-    const snap = cargo.beamSnapshot() // one batched read per tick shared by every beam; null = stock build
+    const snap = cargo.stepSnapshot() // one batched read per tick shared by every beam; null = stock build
     // only the rows near the beam (rowsNear): the segment's box, widened by the largest body's bounding radius,
     // which is exactly as far as castBeamRows' sphere prefilter lets a body's centre sit off the beam
     if (snap && this.boxes.length >= GRID_MIN_ROWS) cargo.ensureRowGrid(snap)
@@ -92,7 +95,7 @@ export class SensorRegistry {
     const ex = ox + dir[0] * range
     const ez = oz + dir[2] * range
     const near = cargo.rowsNear(snap, Math.min(ox, ex) - reach, Math.min(oz, ez) - reach, Math.max(ox, ex) + reach, Math.max(oz, ez) + reach)
-    return castBeamRows(origin, dir, range, this.boxes, snap, near, this.beamScratch, this.pilot.body)
+    return castBeamRows(origin, dir, range, this.boxes, snap, near, this.beamScratch, this.pilot.body, this.lastBeamHit, prev)
   }
 
   // Count cargo whose centre is inside a zone (→ ctx.zone()), leaving their summed age in lastZoneAge.
@@ -105,7 +108,7 @@ export class SensorRegistry {
     const boxes = this.boxes
     const holds = this.holds
     // zone polls run per behavior per tick - read the batched snapshot rows, not per-box WASM getters
-    const snap = this.cargo.beamSnapshot()
+    const snap = this.cargo.stepSnapshot()
     // only the rows standing in the floor cells under the zone's footprint (rowsNear), else all of them
     const ex = Math.abs(z.hx * z.cos) + Math.abs(z.hz * z.sin) + 1e-6
     const ez = Math.abs(z.hx * z.sin) + Math.abs(z.hz * z.cos) + 1e-6
@@ -143,6 +146,12 @@ export class SensorRegistry {
     this.lastZoneMarks = marks
     this.lastZoneMix = mix
     return n
+  }
+
+  /** drop a part's beams and zones (it is rebuilt or deleted) */
+  forget(partId: string): void {
+    this.beamsByPartId.delete(partId)
+    this.zonesByPartId.delete(partId)
   }
 
   /** drop every sensor's geometry (the world is going) */

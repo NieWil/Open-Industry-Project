@@ -142,3 +142,25 @@ body {
   cursor: row-resize;
 }
 
+/* where a column's width gutter meets the bottom dock's height gutter (App places it by grid line). It sits over
+   both gutters, and its hit area reaches past the 6px cell so the junction is easy to catch. A left column and the
+   dock both grow toward up-right; a right column and the dock both grow toward up-left. */
+.gutter-corner {
+  position: relative;
+  z-index: 5;
+}
+
+.gutter-corner-left {
+  cursor: nesw-resize;
+}
+
+.gutter-corner-right {
+  cursor: nwse-resize;
+}
+
+.gutter-corner::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+

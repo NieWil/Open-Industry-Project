@@ -2,7 +2,6 @@
   "id": "oip.despawner",
   "name": "Despawner",
   "category": "Products",
-  "commsParam": "enableComms",
   "geometry": {
     "kind": "rig",
     "links": [
@@ -78,6 +77,7 @@
       },
       {
         "name": "readout",
+        "showParam": "showReadout",
         "shape": {
           "kind": "label",
           "textFrom": "readout",

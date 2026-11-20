@@ -17,9 +17,9 @@
 //
 // Written at the folder root, where the loader ignores it. Reassembly is manifest-driven
 // (folderFilesToProject) and the live sweep reads only project.json plus the format's own subfolders
-// (editor/projectFolderLink.ts), so this file has no effect on the app and cannot corrupt a round trip.
+// (editor/project/projectFolderLink.ts), so this file has no effect on the app and cannot corrupt a round trip.
 
-import type { ParamSchema, ParamSpec } from './partApi'
+import type { ParamSchema, ParamSpec } from './parts/partApi'
 import type { Controller } from './controller'
 import { isKnownDialect } from './dialect'
 
@@ -58,7 +58,7 @@ export interface GuideScene {
   name?: string
   /** folder-relative path this scene's JSON was written to */
   scenePath: string
-  /** folder-relative paths of its program's files, in order, when it has a program (core/projectFolder.ts) */
+  /** folder-relative paths of its program's files, in order, when it has a program (core/project/projectFolder.ts) */
   programPaths?: string[]
   /** the program's controller table, when it runs several programs on tasks */
   controller?: Controller
@@ -90,6 +90,10 @@ export interface PartExtent {
  * content depend on global state rather than on the document. Returning null for a part it cannot measure is expected, not an error.
  */
 export type MeasureExtent = (part: unknown) => PartExtent | null
+
+/** Who reads the guide: an agent editing the project's folder (its AGENTS.md), or one driving the app's MCP tools
+ *  (get_guide), which says which tool does what instead of which file and CLI. */
+export type GuideDoor = 'files' | 'tools'
 
 /**
  * The package a part names, for a scene that carries no copy of it: a project scene names its parts' packages by id,
@@ -128,9 +132,9 @@ function cell(s: string): string {
   return s.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ')
 }
 
-function truncate(rows: string[], what: string): string[] {
+function truncate(rows: string[], what: string, door: GuideDoor): string[] {
   if (rows.length <= MAX_ROWS) return rows
-  return [...rows.slice(0, MAX_ROWS), `\n_(+${rows.length - MAX_ROWS} more ${what} not listed. Read the scene file for the full set.)_`]
+  return [...rows.slice(0, MAX_ROWS), `\n_(+${rows.length - MAX_ROWS} more ${what} not listed. ${door === 'tools' ? '`get_scene` lists them all' : 'Read the scene file for the full set'}.)_`]
 }
 
 /** The packages a scene's parts use, as packageId → its param schema: what the scene embeds, then (a project scene
@@ -197,7 +201,7 @@ function collectTagUses(scene: unknown, resolve?: ResolvePackage): TagUse[] {
   return uses.sort((a, b) => a.tag.localeCompare(b.tag) || a.partLabel.localeCompare(b.partLabel))
 }
 
-function tagTable(uses: readonly TagUse[]): string {
+function tagTable(uses: readonly TagUse[], door: GuideDoor): string {
   if (uses.length === 0) {
     return 'This scene wires no PLC tags yet. Set a part\'s tag parameter (any param of type `tag`) to a name, then drive that name from the ST program.\n'
   }
@@ -208,13 +212,13 @@ function tagTable(uses: readonly TagUse[]): string {
   return [
     '| Tag | Direction | ST type | Part | Parameter |',
     '|---|---|---|---|---|',
-    ...truncate(rows, 'tags'),
+    ...truncate(rows, 'tags', door),
     '',
     'A tag the **program writes** is an output of your ST program: assign it. That is how you command a',
     'device. A tag the **program reads** is produced by the part (a sensor, a counter, a running flag): read',
     'it, never assign it. Either can be an ordinary `VAR` of the program, whose direction the wiring gives',
     '(as a variable on a real PLC has none of its own); declaring it `VAR_OUTPUT` / `VAR_INPUT` states',
-    'the direction in the program too, and then the wiring check (`npm run check-wiring`) catches a tag wired',
+    `the direction in the program too, and then the wiring check (${door === 'tools' ? '`get_problems`' : '`npm run check-wiring`'}) catches a tag wired`,
     'the wrong way round. That is the most common mistake here, and nothing at the ST level catches it.',
     '',
   ].join('\n')
@@ -266,7 +270,7 @@ function extentSpan(e: PartExtent): string {
 }
 
 /** What is placeable in this project: the packages its scene's parts already use, with their editable params. */
-function packageTable(scene: unknown, measure?: MeasureExtent, resolve?: ResolvePackage): string {
+function packageTable(scene: unknown, door: GuideDoor, measure?: MeasureExtent, resolve?: ResolvePackage): string {
   const specs = sceneParamSpecs(scene, resolve)
   if (specs.size === 0) return '_This scene uses no part packages yet._\n'
   // Measured from the first placed instance of each package, so the numbers describe parts that exist
@@ -305,7 +309,7 @@ function packageTable(scene: unknown, measure?: MeasureExtent, resolve?: Resolve
       ? '| Package | Name | Extent about its position (m) | Shape handles | Parameters you may set |'
       : '| Package | Name | Shape handles | Parameters you may set |',
     anyExtent ? '|---|---|---|---|---|' : '|---|---|---|---|',
-    ...truncate(rows, 'packages'),
+    ...truncate(rows, 'packages', door),
     '',
     ...(anyExtent
       ? [
@@ -326,7 +330,7 @@ function packageTable(scene: unknown, measure?: MeasureExtent, resolve?: Resolve
   ].join('\n')
 }
 
-function partInventory(scene: unknown): string {
+function partInventory(scene: unknown, door: GuideDoor): string {
   const parts = sceneParts(scene)
   if (parts.length === 0) return '_This scene is empty._\n'
   const counts = new Map<string, number>()
@@ -337,7 +341,7 @@ function partInventory(scene: unknown): string {
   const rows = [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([id, n]) => `| \`${cell(id)}\` | ${n} |`)
-  return [`${parts.length} part${parts.length === 1 ? '' : 's'}:`, '', '| Package / type | Count |', '|---|---|', ...truncate(rows, 'kinds'), ''].join('\n')
+  return [`${parts.length} part${parts.length === 1 ? '' : 's'}:`, '', '| Package / type | Count |', '|---|---|', ...truncate(rows, 'kinds', door), ''].join('\n')
 }
 
 /**
@@ -346,137 +350,209 @@ function partInventory(scene: unknown): string {
  * `doc` is the already-serialized document plus the folder paths each scene was written to, so the
  * file can point at real paths rather than describing a layout in the abstract.
  */
-export function agentGuideMarkdown(doc: GuideDoc, opts?: { measure?: MeasureExtent; resolve?: ResolvePackage }): string {
+export function agentGuideMarkdown(doc: GuideDoc, opts?: { measure?: MeasureExtent; resolve?: ResolvePackage; door?: GuideDoor }): string {
   const name = doc.name !== undefined && doc.name !== '' ? doc.name : 'Untitled project'
   const s = doc.scene
   const testCount = doc.tests?.length ?? 0
+  // the agent reads this through the app's MCP tools (get_guide), not as a file beside the project's own
+  const door = opts?.door ?? 'files'
+  const tools = door === 'tools'
 
   const out: string[] = []
   const w = (...lines: string[]): void => void out.push(...lines)
 
-  w(
-    `# ${name} - agent guide`,
-    '',
-    '<!-- GENERATED by Open Industry Project when this project was saved. Rewritten on every save,',
-    '     so hand edits are lost. Everything below is derived from THIS project. -->',
-    '',
-    'This folder is an industrial simulation: a 3D scene of conveyors and machines, driven by an',
-    'IEC 61131-3 **Structured Text** program. Edit these files with ordinary file edits. While the',
-    'folder is linked, the app reloads it automatically within about a second.',
-    '',
-    '**The app does not write back to this folder while it is following it.** You are the only writer;',
-    'anything the user changes in the app is replaced by what is on disk here.',
-    '',
-    '## What you can and cannot do from these files',
-    '',
-    '| Task | Status |',
-    '|---|---|',
-    '| Write or edit the ST control program | **Supported.** This is the strongest path: text, with a published grammar and a real test loop. |',
-    '| Write or edit tests | **Supported.** Tests are declarative JSON and the user can run them in the app. |',
-    '| Retune an existing part (parameters, tag names) | **Supported.** Edit `params` on the part in the scene file. |',
-    '| Move or add a part of a type already in the scene | **Possible, but unverified.** Nothing checks geometry. See *Placement* below. |',
-    '| Add a part type this project does not already contain | **Not possible from files alone.** See *Placement*. |',
-    '',
-  )
-
-  w('## Layout', '', '```')
-  w('project.json                 the manifest: name, file references, and the program\'s settings')
-  w(`${s.scenePath.padEnd(28)} the scene: its parts (their packages: parts/)`)
-  const programPaths = s.programPaths ?? []
-  if (programPaths.length > 0 && s.stDialect !== undefined && !isKnownDialect(s.stDialect)) {
-    // a program this build cannot read: say so rather than describe it as Structured Text an agent may edit
-    for (const path of programPaths) {
-      w(`${path.padEnd(28)} its program, in the "${s.stDialect}" dialect, which this version of the app cannot run: leave it as it is`)
+  if (tools) {
+    w(
+      `# ${name} - agent guide`,
+      '',
+      'This project is an industrial simulation: a 3D scene of conveyors and machines, driven by an IEC 61131-3',
+      '**Structured Text** program. You are driving the editor the user has open, through its MCP tools. Every edit',
+      'is an ordinary edit: one undo step labelled `Agent: ...` that the user sees and can take back, saved to the',
+      "project's folder like theirs. Everything below is derived from the open project.",
+      '',
+      '## What you can do with the tools',
+      '',
+      '| Task | Tools |',
+      '|---|---|',
+      '| Write or edit the ST program | `set_program` (the whole text), or `list_pous` / `get_pou` / `set_pou` one POU at a time; `check_program` without keeping it |',
+      '| Write, keep and run tests | `run_test` (a spec, or every kept test), `save_test`, `list_tests` |',
+      '| Place, move and retune parts | `list_catalog`, `get_package`, `add_part`, `snap_part`, `update_part`, `duplicate_parts`, `delete_parts` |',
+      '| Wire parts to the program | a part\'s tag params (`update_part`), `rename_tag`, `assign_io` |',
+      '| A part type the catalog lacks | `get_part_sdk`, `check_part`, `create_part`, `edit_part_definition` |',
+      '| Bring in and teach a robot | `import_robot` (a .urdf or .xacro file), `solve_robot_pose` (the joint row that puts its grip point at a point, tool down), `get_robot_pose`; then `update_part` on its `waypoints`, `waypointNames`, `jobs` and `tool` |',
+      '| See and operate the line | `capture_view`, `run` / `stop`, `get_tags`, `set_tag`, `trace_tags`, `get_cargo` |',
+      '| Stop the live sim on a moment, look, step on | `pause`, `step` (`steps`, `seconds`, or `until` a sim time), `resume`; paused, `get_cargo` adds velocity and what each box touches |',
+      '| See the cargo at a known sim time | `run_test` with `cargo` (position, tilt, velocity, what each box touches) and `trace`: the same run every time |',
+      '| Another project | `list_projects`, `open_project`, `new_project` |',
+      '',
+      '## The project folder',
+      '',
+      'On the desktop the project lives in a folder, kept in sync with the editor both ways: your tool edits are',
+      'written to it a moment after, and a file written there loads into the editor. Both are the project, so use',
+      'whichever suits the edit. If you also write files there, call `sync_folder` after writing and before the next',
+      'tool: it loads them at once and says what loaded. Loading a change to the scene, the program or a part',
+      'rebuilds the scene and stops a running sim (`stoppedRun`), so `run` again after it. Editing the same file both ways',
+      'between syncs is a conflict that waits for the person.',
+      '',
+      'The live sim (`run`, `get_cargo`, `trace_tags`) runs on wall-clock time, so where it has got to depends on',
+      'when you look. To look closely at something you saw, `pause` it and `step` on. To see what happens at a known',
+      'time the same on every run, write a spec and use `run_test` with `cargo` and `trace`.',
+      '',
+      '## The program',
+      '',
+      'The program is one text, in POUs: every `TYPE`, `VAR_GLOBAL` and POU comes before the code outside every POU,',
+      '`program` in `list_pous`, which comes last (only a `CONFIGURATION` may follow it). Without a task table the',
+      "`PROGRAM`s run in that order on one task every scan. `set_pou` keeps the order; `set_task` retimes a task.",
+      '',
+    )
+    if (s.controller) {
+      const [p, t] = [s.controller.programs.length, s.controller.tasks.length]
+      w(`This project runs ${p} program${p === 1 ? '' : 's'} on ${t} task${t === 1 ? '' : 's'} (\`get_program\` lists them).`, '')
     }
-  } else if (programPaths.length > 0) {
-    const shown = programPaths.length > PROGRAM_FILES_LISTED ? programPaths.slice(0, PROGRAM_FILES_LISTED - 1) : programPaths
-    for (const path of shown) w(`${path.padEnd(28)} ${programFileRole(path)}`)
-    if (shown.length < programPaths.length) w(`${''.padEnd(28)} ... and ${programPaths.length - shown.length} more: the manifest's "program" lists them all`)
-  } else if (s.stDialect !== undefined && !isKnownDialect(s.stDialect)) {
-    // no program, but a dialect this build does not run: a program written here would not run either
-    w(`${''.padEnd(28)} no program yet; it is marked as the "${s.stDialect}" dialect, which this version of the app cannot run`)
+    w(
+      'The code outside every `PROGRAM` holds the controller\'s tags: every `PROGRAM` can use them, and they keep their',
+      'bare names. A `PROGRAM` instance\'s own variables are addressed as `Instance.Name`, on part tags too: a part wires',
+      'to `Merge1.Motor`, not `Motor`. One exception: when the controller runs exactly ONE program instance, its',
+      'variables also answer to their bare names, so a program that is just one `PROGRAM Main ... END_PROGRAM` drives',
+      'parts wired to `Motor`. Wire each variable by one name only.',
+      '',
+      'A tag the program reads from outside the scene (an operator panel, a SCADA) is a `VAR_INPUT`: that is what a',
+      "test's `inputs` and `set_tag` reach. `get_problems` warns that nothing in the scene drives it, which is expected.",
+      '',
+    )
+    if (s.stDialect !== undefined && !isKnownDialect(s.stDialect)) {
+      w(`The program is marked as the "${s.stDialect}" dialect, which this version cannot run: leave it as it is.`, '')
+    }
+  } else {
+    w(
+      `# ${name} - agent guide`,
+      '',
+      '<!-- GENERATED by Open Industry Project when this project was saved. Rewritten on every save,',
+      '     so hand edits are lost. Everything below is derived from THIS project. -->',
+      '',
+      'This folder is an industrial simulation: a 3D scene of conveyors and machines, driven by an',
+      'IEC 61131-3 **Structured Text** program. Edit these files with ordinary file edits. While the',
+      'project is open in the app, the app loads a changed file within about a second.',
+      '',
+      '**The app keeps this folder in sync both ways.** What you write here loads into the app, and what the user',
+      'changes in the app is written back here a moment later. A file changed in both places, differently, is a',
+      'conflict: nothing moves until the user picks a version. So read a file again before you rewrite it.',
+      'Loading a change to the scene, the program or a part rebuilds the scene in the app and',
+      'stops a running sim. Through the app\'s MCP tools, `sync_folder` loads your file edits at once and says what loaded.',
+      '',
+      '## What you can and cannot do from these files',
+      '',
+      '| Task | Status |',
+      '|---|---|',
+      '| Write or edit the ST control program | **Supported.** This is the strongest path: text, with a published grammar and a real test loop. |',
+      '| Write or edit tests | **Supported.** Tests are declarative JSON and the user can run them in the app. |',
+      '| Retune an existing part (parameters, tag names) | **Supported.** Edit `params` on the part in the scene file. |',
+      '| Move or add a part of a type already in the scene | **Possible, but unverified.** Nothing checks geometry. See *Placement* below. |',
+      '| Add a part type this project does not already contain | **Not possible from files alone.** See *Placement*. |',
+      '',
+    )
+
+    w('## Layout', '', '```')
+    w('project.json                 the manifest: name, file references, and the program\'s settings')
+    w(`${s.scenePath.padEnd(28)} the scene: its parts (their packages: parts/)`)
+    const programPaths = s.programPaths ?? []
+    if (programPaths.length > 0 && s.stDialect !== undefined && !isKnownDialect(s.stDialect)) {
+      // a program this build cannot read: say so rather than describe it as Structured Text an agent may edit
+      for (const path of programPaths) {
+        w(`${path.padEnd(28)} its program, in the "${s.stDialect}" dialect, which this version of the app cannot run: leave it as it is`)
+      }
+    } else if (programPaths.length > 0) {
+      const shown = programPaths.length > PROGRAM_FILES_LISTED ? programPaths.slice(0, PROGRAM_FILES_LISTED - 1) : programPaths
+      for (const path of shown) w(`${path.padEnd(28)} ${programFileRole(path)}`)
+      if (shown.length < programPaths.length) w(`${''.padEnd(28)} ... and ${programPaths.length - shown.length} more: the manifest's "program" lists them all`)
+    } else if (s.stDialect !== undefined && !isKnownDialect(s.stDialect)) {
+      // no program, but a dialect this build does not run: a program written here would not run either
+      w(`${''.padEnd(28)} no program yet; it is marked as the "${s.stDialect}" dialect, which this version of the app cannot run`)
+    }
+    if (s.controller) {
+      const [p, t] = [s.controller.programs.length, s.controller.tasks.length]
+      w(`${''.padEnd(28)} runs ${p} program${p === 1 ? '' : 's'} on ${t} task${t === 1 ? '' : 's'}: its "controller" in project.json`)
+    }
+    if (testCount > 0) w('tests/*.test.json            one declarative test per file')
+    w('```', '')
+    w(
+      'Files this manifest does not reference are ignored, so this guide is inert to the app.',
+      '',
+      '### Adding a file',
+      '',
+      '**Creating a file is not enough: `project.json` must reference it, or the app never loads it.** This is',
+      'the most common way an edit here silently does nothing, and the failure does not name its own cause: a',
+      'program that was never loaded reports as *"tag ... never appeared"*, which reads like a typo in a tag name.',
+      '',
+      'The PLC program is one file per block under `plc/`, and the manifest\'s `program` lists them IN ORDER. The app joins',
+      'them in that order into one program, so the order is the program\'s: list every `TYPE`, `VAR_GLOBAL` and POU file',
+      'before `plc/program.st` (the code outside every POU, which comes last; only a `CONFIGURATION` may follow it), and',
+      'without a `controller` the `PROGRAM`s run in the order listed. A file holds ONE block (a `FUNCTION_BLOCK`,',
+      '`FUNCTION`, `PROGRAM`, `INTERFACE`, `CONFIGURATION`, `TYPE` or `VAR_GLOBAL` block), named for what it declares',
+      '(`plc/Merge.st`), or for its keyword when it declares no name (`plc/type.st`, `plc/var_global.st`). A `.st` file is',
+      'Structured Text; a `.ld` file holds a `LADDER` section (below). Whenever the app has the folder open it lays the',
+      'program out by these rules, so files you write in another shape are rewritten into them: that is expected.',
+      'To add a function block, write `plc/Latch.st` and list it before `plc/program.st`:',
+      '',
+      '```json',
+      '{ "version": 7, "name": "Line", "scene": "scene.json", "program": ["plc/Latch.st", "plc/program.st"] }',
+      '```',
+      '',
+      'The project can also run several programs, each on its own task. Write each one as a `PROGRAM Name ... END_PROGRAM`',
+      'in a file of its own, with no `CONFIGURATION`, and list the tasks and program instances in the manifest\'s `controller`:',
+      '',
+      '```json',
+      '{ "version": 7, "name": "Line", "scene": "scene.json", "program": ["plc/Merge.st", "plc/program.st"],',
+      '  "controller": {',
+      '    "tasks": [{ "name": "Fast", "intervalMs": 10, "priority": 1 }, { "name": "Slow", "intervalMs": 100, "priority": 5 }],',
+      '    "programs": [{ "name": "Main", "task": "Slow" }, { "name": "Merge1", "type": "Merge", "task": "Fast" }]',
+      '  } }',
+      '```',
+      '',
+      'Each task runs its programs every `intervalMs` of simulated time, and tasks due together run by `priority`, 0 first. A',
+      'program with no `task` runs every physics step, after the periodic ones. The program with no `type` runs the code',
+      'outside every `PROGRAM`: that code\'s variables are the controller\'s tags, every `PROGRAM` can use them, and they keep',
+      'their bare names. A `PROGRAM` instance\'s own variables are addressed as `Instance.Name`, on part tags too: a part wires',
+      'to `Merge1.Motor`, not `Motor`. Without a `controller` it runs all of the file on one task every `stScanMs`:',
+      'the top-level code, and each `PROGRAM` as an instance named after it. One exception: when the controller runs',
+      'exactly ONE program instance, its variables also answer to their bare names (`Motor` and `Main.Motor` are the same',
+      'variable), so a file that is just one `PROGRAM Main ... END_PROGRAM` drives parts wired to `Motor`. Wire each',
+      'variable by one name only.',
+      '',
+      'The manifest may also carry `"stDialect"`, the language family the program is written in. Absent means IEC 61131-3,',
+      'the only one this version runs. Leave it as you find it: never add or change it (that relabels code, it does not',
+      'convert it). A program in any other dialect is kept unchanged and refused at Play.',
+      '',
+      'The manifest may also carry `"simHz"`, a whole number from 60 to 1000: the physics step rate, and so how soon a PLC',
+      'output can follow an input (one step). Absent means 60. A test runs at that rate, like the app.',
+      '',
+      'The scene may carry `"units"`, `"imperial"` or `"metric"` (the default when absent): how the app shows every',
+      'speed, and every conveyor\'s units switch (`fpmUnits`: its speed and REAL speed tag in feet per minute, or in m/s).',
+      'It may also carry `"lengthUnit"`, `"m"`, `"mm"` or `"in"`: the unit the app shows every length in, display only.',
+      'One scene, one convention: give every `fpmUnits` in the scene the value its `units` says.',
+      'To change the scene\'s units, do it in',
+      'the app (with nothing selected, the Inspector shows the scene\'s Speed, and changing it',
+      'converts every conveyor and moves its speed tag), or by hand: convert each speed, move each speed tag binding',
+      'with it, and then change the speed values the program writes.',
+      '',
+      'To add a test, write `tests/<name>.test.json` and list it in the manifest\'s top-level `tests` array:',
+      '',
+      '```json',
+      '{',
+      '  "version": 7,',
+      '  "name": "My Project",',
+      '  "scene": "scene.json",',
+      '  "program": ["plc/program.st"],',
+      '  "tests": ["tests/my-test.test.json"]',
+      '}',
+      '```',
+      '',
+      'One asymmetry to know about: the `test-project` CLI also runs a `tests/` file the manifest does not list',
+      '(with a note), so an unreferenced test still runs there. The app does not. Register it, or it passes for',
+      'you and does not exist for the person you are writing it for.',
+      '',
+    )
   }
-  if (s.controller) {
-    const [p, t] = [s.controller.programs.length, s.controller.tasks.length]
-    w(`${''.padEnd(28)} runs ${p} program${p === 1 ? '' : 's'} on ${t} task${t === 1 ? '' : 's'}: its "controller" in project.json`)
-  }
-  if (testCount > 0) w('tests/*.test.json            one declarative test per file')
-  w('```', '')
-  w(
-    'Files this manifest does not reference are ignored, so this guide is inert to the app.',
-    '',
-    '### Adding a file',
-    '',
-    '**Creating a file is not enough: `project.json` must reference it, or the app never loads it.** This is',
-    'the most common way an edit here silently does nothing, and the failure does not name its own cause: a',
-    'program that was never loaded reports as *"tag ... never appeared"*, which reads like a typo in a tag name.',
-    '',
-    'The PLC program is one file per block under `plc/`, and the manifest\'s `program` lists them IN ORDER. The app joins',
-    'them in that order into one program, so the order is the program\'s: list every `TYPE`, `VAR_GLOBAL` and POU file',
-    'before `plc/program.st` (the code outside every POU, which comes last; only a `CONFIGURATION` may follow it), and',
-    'without a `controller` the `PROGRAM`s run in the order listed. A file holds ONE block (a `FUNCTION_BLOCK`,',
-    '`FUNCTION`, `PROGRAM`, `INTERFACE`, `CONFIGURATION`, `TYPE` or `VAR_GLOBAL` block), named for what it declares',
-    '(`plc/Merge.st`), or for its keyword when it declares no name (`plc/type.st`, `plc/var_global.st`). A `.st` file is',
-    'Structured Text; a `.ld` file holds a `LADDER` section (below). Whenever the app has the folder open it lays the',
-    'program out by these rules, so files you write in another shape are rewritten into them: that is expected.',
-    'To add a function block, write `plc/Latch.st` and list it before `plc/program.st`:',
-    '',
-    '```json',
-    '{ "version": 7, "name": "Line", "scene": "scene.json", "program": ["plc/Latch.st", "plc/program.st"] }',
-    '```',
-    '',
-    'The project can also run several programs, each on its own task. Write each one as a `PROGRAM Name ... END_PROGRAM`',
-    'in a file of its own, with no `CONFIGURATION`, and list the tasks and program instances in the manifest\'s `controller`:',
-    '',
-    '```json',
-    '{ "version": 7, "name": "Line", "scene": "scene.json", "program": ["plc/Merge.st", "plc/program.st"],',
-    '  "controller": {',
-    '    "tasks": [{ "name": "Fast", "intervalMs": 10, "priority": 1 }, { "name": "Slow", "intervalMs": 100, "priority": 5 }],',
-    '    "programs": [{ "name": "Main", "task": "Slow" }, { "name": "Merge1", "type": "Merge", "task": "Fast" }]',
-    '  } }',
-    '```',
-    '',
-    'Each task runs its programs every `intervalMs` of simulated time, and tasks due together run by `priority`, 0 first. A',
-    'program with no `task` runs every physics step, after the periodic ones. The program with no `type` runs the code',
-    'outside every `PROGRAM`: that code\'s variables are the controller\'s tags, every `PROGRAM` can use them, and they keep',
-    'their bare names. A `PROGRAM` instance\'s own variables are addressed as `Instance.Name`, on part tags too: a part wires',
-    'to `Merge1.Motor`, not `Motor`. Without a `controller` it runs all of the file on one task every `stScanMs`:',
-    'the top-level code, and each `PROGRAM` as an instance named after it. One exception: when the controller runs',
-    'exactly ONE program instance, its variables also answer to their bare names (`Motor` and `Main.Motor` are the same',
-    'variable), so a file that is just one `PROGRAM Main ... END_PROGRAM` drives parts wired to `Motor`. Wire each',
-    'variable by one name only.',
-    '',
-    'The manifest may also carry `"stDialect"`, the language family the program is written in. Absent means IEC 61131-3,',
-    'the only one this version runs. Leave it as you find it: never add or change it (that relabels code, it does not',
-    'convert it). A program in any other dialect is kept unchanged and refused at Play.',
-    '',
-    'The manifest may also carry `"simHz"`, a whole number from 60 to 1000: the physics step rate, and so how soon a PLC',
-    'output can follow an input (one step). Absent means 60. A test runs at that rate, like the app.',
-    '',
-    'The scene may carry `"units"`, `"imperial"` or `"metric"` (the default when absent): how the app shows every length and',
-    'speed, and every conveyor\'s units switch (`fpmUnits`: its speed and REAL speed tag in feet per minute, or in m/s). One',
-    'scene, one convention: give every `fpmUnits` in the scene the value its `units` says. To change the scene\'s units, do',
-    'it in the app (with nothing selected, the Inspector shows the scene\'s Units, and changing it',
-    'converts every conveyor and moves its speed tag), or by hand: convert each speed, move each speed tag binding',
-    'with it, and then change the speed values the program writes.',
-    '',
-    'To add a test, write `tests/<name>.test.json` and list it in the manifest\'s top-level `tests` array:',
-    '',
-    '```json',
-    '{',
-    '  "version": 7,',
-    '  "name": "My Project",',
-    '  "scene": "scene.json",',
-    '  "program": ["plc/program.st"],',
-    '  "tests": ["tests/my-test.test.json"]',
-    '}',
-    '```',
-    '',
-    'One asymmetry to know about: the `test-project` CLI also runs a `tests/` file the manifest does not list',
-    '(with a note), so an unreferenced test still runs there. The app does not. Register it, or it passes for',
-    'you and does not exist for the person you are writing it for.',
-    '',
-  )
 
   const activeSceneJson = s.scene
   w('## PLC tags in this scene', '')
@@ -484,29 +560,49 @@ export function agentGuideMarkdown(doc: GuideDoc, opts?: { measure?: MeasureExte
     'These are the names this scene actually wires. They are chosen by whoever placed the parts, so no',
     'catalog or type definition knows them. This table is the only place they are written down.',
     '',
-  )
-  w(tagTable(collectTagUses(activeSceneJson, opts?.resolve)))
-
-  w('## Part packages available in this scene', '')
-  w(
-    'A part names its package by `packageId`, and every package the scene uses is this project\'s own copy, kept',
-    'once in `parts/<slug>/` (`manifest.json` + `behavior.js`): the app\'s **built-in** parts too (`npm run catalog`',
-    'in an oip-web checkout lists their ids), each recording in `origin.app` which version of the built-in it is, so',
-    'the app can say when it updates one and never changes this project by itself. Don\'t edit `origin`. A part',
-    'naming a package that is neither in `parts/` nor a built-in is rejected at load. So you can freely place more',
-    'of anything listed here (copy an existing entry in the scene file and change its `id` and `position`), and any',
-    'built-in by its id: the app copies it into `parts/` on its next save. But a package of your own is',
-    'not something to write by hand: from an oip-web checkout, `npm run add-part -- <this folder> <part folder>`',
-    "adds a custom part to the project. Without a checkout, ask the user to place one in the app and save.",
-    'To seat a device on a placed conveyor (an eye on its guard, a button on its frame), use `npm run snap-part --',
-    '<part> --project <this folder> --host <placed id> --write`: it runs the editor\'s own snap and writes the pose',
-    'and fitted params, so you never compute guard offsets or beam ranges by hand.',
+    'A tag may name the controller it belongs to: `Cell2::%IX0.0` is %IX0.0 on the PLC called Cell2, and `Cell2::Eye` is',
+    "Cell2's tag Eye. A tag with no name belongs to the default controller. Each controller runs in the simulator or on a",
+    'PLC outside this app. A simulated one runs its own tasks (`plc` on a task) and the program instances on them, on',
+    "memory of its own, and reads and drives only its own tags. The default controller's program never sees another's",
+    "tags. Keep a cell's parts on one controller, and put the name on every one of",
+    'their tags. A tag left without it goes to the default controller, and the program then reports it as wired but never',
+    'declared.',
+    ...(door === 'tools' ? ['`list_controllers` lists them; `assign_controller` moves a set of parts onto one, after `duplicate_parts` for instance; `set_controller` runs one in the simulator; `run_instance_on` gives it a program instance.'] : []),
     '',
   )
-  w(packageTable(activeSceneJson, opts?.measure, opts?.resolve))
+  w(tagTable(collectTagUses(activeSceneJson, opts?.resolve), door))
+
+  w('## Part packages available in this scene', '')
+  if (tools) {
+    w(
+      "Every package the scene uses is this project's own copy. `list_catalog` lists what can be placed and",
+      '`get_package` one in full: each param, what a tag\'s values mean, and its frame (footprint, where the origin',
+      'sits, conveying ends, sensor zones and beams). To seat a device on a placed part (an eye on a guard, a lane',
+      'on a belt\'s side), use `snap_part`: it runs the editor\'s own snap and fits the params, so you never compute',
+      'guard offsets or beam ranges by hand. A part type the catalog lacks is `create_part` (`get_part_sdk` first).',
+      '',
+    )
+  } else {
+    w(
+      'A part names its package by `packageId`, and every package the scene uses is this project\'s own copy, kept',
+      'once in `parts/<slug>/` (`manifest.json` + `behavior.js`): the app\'s **built-in** parts too (`npm run catalog`',
+      'in an oip-web checkout lists their ids), each recording in `origin.app` which version of the built-in it is, so',
+      'the app can say when it updates one and never changes this project by itself. Don\'t edit `origin`. A part',
+      'naming a package that is neither in `parts/` nor a built-in is rejected at load. So you can freely place more',
+      'of anything listed here (copy an existing entry in the scene file and change its `id` and `position`), and any',
+      'built-in by its id: the app copies it into `parts/` on its next save. But a package of your own is',
+      'not something to write by hand: from an oip-web checkout, `npm run add-part -- <this folder> <part folder>`',
+      "adds a custom part to the project. Without a checkout, ask the user to place one in the app and save.",
+      'To seat a device on a placed conveyor (an eye on its guard, a button on its frame), use `npm run snap-part --',
+      '<part> --project <this folder> --host <placed id> --write`: it runs the editor\'s own snap and writes the pose',
+      'and fitted params, so you never compute guard offsets or beam ranges by hand.',
+      '',
+    )
+  }
+  w(packageTable(activeSceneJson, door, opts?.measure, opts?.resolve))
 
   w('## What is in the scene now', '')
-  w(partInventory(activeSceneJson))
+  w(partInventory(activeSceneJson, door))
 
   w(
     '## Writing the Structured Text program',
@@ -614,10 +710,18 @@ export function agentGuideMarkdown(doc: GuideDoc, opts?: { measure?: MeasureExte
   w(
     '## Writing tests',
     '',
-    'A test is one JSON file in `tests/`, **referenced from `project.json`** (see *Adding a file* above:',
-    'an unreferenced test is invisible to the app, which is what runs it for the user). It runs the scene for',
-    '`duration` simulated seconds against real physics and the real ST scan, pokes any `inputs`, and asserts',
-    'every `checks` entry.',
+    ...(tools
+      ? [
+          'A test is a JSON spec. `run_test` runs it against the open scene, unsaved edits included; `save_test` keeps it',
+          'in the project, where the user runs it too (Run Project Tests). It runs the scene for `duration` simulated',
+          'seconds against real physics and the real ST scan, pokes any `inputs`, and asserts every `checks` entry.',
+        ]
+      : [
+          'A test is one JSON file in `tests/`, **referenced from `project.json`** (see *Adding a file* above:',
+          'an unreferenced test is invisible to the app, which is what runs it for the user). It runs the scene for',
+          '`duration` simulated seconds against real physics and the real ST scan, pokes any `inputs`, and asserts',
+          'every `checks` entry.',
+        ]),
     '',
     '```json',
     '{',
@@ -634,14 +738,16 @@ export function agentGuideMarkdown(doc: GuideDoc, opts?: { measure?: MeasureExte
     '',
     'Each check names exactly one **source**, one **timing** and one **predicate**:',
     '',
-    '- source: `tag` (a PLC tag by name) or `probe` (`{"count":{…}}` for cargo counts, `{"passed":{"zone":{…}}}` for how many boxes have gone through a place so far, `{"pose":{"part":"<id>","axis":"x|y|z|yaw"}}` for a part\'s position, `{"joint":{"part":"<id>","joint":"<name>"}}` for the last value a part\'s behavior commanded on one of its rig joints (radians or metres), `{"lamp":{"part":"<id>","lamp":"<name>"}}` for whether a part\'s lamp is lit, checked with `equals: true` or `false`); `count` and `passed` take `"color": "red"|"green"|"blue"|"#rrggbb"`',
+    '- source: `tag` (a PLC tag by name) or `probe` (`{"count":{…}}` for cargo counts, `{"passed":{"zone":{…}}}` for how many boxes have gone through a place so far, `{"square":{"zone":{…},"heading":30}}` for how far the worst box in a zone is turned off square to a heading in degrees (0 to 45; a spur\'s rotationY in degrees, checked with `always` + `max`), `{"pose":{"part":"<id>","axis":"x|y|z|yaw"}}` for a part\'s position, `{"joint":{"part":"<id>","joint":"<name>"}}` for the last value a part\'s behavior commanded on one of its rig joints (radians or metres), `{"lamp":{"part":"<id>","lamp":"<name>"}}` for whether a part\'s lamp is lit, checked with `equals: true` or `false`); `count`, `passed` and `square` take `"color": "red"|"green"|"blue"|"#rrggbb"`',
     '- timing: `at` (sample once at time *t*), `always` (must hold), or `eventually` (must hold at some point); `always` and `eventually` take a window, `from` / `until` (default: the whole run)',
     '- predicate: `equals`, `notEquals`, `min`, `max`, or `near` (with an optional `tolerance`), each against a value or another tag or probe: `"equals": {"tag": "Lane1Out"}`',
     '',
     'Prefer counts that do not depend on WHEN boxes arrive: `passed` with a colour ("no red box ever passed lane 2":',
     '`always` + `max: 0`), one tag against another ("Sorted1 equals Lane1Out"), a window round the state you mean.',
     'An exact count at an exact time breaks the moment an unrelated change moves the boxes by a tenth of a second.',
-    '`npm run test-project -- <folder> --cargo 5,10` lists where every box is at those times.',
+    tools
+      ? '`run_test` with `cargo: [5, 10]` lists where every box is at those sim times, and how far it is tilted, the same on every run: use it to follow a box that tips or falls. `get_cargo` during a live `run` shows the boxes now, at wall-clock pace. A `passed` gate counts only from the moment some box enters it, so "nothing ever gets here" is `count` + `always` + `max: 0` instead.'
+      : '`npm run test-project -- <folder> --cargo 5,10` lists where every box is at those times, and how far it is tilted.',
     '',
     'Optional: `scanMs` (the PLC scan period).',
     '',
@@ -713,12 +819,22 @@ export function agentGuideMarkdown(doc: GuideDoc, opts?: { measure?: MeasureExte
     'arrived, accumulated) is far harder to satisfy accidentally than a tag holding the value you just wrote to',
     'it. A tag check can confirm your program did what your program says; a probe confirms the line did something.',
     '',
-    '**When a test fails, read what happened before changing anything.** The run is deterministic, and',
-    '`npm run test-project -- <folder>` prints, under each failed check, every tag that changed in the 3 s',
-    'before it failed: its value then, and each change with its time (`Stop  FALSE -> 1.517s TRUE`). That is',
-    'usually the cause. `--context <s>` widens or narrows the window; `--trace A,B,C` (or `--trace all`) follows',
-    'tags through the whole run; `--json` gives all of it as data. Decide from it whether the PROGRAM or the',
-    'TEST is wrong before editing either.',
+    ...(tools
+      ? [
+          '**When a test fails, read what happened before changing anything.** The run is deterministic, so run it',
+          'again with `trace: ["A", "B"]`: each tag\'s value at the start and every change with its time, through the',
+          'whole run. That is also how to read a value without writing a check for it. A failed test lists the flow',
+          'facts before its failure (a box tipped, an eye flickered). Decide from them whether the PROGRAM or the TEST',
+          'is wrong before editing either.',
+        ]
+      : [
+          '**When a test fails, read what happened before changing anything.** The run is deterministic, and',
+          '`npm run test-project -- <folder>` prints, under each failed check, every tag that changed in the 3 s',
+          'before it failed: its value then, and each change with its time (`Stop  FALSE -> 1.517s TRUE`). That is',
+          'usually the cause. `--context <s>` widens or narrows the window; `--trace A,B,C` (or `--trace all`) follows',
+          'tags through the whole run; `--json` gives all of it as data. Decide from it whether the PROGRAM or the',
+          'TEST is wrong before editing either.',
+        ]),
     '',
   )
 
@@ -732,9 +848,13 @@ export function agentGuideMarkdown(doc: GuideDoc, opts?: { measure?: MeasureExte
     '- **Resize a part through a parameter it actually declares, not one you expect it',
     '  to have.** Sizing is per-package: a roller conveyor takes `length`, while a belt conveyor has no `length`',
     '  at all and is shaped by `segments`, a list of [run, tilt] rows. A parameter the package does not declare',
-    '  is dropped on load with no error in the app, so a wrong guess reads as "the edit did nothing". Run',
-    '  `npm run validate-project -- <folder>` after editing: it lists every value loading dropped or clamped',
-    '  (an unknown parameter, a number outside its range), and `--strict` fails on them.',
+    ...(tools
+      ? ['  is refused by `add_part` and `update_part`, with the params the package does have: read `get_package` first.']
+      : [
+          '  is dropped on load with no error in the app, so a wrong guess reads as "the edit did nothing". Run',
+          '  `npm run validate-project -- <folder>` after editing: it lists every value loading dropped or clamped',
+          '  (an unknown parameter, a number outside its range), and `--strict` fails on them.',
+        ]),
     '- **Part origins differ by family, and this is the error that looks like a small gap rather than a bug.**',
     '  A roller/straight conveyor is **centre**-origin: a 4 m one spans -2 to +2 about its `position`. A belt',
     '  conveyor is **tail**-origin: its path starts at `position` and grows +X, so a 4 m run spans 0 to 4.',
@@ -754,16 +874,31 @@ export function agentGuideMarkdown(doc: GuideDoc, opts?: { measure?: MeasureExte
     '',
   )
 
-  w(
-    '## How your work gets checked',
-    '',
-    '1. The user opens this project in the app (or it is already following this folder) and runs **Simulation > Run Project Tests**.',
-    '2. Every spec in `tests/` runs against real physics, and reports pass or fail per check.',
-    '',
-    'That is the whole verification loop available from the files alone: the ST compiles or it does not, the tests',
-    'pass or they do not, and geometry is judged by eye. Write tests accordingly.',
-    '',
-  )
+  if (tools) {
+    w(
+      '## How your work gets checked',
+      '',
+      '1. `run_test` with no spec runs every kept test, as **Simulation > Run Project Tests** does for the user;',
+      '   its `summary` says how many passed.',
+      '2. `get_problems` reports what the Problems panel does: compile errors, wiring, parts, and the flow facts',
+      '   of the last run.',
+      '3. `capture_view` shows the line (by default every part but the building). Geometry is judged by eye, so look.',
+      '',
+      'The user reviews your steps in the app and can keep or revert them. Write tests accordingly.',
+      '',
+    )
+  } else {
+    w(
+      '## How your work gets checked',
+      '',
+      '1. The user opens this project in the app (or it is already following this folder) and runs **Simulation > Run Project Tests**.',
+      '2. Every spec in `tests/` runs against real physics, and reports pass or fail per check.',
+      '',
+      'That is the whole verification loop available from the files alone: the ST compiles or it does not, the tests',
+      'pass or they do not, and geometry is judged by eye. Write tests accordingly.',
+      '',
+    )
+  }
 
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n'
 }

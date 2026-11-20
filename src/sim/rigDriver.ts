@@ -1,14 +1,14 @@
 // Custom rig parts in the running world: each rig's link bodies, driven every step to the FK pose of its behavior's
-// latest joint commands (FK shared with the renderer via core/rigPose) so the links push cargo where the visual shows
+// latest joint commands (FK shared with the renderer via core/rig/rigPose) so the links push cargo where the visual shows
 // them, and its grippers, which take hold of cargo through the holds and carry it rigidly. SimWorld builds each rig's
 // bodies (rigBuild.ts), hands the instance over here and drives it once per step, after tickBehaviors.
 import type Jolt from 'jolt-physics'
 import { CARGO_CAP_FORK_POCKETS } from '../core/frame'
 import { clamp } from '../core/math'
 import { forkEntryProblem } from '../core/pallet'
-import { reportPartDiagnostic } from '../core/partDiagnostics'
-import { composePartWorldInPlace, jointLimits, linkCollisionBox, POSE_STRIDE, qApply, qConjugate, qFromAxisAngle, qMul, resolvedGrabReach, resolvedGrabZone, rigLinkIndex, rigPoseBuffer, rigWorldPosesInto, shapeHalfExtents } from '../core/rigPose'
-import type { Quat, Vec3 } from '../core/rigPose'
+import { reportPartDiagnostic } from '../core/parts/partDiagnostics'
+import { arrayInstanceDeltas, composePartWorldInPlace, jointLimits, parseCopyGripName, posedInstanceInto, linkCollisionBox, POSE_STRIDE, qApply, qConjugate, qFromAxisAngle, qMul, resolvedGrabReach, resolvedGrabZone, rigLinkIndex, rigPoseBuffer, rigWorldPosesInto, shapeHalfExtents } from '../core/rig/rigPose'
+import type { Quat, Vec3 } from '../core/rig/rigPose'
 import type { BodyHolds } from './bodyHolds'
 import type { CargoRegistry } from './cargoRegistry'
 import { grabbableBoxesInReach, grabbableBoxesInZone } from './cargoSensing'
@@ -17,9 +17,12 @@ import type { SensorRegistry } from './sensorRegistry'
 import { flatRecEq, snapshotRigInputs, subPosesEq } from './worldTypes'
 import type { KinematicScratch, LiveBox, RigInstance } from './worldTypes'
 
+/** scratch for one posable array instance's local pose (position + quaternion) */
+const INST = new Float64Array(7)
+
 export class RigDriver {
   // Custom rig parts: kinematic collision body per link, driven each step by the behavior's joint output
-  // (FK shared with the renderer via core/rigPose) so the links push cargo where the visual shows them.
+  // (FK shared with the renderer via core/rig/rigPose) so the links push cargo where the visual shows them.
   // Read anywhere (the frame's film web, bodyStats); added to only through add().
   readonly rigs: RigInstance[] = []
 
@@ -117,7 +120,7 @@ export class RigDriver {
       // Limited to bodied links, a frame gripper would be left out and its grab would never fire.
       composePartWorldInPlace(poses, rootPos, partQuat)
       const linkIdx = rigLinkIndex(rig.geo)
-      for (const { name, id, offset } of rig.bodies) {
+      for (const { name, id, offset, instance, rest } of rig.bodies) {
         const li = linkIdx.get(name)
         if (li === undefined) continue
         const o = li * POSE_STRIDE
@@ -125,6 +128,18 @@ export class RigDriver {
         const qy = poses[o + 4]!
         const qz = poses[o + 5]!
         const qw = poses[o + 6]!
+        if (instance !== undefined) {
+          // a posable array instance: its pose this tick (or its rest place) in the link's frame, composed onto the link
+          // (rotation and product written out: a row of carriers poses ~100 bodies a step, so no temporaries)
+          posedInstanceInto(INST, rig.geo, li, rig.rec.joints ?? {}, rig.rec.subPoses, rig.params, rig.inclineRad, rig.rec.subPoses?.[name]?.instances?.[instance], rest!)
+          const vx = INST[0]! * rig.scale, vy = INST[1]! * rig.scale, vz = INST[2]! * rig.scale
+          const tx = 2 * (qy * vz - qz * vy), ty = 2 * (qz * vx - qx * vz), tz = 2 * (qx * vy - qy * vx)
+          kinPos.Set(poses[o]! + vx + qw * tx + (qy * tz - qz * ty), poses[o + 1]! + vy + qw * ty + (qz * tx - qx * tz), poses[o + 2]! + vz + qw * tz + (qx * ty - qy * tx))
+          const bx = INST[3]!, by = INST[4]!, bz = INST[5]!, bw = INST[6]!
+          kinQuat.Set(qw * bx + qx * bw + qy * bz - qz * by, qw * by - qx * bz + qy * bw + qz * bx, qw * bz + qx * by - qy * bx + qz * bw, qw * bw - qx * bx - qy * by - qz * bz)
+          this.bodyInterface.MoveKinematic(id, kinPos, kinQuat, dt)
+          continue
+        }
         // `offset` mounts a body at a link-local position instead of the link origin: the running-surface
         // split's slab/housing pair, which share one link but sit at different heights within it. Rotated by
         // the link's world orientation so both ride its pose (and the chain transfer's lift) exactly.
@@ -154,6 +169,18 @@ export class RigDriver {
     }
   }
 
+  // where copy `index` of the posable array at link `li` stands in the world, its link standing at `link`; undefined
+  // for a copy outside the row (its gripper then does nothing)
+  private copyGripPose(rig: RigInstance, li: number, link: { pos: Vec3; quat: Quat }, index: number): { pos: Vec3; quat: Quat } | undefined {
+    const l = rig.geo.links[li]!
+    if (!l.array?.posable) return undefined
+    const rest = arrayInstanceDeltas(l.array, rig.params, undefined, l.showParam)[index]
+    if (!rest) return undefined
+    posedInstanceInto(INST, rig.geo, li, rig.rec.joints ?? {}, rig.rec.subPoses, rig.params, rig.inclineRad, rig.rec.subPoses?.[l.name]?.instances?.[index], rest)
+    const d = qApply(link.quat, [INST[0]! * rig.scale, INST[1]! * rig.scale, INST[2]! * rig.scale])
+    return { pos: [link.pos[0] + d[0], link.pos[1] + d[1], link.pos[2] + d[2]], quat: qMul(link.quat, [INST[3]!, INST[4]!, INST[5]!, INST[6]!]) }
+  }
+
   // Resolve a rig's gripper commands: close → grab the nearest cargo to the gripper link and ride it
   // rigidly; held → drive it to follow the gripper; open → release it back to dynamic. A gripper whose load
   // was taken (takeFromGripper) stays open until the command opens it.
@@ -165,11 +192,14 @@ export class RigDriver {
       if (!on) rig.emptied.delete(name)
       const held = rig.grips.get(name)
       // materialised per commanded gripper (usually none, at most a handful), not per link, which is why
-      // the FK buffer stays flat
-      const li = linkIdx.get(name)
-      const gw = li === undefined ? undefined : { pos: [world[li * POSE_STRIDE]!, world[li * POSE_STRIDE + 1]!, world[li * POSE_STRIDE + 2]!] as Vec3, quat: [world[li * POSE_STRIDE + 3]!, world[li * POSE_STRIDE + 4]!, world[li * POSE_STRIDE + 5]!, world[li * POSE_STRIDE + 6]!] as Quat }
+      // the FK buffer stays flat. A copy of a posable array grips as `link#i`, from where that copy stands.
+      const copy = linkIdx.has(name) ? null : parseCopyGripName(name)
+      const linkName = copy ? copy.link : name
+      const li = linkIdx.get(linkName)
+      let gw = li === undefined ? undefined : { pos: [world[li * POSE_STRIDE]!, world[li * POSE_STRIDE + 1]!, world[li * POSE_STRIDE + 2]!] as Vec3, quat: [world[li * POSE_STRIDE + 3]!, world[li * POSE_STRIDE + 4]!, world[li * POSE_STRIDE + 5]!, world[li * POSE_STRIDE + 6]!] as Quat }
+      if (copy && gw) gw = this.copyGripPose(rig, li!, gw, copy.index)
       if (on && !held && gw && !rig.emptied.has(name)) {
-        const link = rig.geo.links.find((l) => l.name === name)
+        const link = rig.geo.links.find((l) => l.name === linkName)
         if (!link) continue
         // C-multigrab: a gripper takes every cargo body in its volume, each with its own captured offset, so a
         // formed layer / a loaded pallet rides rigidly in formation. The count is not a mode; it follows from the
@@ -186,7 +216,7 @@ export class RigDriver {
         if (zone) {
           const half: Vec3 = [zone.half[0] * s, zone.half[1] * s, zone.half[2] * s]
           const centre: Vec3 = [zone.offset[0] * s, zone.offset[1] * s, zone.offset[2] * s]
-          picked = grabbableBoxesInZone(this.boxes, this.holds.holders, this.cargo.beamSnapshot(), gw.pos, gw.quat, half, centre)
+          picked = grabbableBoxesInZone(this.boxes, this.holds.holders, this.cargo.stepSnapshot(), gw.pos, gw.quat, half, centre)
         } else {
           // No zone: fall back to the grabRadius sphere beyond the link's max half-extent (0.2 m when the rig
           // doesn't say; grabParams grows it with instance params). Still every body it touches, measured to the
@@ -194,7 +224,7 @@ export class RigDriver {
           // zones existed. A shipped gripper should declare one, because a sphere wide enough to span a 1.2 m
           // plate also takes whatever stands beside the tool.
           const he = shapeHalfExtents(link.shape, linkCollisionBox(link))
-          picked = grabbableBoxesInReach(this.boxes, this.holds.holders, this.cargo.beamSnapshot(), gw.pos, (Math.max(he[0], he[1], he[2]) + resolvedGrabReach(link, rig.params)) * s)
+          picked = grabbableBoxesInReach(this.boxes, this.holds.holders, this.cargo.stepSnapshot(), gw.pos, (Math.max(he[0], he[1], he[2]) + resolvedGrabReach(link, rig.params)) * s)
         }
         // a gripper that closes on any piece of a unit load takes the whole unit, held as the one body it is (by its
         // anchor piece, whose body is the unit's)
@@ -204,13 +234,30 @@ export class RigDriver {
         }
         if (picked.length) {
           const inv = qConjugate(gw.quat)
-          const holds: { bodyId: number; offPos: Vec3; offQuat: Quat }[] = []
+          const holds: { bodyId: number; offPos: Vec3; offQuat: Quat; reachX: number }[] = []
           for (const box of picked) {
             this.holds.claim(box, { kind: 'grip', rig, gripper: name })
             const bp = box.body.GetPosition()
             const bq = box.body.GetRotation()
             const offPos = qApply(inv, [bp.GetX() - gw.pos[0], bp.GetY() - gw.pos[1], bp.GetZ() - gw.pos[2]])
-            holds.push({ bodyId: box.id, offPos, offQuat: qMul(inv, [bq.GetX(), bq.GetY(), bq.GetZ(), bq.GetW()]) })
+            const offQuat = qMul(inv, [bq.GetX(), bq.GetY(), bq.GetZ(), bq.GetW()])
+            // how far the load reaches from the gripper along its X, either side, in the rig's own units (the world's
+            // over its scale): its extent across X plus how far off centre it sits. A clamp's pads close to this. A
+            // box's extent is its half extents through the rotation's first row; a unit load's (one body of several
+            // pieces) is its world bounds' half size through the gripper's X axis
+            let extentX: number
+            if (box.unit) {
+              const b = box.body.GetWorldSpaceBounds()
+              const half: Vec3 = [(b.mMax.GetX() - b.mMin.GetX()) / 2, (b.mMax.GetY() - b.mMin.GetY()) / 2, (b.mMax.GetZ() - b.mMin.GetZ()) / 2]
+              const ax = qApply(gw.quat, [1, 0, 0])
+              const centre = qApply(inv, [(b.mMax.GetX() + b.mMin.GetX()) / 2 - gw.pos[0], (b.mMax.GetY() + b.mMin.GetY()) / 2 - gw.pos[1], (b.mMax.GetZ() + b.mMin.GetZ()) / 2 - gw.pos[2]])
+              extentX = Math.abs(centre[0]) + Math.abs(ax[0]) * half[0] + Math.abs(ax[1]) * half[1] + Math.abs(ax[2]) * half[2]
+            } else {
+              const [qx, qy, qz, qw] = offQuat
+              const r0 = [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)]
+              extentX = Math.abs(offPos[0]) + Math.abs(r0[0]!) * box.hx + Math.abs(r0[1]!) * box.hy + Math.abs(r0[2]!) * box.hz
+            }
+            holds.push({ bodyId: box.id, offPos, offQuat, reachX: extentX / rig.scale })
           }
           rig.grips.set(name, holds)
           this.checkForkFit(rig, link, picked, holds)
@@ -229,8 +276,14 @@ export class RigDriver {
     // behavior reads it next tick via ctx.measured.grips. `names` = commanded ∪ held ∪ emptied, so a just-released
     // gripper gets an explicit false - the merged feedback never goes stale.
     const heldNow: Record<string, boolean> = {}
-    for (const name of names) heldNow[name] = rig.grips.has(name)
+    let widths: Record<string, number> | undefined
+    for (const name of names) {
+      const held = rig.grips.get(name)
+      heldNow[name] = held !== undefined
+      if (held?.length) (widths ??= {})[name] = held.reduce((w, h) => Math.max(w, h.reachX ?? 0), 0)
+    }
     rig.rec.heldGrips = heldNow
+    rig.rec.heldWidths = widths
   }
 
   /**
@@ -255,6 +308,14 @@ export class RigDriver {
       const problem = forkEntryProblem(box.hx * 2, box.hz * 2, face, { spread: spread * s, bladeWidth: forks.bladeWidth * s, bladeThickness: forks.bladeThickness * s })
       if (problem) reportPartDiagnostic({ source: 'fit', partId: rig.rec.partId ?? '', message: problem })
     })
+  }
+
+  /** drop these rigs (their part is rebuilt or deleted; its group tears down the bodies) */
+  remove(rigs: readonly RigInstance[]): void {
+    const gone = new Set(rigs)
+    let n = 0
+    for (const r of this.rigs) if (!gone.has(r)) this.rigs[n++] = r
+    this.rigs.length = n
   }
 
   /** drop every rig (their bodies are torn down via their part groups; these are just stale refs) */

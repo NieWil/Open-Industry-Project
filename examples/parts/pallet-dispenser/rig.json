@@ -2,20 +2,19 @@
   "id": "oip.pallet-dispenser",
   "name": "Pallet Dispenser",
   "category": "Equipment",
-  "commsParam": "enableComms",
   "holds": {
     "part": "oip.pallet",
     "positions": [
-      "p0",
-      "p1",
-      "p2",
-      "p3",
-      "p4",
-      "p5",
-      "p6",
-      "p7",
-      "p8",
-      "p9"
+      "pos#0",
+      "pos#1",
+      "pos#2",
+      "pos#3",
+      "pos#4",
+      "pos#5",
+      "pos#6",
+      "pos#7",
+      "pos#8",
+      "pos#9"
     ],
     "limitParam": "capacity",
     "params": {
@@ -61,7 +60,7 @@
         ]
       },
       {
-        "name": "p0",
+        "name": "pos",
         "shape": {
           "kind": "frame"
         },
@@ -83,231 +82,15 @@
               0
             ]
           }
-        }
-      },
-      {
-        "name": "p1",
-        "shape": {
-          "kind": "frame"
         },
-        "offset": [
-          0,
-          0.385,
-          0
-        ],
-        "grip": {
-          "zone": {
-            "size": [
-              0.6,
-              0.108,
-              0.5
-            ],
-            "offset": [
-              0,
-              0.0675,
-              0
-            ]
-          }
-        }
-      },
-      {
-        "name": "p2",
-        "shape": {
-          "kind": "frame"
-        },
-        "offset": [
-          0,
-          0.52,
-          0
-        ],
-        "grip": {
-          "zone": {
-            "size": [
-              0.6,
-              0.108,
-              0.5
-            ],
-            "offset": [
-              0,
-              0.0675,
-              0
-            ]
-          }
-        }
-      },
-      {
-        "name": "p3",
-        "shape": {
-          "kind": "frame"
-        },
-        "offset": [
-          0,
-          0.655,
-          0
-        ],
-        "grip": {
-          "zone": {
-            "size": [
-              0.6,
-              0.108,
-              0.5
-            ],
-            "offset": [
-              0,
-              0.0675,
-              0
-            ]
-          }
-        }
-      },
-      {
-        "name": "p4",
-        "shape": {
-          "kind": "frame"
-        },
-        "offset": [
-          0,
-          0.79,
-          0
-        ],
-        "grip": {
-          "zone": {
-            "size": [
-              0.6,
-              0.108,
-              0.5
-            ],
-            "offset": [
-              0,
-              0.0675,
-              0
-            ]
-          }
-        }
-      },
-      {
-        "name": "p5",
-        "shape": {
-          "kind": "frame"
-        },
-        "offset": [
-          0,
-          0.925,
-          0
-        ],
-        "grip": {
-          "zone": {
-            "size": [
-              0.6,
-              0.108,
-              0.5
-            ],
-            "offset": [
-              0,
-              0.0675,
-              0
-            ]
-          }
-        }
-      },
-      {
-        "name": "p6",
-        "shape": {
-          "kind": "frame"
-        },
-        "offset": [
-          0,
-          1.06,
-          0
-        ],
-        "grip": {
-          "zone": {
-            "size": [
-              0.6,
-              0.108,
-              0.5
-            ],
-            "offset": [
-              0,
-              0.0675,
-              0
-            ]
-          }
-        }
-      },
-      {
-        "name": "p7",
-        "shape": {
-          "kind": "frame"
-        },
-        "offset": [
-          0,
-          1.195,
-          0
-        ],
-        "grip": {
-          "zone": {
-            "size": [
-              0.6,
-              0.108,
-              0.5
-            ],
-            "offset": [
-              0,
-              0.0675,
-              0
-            ]
-          }
-        }
-      },
-      {
-        "name": "p8",
-        "shape": {
-          "kind": "frame"
-        },
-        "offset": [
-          0,
-          1.33,
-          0
-        ],
-        "grip": {
-          "zone": {
-            "size": [
-              0.6,
-              0.108,
-              0.5
-            ],
-            "offset": [
-              0,
-              0.0675,
-              0
-            ]
-          }
-        }
-      },
-      {
-        "name": "p9",
-        "shape": {
-          "kind": "frame"
-        },
-        "offset": [
-          0,
-          1.465,
-          0
-        ],
-        "grip": {
-          "zone": {
-            "size": [
-              0.6,
-              0.108,
-              0.5
-            ],
-            "offset": [
-              0,
-              0.0675,
-              0
-            ]
-          }
+        "array": {
+          "count": "capacity",
+          "step": [
+            0,
+            0.135,
+            0
+          ],
+          "posable": true
         }
       },
       {
@@ -674,7 +457,8 @@
     ],
     "bounds": {
       "length": 2.56,
-      "width": 1.66,
+      "width": 1.745,
+      "centerZ": 0.0425,
       "top": 2.15,
       "bottom": -1
     }

@@ -7,14 +7,19 @@ import {
   buildDockGrid,
   clearMaximized,
   clickBottomDockTab,
+  clickDockTab,
+  clickSideDockTab,
   DEFAULT_BOTTOM_HEIGHT,
   defaultDockLayout,
   DOCK_SIZES_VERSION,
+  dockGridCorners,
   dockSizeVar,
   floatDockPanel,
+  isColumnCollapsed,
   isFloating,
   isPoppedOut,
   locate,
+  tabShowsPanel,
   MAXIMIZABLE_PANELS,
   migrateDockLayout,
   migrateDockSizes,
@@ -43,6 +48,23 @@ function plcFront(): DockLayout {
 function plcFloating(): DockLayout {
   return floatDockPanel(defaultDockLayout(), 'st')
 }
+
+describe('tabShowsPanel (a tab click that leaves the PLC panel open focuses its code)', () => {
+  it('is true for the open front tab only', () => {
+    expect(tabShowsPanel(plcFront(), 'st')).toBe(true)
+    expect(tabShowsPanel(defaultDockLayout(), 'st')).toBe(false) // behind Parts
+  })
+
+  it('is false once the click rolls the bottom dock up, and true when the next click opens it', () => {
+    const collapsed = clickBottomDockTab(plcFront(), 'st')
+    expect(tabShowsPanel(collapsed, 'st')).toBe(false)
+    expect(tabShowsPanel(clickBottomDockTab(collapsed, 'st'), 'st')).toBe(true)
+  })
+
+  it('is false for a floating panel (it has no tab)', () => {
+    expect(tabShowsPanel(plcFloating(), 'st')).toBe(false)
+  })
+})
 
 describe('bottom dock collapse (bottom-panel toggle)', () => {
   it('starts expanded', () => {
@@ -76,11 +98,19 @@ describe('bottom dock collapse (bottom-panel toggle)', () => {
     expect(next.active.bottom).toBe('catalog')
   })
 
-  it('leaves side-dock tabs alone: re-clicking an active one is still a no-op', () => {
+  it('leaves side-dock tabs alone: re-clicking an active one is a no-op', () => {
     const l = defaultDockLayout() // 'tree' is front of leftTop
     expect(clickBottomDockTab(l, 'tree')).toBe(l)
     expect(clickBottomDockTab(l, 'history').active.leftTop).toBe('history')
     expect(clickBottomDockTab(l, 'history').bottomCollapsed).toBe(false)
+  })
+
+  it('clickDockTab sends each tab to its own dock toggle', () => {
+    const l = defaultDockLayout()
+    expect(clickDockTab(l, 'catalog').bottomCollapsed).toBe(true)
+    expect(clickDockTab(l, 'catalog').collapsedColumns).toEqual([])
+    expect(clickDockTab(l, 'inspector').collapsedColumns).toEqual(['right'])
+    expect(clickDockTab(l, 'inspector').bottomCollapsed).toBe(false)
   })
 
   it('docking a panel into a collapsed bottom dock re-opens it', () => {
@@ -91,14 +121,88 @@ describe('bottom dock collapse (bottom-panel toggle)', () => {
 
   it('emptying a collapsed bottom dock clears the flag', () => {
     const collapsed = clickBottomDockTab(defaultDockLayout(), 'catalog')
-    // the bottom dock ships with three tabs (Parts, PLC, Problems); the flag survives losing all but the last
+    // the bottom dock ships with four tabs (Parts, PLC, Problems, Watch); the flag survives losing all but the last
     let oneLeft = collapsed
-    for (const panel of ['catalog', 'st'] as const) oneLeft = moveDockPanel(oneLeft, panel, 'leftBottom')
-    expect(oneLeft.bottom).toEqual(['problems'])
+    for (const panel of ['catalog', 'st', 'problems'] as const) oneLeft = moveDockPanel(oneLeft, panel, 'leftBottom')
+    expect(oneLeft.bottom).toEqual(['watch'])
     expect(oneLeft.bottomCollapsed).toBe(true)
-    const emptied = moveDockPanel(oneLeft, 'problems', 'leftBottom')
+    const emptied = moveDockPanel(oneLeft, 'watch', 'leftBottom')
     expect(emptied.bottom).toEqual([])
     expect(emptied.bottomCollapsed).toBe(false)
+  })
+})
+
+describe('side column fold (a rail of vertical tabs)', () => {
+  it('starts with every column open', () => {
+    expect(defaultDockLayout().collapsedColumns).toEqual([])
+  })
+
+  it('clicking the front tab folds the column, clicking any rail tab opens it with that tab in front', () => {
+    const folded = clickSideDockTab(defaultDockLayout(), 'tree')
+    expect(isColumnCollapsed(folded, 'left')).toBe(true)
+    expect(isColumnCollapsed(folded, 'right')).toBe(false)
+    const opened = clickSideDockTab(folded, 'history')
+    expect(opened.collapsedColumns).toEqual([])
+    expect(opened.active.leftTop).toBe('history')
+  })
+
+  it('clicking a background tab switches without folding', () => {
+    const next = clickSideDockTab(defaultDockLayout(), 'history')
+    expect(next.active.leftTop).toBe('history')
+    expect(next.collapsedColumns).toEqual([])
+  })
+
+  it('folds the whole column from either sub-slot', () => {
+    const l = moveDockPanel(defaultDockLayout(), 'history', 'leftBottom')
+    const folded = clickSideDockTab(l, 'history')
+    expect(folded.collapsedColumns).toEqual(['left'])
+    expect(tabShowsPanel(folded, 'tree')).toBe(false)
+    expect(tabShowsPanel(folded, 'history')).toBe(false)
+  })
+
+  it('leaves the bottom dock to its own toggle', () => {
+    const l = defaultDockLayout() // Parts is the bottom dock's front tab
+    expect(clickSideDockTab(l, 'catalog')).toBe(l)
+    expect(clickSideDockTab(l, 'st').active.bottom).toBe('st')
+  })
+
+  it('docking a panel into a folded column opens it, and emptying one drops it from the list', () => {
+    const folded = clickSideDockTab(defaultDockLayout(), 'inspector')
+    expect(folded.collapsedColumns).toEqual(['right'])
+    expect(moveDockPanel(folded, 'history', 'rightBottom').collapsedColumns).toEqual([])
+    expect(moveDockPanel(folded, 'inspector', 'leftTop').collapsedColumns).toEqual([])
+  })
+
+  it('reveal opens the folded column', () => {
+    const folded = clickSideDockTab(defaultDockLayout(), 'tree')
+    const shown = revealDockPanel(folded, 'history')
+    expect(shown.collapsedColumns).toEqual([])
+    expect(shown.active.leftTop).toBe('history')
+    expect(revealDockPanel(folded, 'inspector')).toBe(folded) // another column, already showing
+  })
+
+  it('round-trips through storage, and normalize drops junk and empty columns', () => {
+    const folded = clickSideDockTab(defaultDockLayout(), 'tree')
+    expect(normalizeDockLayout(JSON.parse(JSON.stringify(folded))).collapsedColumns).toEqual(['left'])
+    expect(normalizeDockLayout({}).collapsedColumns).toEqual([])
+    expect(normalizeDockLayout({ ...defaultDockLayout(), collapsedColumns: 'left' }).collapsedColumns).toEqual([])
+    expect(normalizeDockLayout({ ...defaultDockLayout(), collapsedColumns: ['left', 'left2', 'up'] }).collapsedColumns).toEqual(['left'])
+  })
+
+  it('gives a folded column an auto track and no gutter', () => {
+    const grid = buildDockGrid(clickSideDockTab(defaultDockLayout(), 'tree'), SIZES)
+    expect(grid.gridTemplateColumns.startsWith('auto minmax(0, 1fr)')).toBe(true)
+    expect(grid.gridTemplateAreas).not.toContain('gutlA')
+    expect(grid.gridTemplateAreas).toContain('leftA')
+  })
+
+  it('has no corner where a folded column has no gutter', () => {
+    const leftFolded = clickSideDockTab(defaultDockLayout(), 'tree')
+    expect(dockGridCorners(leftFolded).map((c) => c.widthKey)).toEqual(['right'])
+    // the right corner sits one track in: the rail, then the viewport, then the right gutter
+    expect(dockGridCorners(leftFolded)[0]!.column).toBe(3)
+    const rightFolded = clickSideDockTab(defaultDockLayout(), 'inspector')
+    expect(dockGridCorners(rightFolded).map((c) => c.widthKey)).toEqual(['left'])
   })
 })
 
@@ -117,24 +221,26 @@ describe('normalizeDockLayout / bottomCollapsed', () => {
     const raw = { ...defaultDockLayout(), bottom: [], bottomCollapsed: true }
     const out = normalizeDockLayout(raw)
     // the bottom-dock panels are restored to their default slot, and must not arrive rolled up
-    expect(out.bottom).toEqual(['catalog', 'st', 'problems'])
+    expect(out.bottom).toEqual(['catalog', 'st', 'problems', 'watch'])
     expect(out.bottomCollapsed).toBe(false)
   })
 
   it('restores a missing panel at its place in the default tab order, not at the end', () => {
-    const out = normalizeDockLayout({ ...defaultDockLayout(), bottom: ['problems', 'catalog'] })
+    const out = normalizeDockLayout({ ...defaultDockLayout(), bottom: ['problems', 'catalog', 'watch'] })
     // placed after the panel it follows by default (Parts); the user's own order is kept
-    expect(out.bottom).toEqual(['problems', 'catalog', 'st'])
+    expect(out.bottom).toEqual(['problems', 'catalog', 'st', 'watch'])
     // with that neighbour gone too, it goes before the panel it precedes (Problems)
-    const noParts = normalizeDockLayout({ ...defaultDockLayout(), bottom: ['problems'], leftBottom: ['catalog'] })
-    expect(noParts.bottom).toEqual(['st', 'problems'])
+    const noParts = normalizeDockLayout({ ...defaultDockLayout(), bottom: ['problems', 'watch'], leftBottom: ['catalog'] })
+    expect(noParts.bottom).toEqual(['st', 'problems', 'watch'])
+    // a layout stored before Watch existed gets it after Problems, where it stands by default
+    expect(normalizeDockLayout({ ...defaultDockLayout(), bottom: ['catalog', 'st', 'problems'] }).bottom).toEqual(['catalog', 'st', 'problems', 'watch'])
   })
 })
 
 describe('the PLC editor docks by default', () => {
   it('as a background tab behind Parts', () => {
     const l = defaultDockLayout()
-    expect(l.bottom).toEqual(['catalog', 'st', 'problems'])
+    expect(l.bottom).toEqual(['catalog', 'st', 'problems', 'watch'])
     expect(l.active.bottom).toBe('catalog')
     expect(l.floating).toEqual([])
     expect(locate(l, 'st')).toBe('bottom')
@@ -152,7 +258,7 @@ describe('the PLC editor docks by default', () => {
   it('moves an unstamped (v1) floating PLC editor into its docked default', () => {
     const out = normalizeDockLayout(migrateDockLayout(JSON.parse(JSON.stringify(v1Default))))
     expect(out.floating).toEqual([])
-    expect(out.bottom).toEqual(['catalog', 'st', 'problems'])
+    expect(out.bottom).toEqual(['catalog', 'st', 'problems', 'watch'])
     expect(out.active.bottom).toBe('catalog') // arrives behind Parts, not in front of it
   })
 
@@ -191,14 +297,14 @@ describe('a stored layout from before the Controller dock went (layouts v2 and v
 
   it('reads an untouched v2 strip as today\'s default', () => {
     const out = normalizeDockLayout(migrateDockLayout(JSON.parse(JSON.stringify(v2Default))))
-    expect(out.bottom).toEqual(['catalog', 'st', 'problems'])
+    expect(out.bottom).toEqual(['catalog', 'st', 'problems', 'watch'])
     expect(out.active.bottom).toBe('catalog')
   })
 
   it('reads an untouched v3 strip as today\'s default too, and moves the front tab off the Controller', () => {
     const v3 = { ...defaultDockLayout(), bottom: ['catalog', 'st', 'controller', 'problems'], active: { ...defaultDockLayout().active, bottom: 'controller' }, version: 3 }
     const out = normalizeDockLayout(migrateDockLayout(JSON.parse(JSON.stringify(v3))))
-    expect(out.bottom).toEqual(['catalog', 'st', 'problems'])
+    expect(out.bottom).toEqual(['catalog', 'st', 'problems', 'watch'])
     expect(out.bottom).toContain(out.active.bottom)
   })
 
@@ -217,7 +323,7 @@ describe('a stored layout from before the Controller dock went (layouts v2 and v
   it('keeps a strip someone arranged', () => {
     const arranged = { ...v2Default, bottom: ['st', 'catalog', 'problems', 'controller'] }
     expect(migrateDockLayout(arranged)).toBe(arranged)
-    expect(normalizeDockLayout(migrateDockLayout(arranged)).bottom).toEqual(['st', 'catalog', 'problems'])
+    expect(normalizeDockLayout(migrateDockLayout(arranged)).bottom).toEqual(['st', 'catalog', 'problems', 'watch'])
   })
 })
 
@@ -254,7 +360,7 @@ describe('readDockLayout / saveDockLayout', () => {
     data.set('oip-web/dock-layout', JSON.stringify(v1DefaultBlob()))
     const l = readDockLayout()
     expect(isFloating(l, 'st')).toBe(false)
-    expect(l.bottom).toEqual(['catalog', 'st', 'problems'])
+    expect(l.bottom).toEqual(['catalog', 'st', 'problems', 'watch'])
   })
 
   /** what a v1 build wrote on first load: its default, unstamped, maximized/popout stripped */
@@ -280,6 +386,40 @@ describe('buildDockGrid / collapsed bottom dock', () => {
     const collapsed = clickBottomDockTab(defaultDockLayout(), 'catalog')
     const reopened = clickBottomDockTab(collapsed, 'catalog')
     expect(buildDockGrid(reopened, SIZES).gridTemplateRows).toContain('240px')
+  })
+})
+
+describe('dockGridCorners', () => {
+  const cellAt = (layout: DockLayout, row: number, column: number): string => {
+    const rows = [...buildDockGrid(layout, SIZES).gridTemplateAreas.matchAll(/"([^"]+)"/g)].map((m) => m[1]!.split(' '))
+    return rows[row - 1]![column - 1]!
+  }
+
+  it('crosses the height gutter at each left gutter, and ends it at the innermost right one', () => {
+    const l: DockLayout = { ...defaultDockLayout(), leftTop: ['tree'], leftTop2: ['history'], rightTop2: ['problems'] }
+    const corners = dockGridCorners(l)
+    expect(corners.map((c) => c.widthKey)).toEqual(['left', 'left2', 'right2'])
+    const gutter = { left: 'gutlA', left2: 'gutlB', right: 'gutrA', right2: 'gutrB' } as const
+    for (const c of corners) {
+      // the width gutter runs through the cell's track, one row up
+      expect(cellAt(l, c.row - 1, c.column)).toBe(gutter[c.widthKey])
+      if (c.side === 'left') expect(cellAt(l, c.row, c.column)).toBe('gutd')
+      else {
+        // the right gutter carries on down, and the height gutter stops against it
+        expect(cellAt(l, c.row, c.column)).toBe(gutter[c.widthKey])
+        expect(cellAt(l, c.row, c.column - 1)).toBe('gutd')
+      }
+    }
+  })
+
+  it('uses the outer right gutter when the inner right column is empty', () => {
+    expect(dockGridCorners(defaultDockLayout()).map((c) => c.widthKey)).toEqual(['left', 'right'])
+  })
+
+  it('needs an open bottom dock', () => {
+    expect(dockGridCorners(clickBottomDockTab(defaultDockLayout(), 'catalog'))).toEqual([])
+    const noLeft: DockLayout = { ...defaultDockLayout(), leftTop: [], leftBottom: [] }
+    expect(dockGridCorners(noLeft).map((c) => c.widthKey)).toEqual(['right'])
   })
 })
 

@@ -348,7 +348,7 @@ const PROBES = [
     note: 'IEC. Every value of the type starts there: a variable, a field, an array element, a block\'s or a function\'s local; a field a variable\'s own initializer names takes that value instead. A default is a constant (a literal, an enumeration member, a global CONSTANT). MATIEC refuses a NESTED (field := ...) value of a struct type that has defaults, a gap of its own.' },
 
   // ---- IEC ladder diagram ----
-  // `language: 'ladder'`: a LADDER section, read by the IEC ladder front end (src/plc/ladder.ts, docs/ladder.md) and
+  // `language: 'ladder'`: a LADDER section, read by the IEC ladder front end (src/plc/ladder/ladder.ts, docs/ladder.md) and
   // lowered to the ST above, so it runs on the same engine. The text form is this project's (IEC gives LD none).
   { id: 'ld-seal-in', language: 'ladder', category: 'Ladder Diagram', intent: 'supported', title: 'Contacts, a coil and a branch (a seal-in)',
     st: 'VAR_INPUT Start : BOOL; Stop : BOOL; END_VAR\nVAR_OUTPUT Motor : BOOL; END_VAR\nLADDER\n  [|Start|, |Motor|] |/Stop| (Motor);\nEND_LADDER' },
@@ -465,9 +465,9 @@ try {
   const { SCALAR_TYPES, USER_FB_TYPES: FB_TYPES } = await vite.ssrLoadModule('/src/plc/types.ts')
   const { BUILTIN_FUNCTIONS, isBuiltinFunc } = await vite.ssrLoadModule('/src/plc/builtins.ts')
   const { KEYWORDS, valueRefs } = await vite.ssrLoadModule('/src/plc/lexer.ts')
-  const { exportProgram } = await vite.ssrLoadModule('/src/plc/export.ts')
-  const { importIecText } = await vite.ssrLoadModule('/src/plc/importText.ts')
-  const { importPlcopenXml } = await vite.ssrLoadModule('/src/plc/importXml.ts')
+  const { exportProgram } = await vite.ssrLoadModule('/src/plc/exchange/export.ts')
+  const { importIecText } = await vite.ssrLoadModule('/src/plc/exchange/importText.ts')
+  const { importPlcopenXml } = await vite.ssrLoadModule('/src/plc/exchange/importXml.ts')
   const { CONFORMANCE_GROUPS } = await vite.ssrLoadModule('/src/plc/conformanceCases.ts')
 
   // --- the probes. The engine answers; a contradiction is fatal. ---

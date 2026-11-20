@@ -41,7 +41,7 @@ const pickRows = ({ ax, az, sx, sz, deg, thread, over }) => [
   [ax, az, deg, over], //     5 straight back out through the pockets, load clear of the beams
 ]
 /** a load's width along the beams (core PALLET_SIZE[0]) and an upright's section: two loads share a bay's beam span
- *  in three equal gaps (src/editor/demoScenes.ts RACK_SPOTS) */
+ *  in three equal gaps (src/editor/demo/demoScenes.ts RACK_SPOTS) */
 const PALLET_W = 1.22
 const UPRIGHT = 0.08
 /** the bottom shelf's slab top: level 1 x the 1.6 shelf spacing + half the 0.04 slab */

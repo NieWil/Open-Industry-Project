@@ -5,10 +5,11 @@
 // typed engine's in one typed arena (typed/). Neither shape is visible from here: the builders ask a Pou, never its
 // storage, which is what lets both engines share them (docs/plc-typed-storage.md).
 
-import { canonicalAddress } from '../core/iecAddress'
+import { canonicalAddress } from '../core/io/iecAddress'
+import type { WatchRange } from '../core/watchTable'
 import { controllerTags, identKey, isScalarType, passOrder, taskTable } from './program'
 import { bool, isInt, isString, nsOf, num, roundEven, str, strLimit, wrap } from './runtime'
-import type { Ast, CompiledProgram, DataType, Decl, Expr, ScalarType, SourcePos, Stmt, TagPort, TagValue, VarInfo } from './types'
+import type { Ast, CompiledProgram, DataType, Decl, Expr, ScalarType, SourcePos, Stmt, TagPort, TagValue, VarInfo, WatchPlan } from './types'
 import { isEnum, StError } from './types'
 
 /** A scalar value in the variable image, as opposed to an aggregate (array/struct record).
@@ -19,6 +20,62 @@ export const tagOf = (v: unknown): TagValue | undefined => (isTagValue(v) ? v : 
 
 export function isTagValue(v: unknown): v is TagValue {
   return typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string'
+}
+
+/** Where one watch value is in a typed program's memory, and how it is stored (core/watchTable.ts WATCH_KIND). */
+export interface WatchPlace {
+  addr: number
+  kind: number
+}
+
+/** CompiledProgram.watchPlan: the watch table as places in the program's memory, in the table's own order. A key
+ *  listed twice keeps its first position and its last place, as an object assigned twice does. Null when a POU keeps
+ *  its variables elsewhere (the walker). */
+export function planWatch(steps: readonly { pou: Pou | null; prefix: string; blocks: boolean }[]): WatchPlan | null {
+  const places = new Map<string, WatchPlace>()
+  // The arrays over the cap, by key without case. Two POUs listed under one prefix (a program and its globals) may
+  // declare the same name, and one name is one variable to a reader. An earlier POU's range goes when a later one
+  // declares the name, so a local's index out of its bounds does not read the global. A range is not added when an
+  // earlier POU declares the name, since that one's elements may be listed and the array would read as a mix of the two.
+  const ranges = new Map<string, WatchRange>()
+  const earlier: { pou: Pou; prefix: string }[] = []
+  const variableOf = (key: string, prefix: string): string => key.slice(prefix.length).split(/[.[]/)[0]!
+  let buffer: ArrayBuffer | null = null
+  for (const s of steps) {
+    if (!s.pou) continue
+    if (!s.pou.placesInto) return null
+    buffer = s.pou.placesInto(places, s.prefix, WATCH_ARRAY_MAX, s.blocks)
+    if (s.blocks) continue
+    const pou = s.pou
+    const same = earlier.filter((e) => e.prefix === s.prefix)
+    // (the names whose earlier variable was itself a range: nothing of it is listed, so the later one's is taken)
+    const replaced = new Set<string>()
+    if (same.length > 0) {
+      for (const [k, r] of ranges) {
+        const name = variableOf(r.key, s.prefix)
+        if (!r.key.startsWith(s.prefix) || pou.typeOf(name) === undefined) continue
+        ranges.delete(k)
+        replaced.add(name.toUpperCase())
+      }
+    }
+    const found: WatchRange[] = []
+    pou.rangesInto?.(found, s.prefix, WATCH_ARRAY_MAX)
+    for (const r of found) {
+      const name = variableOf(r.key, s.prefix)
+      if (replaced.has(name.toUpperCase()) || !same.some((e) => e.pou.typeOf(name) !== undefined)) ranges.set(r.key.toUpperCase(), r)
+    }
+    earlier.push({ pou, prefix: s.prefix })
+  }
+  if (!buffer) return null
+  const keys = [...places.keys()]
+  const addrs = new Uint32Array(keys.length)
+  const kinds = new Uint8Array(keys.length)
+  let i = 0
+  for (const p of places.values()) {
+    addrs[i] = p.addr
+    kinds[i++] = p.kind
+  }
+  return { layout: { keys, addrs, kinds, ...(ranges.size > 0 ? { ranges: [...ranges.values()] } : {}) }, memory: buffer }
 }
 
 /** A runnable POU: its own variable image, function-block instances included, and a body to scan. */
@@ -45,6 +102,12 @@ export interface Pou {
   watchInto(out: Record<string, TagValue>, prefix: string, maxArray: number): void
   /** its function-block instances' outputs, keyed `inst.member` under `prefix` */
   blocksInto(out: Record<string, TagValue>, prefix: string): void
+  /** Where watchInto's and blocksInto's values are, when its memory is one buffer (the typed engine's): each key's
+   *  address and kind into `out`, in the order the two list them, and the buffer. Absent on the walker. */
+  placesInto?(out: Map<string, WatchPlace>, prefix: string, maxArray: number, blocks: boolean): ArrayBuffer
+  /** The arrays placesInto leaves out for being longer than `maxArray`, each with its shape: a table read from a copy
+   *  of the buffer answers their elements by name (core/watchTable.ts). */
+  rangesInto?(out: WatchRange[], prefix: string, maxArray: number): void
   /** the declared scalar type of each key memory lists for it (CompiledProgram.memoryTypes) */
   typesInto(out: Record<string, string>, prefix: string): void
   /** Every scalar it holds (CompiledProgram.deepMemory): what memory lists, and inside every function block instance
@@ -117,10 +180,12 @@ export function coercerFor(type: ScalarType, maxLen: number | undefined, _pos: S
   return (v) => wrap(type, num(v))
 }
 
-/** An array bigger than this is left out of the watch table: it is posted from the sim worker every
- *  frame, and nobody reads a thousand rows. Its elements still run; they just do not light a rung. */
-export const WATCH_ARRAY_MAX = 512 // The cost is per frame, so this is not a number to keep raising -
-// a 2000-element array of UDTs would be tens of thousands of values a frame; reading elements on demand is the way past it)
+/** An array bigger than this is left out of the watch table's keys: a table that travels as an object is built and
+ *  cloned on every send, and every reader that indexes the keys pays for each one. A 2000-element array of UDTs
+ *  would be tens of thousands of values. Its elements are read by name instead, where the table is a copy of the
+ *  program's memory (planWatch's ranges). A table that travels as an object (the walker's, several controllers') does
+ *  not hold them. */
+export const WATCH_ARRAY_MAX = 512
 
 
 export type PouBuilder = (decls: Decl[], body: Stmt[]) => Pou
@@ -190,6 +255,7 @@ export function implicitProgram(main: { decls: Decl[]; body: Stmt[] }, build: Po
   ])
   /** the controller's clock (ns): every scan moves it on by its dt, whatever the scan calls */
   let clock = 0
+  let implicitPlan: { plan: WatchPlan | null } | null = null
   return {
     tasks: [],
     inputs: [...main.decls.filter((d) => d.section === 'VAR_INPUT' && tagged(d)).map((d) => d.name), ...locatedKeys(located, 'input')],
@@ -205,6 +271,16 @@ export function implicitProgram(main: { decls: Decl[]; body: Stmt[] }, build: Po
       pou.blocksInto(out, '')
       return out
     },
+    // the same four steps as `watch`, as places
+    watchPlan: () =>
+      (implicitPlan ??= {
+        plan: planWatch([
+          { pou: globalPou, prefix: '', blocks: false },
+          { pou, prefix: '', blocks: false },
+          { pou: globalPou, prefix: '', blocks: true },
+          { pou, prefix: '', blocks: true },
+        ]),
+      }).plan,
     get memory() {
       const out: Record<string, TagValue> = {}
       globalPou?.watchInto(out, '', Infinity)
@@ -276,6 +352,7 @@ export function configuredProgram(ast: Ast, build: PouBuilder, globalPou: Pou | 
   // one the end of the step: one controller clock, read at each scan. Kept per task because only
   // the scheduler knows when a scan was released; the readings part only if one task sheds scans.
   const clocks = tasks.map(() => 0)
+  let configuredPlan: { plan: WatchPlan | null } | null = null
   const runTask = (index: number, dt: number): void => {
     clocks[index]! += nsOf(dt)
     for (const name of tasks[index]!.programs) byName.get(identKey(name))!.pou.scan(clocks[index]!)
@@ -313,6 +390,30 @@ export function configuredProgram(ast: Ast, build: PouBuilder, globalPou: Pou | 
       for (const i of instances) i.pou.blocksInto(out, `${i.name}.`)
       return out
     },
+    // `watch`'s first and third steps alone: what the instances do not own
+    sharedWatchKeys(): string[] {
+      const out: Record<string, TagValue> = {}
+      globalPou?.watchInto(out, '', WATCH_ARRAY_MAX)
+      globalPou?.blocksInto(out, '')
+      return Object.keys(out)
+    },
+    instanceDeclares(name: string): boolean {
+      const s = split(name)
+      if (!s) return false
+      // (the variable is what stands before the first member or index)
+      const end = s.rest.search(/[.[]/)
+      return s.inst.pou.typeOf(end < 0 ? s.rest : s.rest.slice(0, end)) !== undefined
+    },
+    // the same steps as `watch`, as places
+    watchPlan: () =>
+      (configuredPlan ??= {
+        plan: planWatch([
+          { pou: globalPou, prefix: '', blocks: false },
+          ...instances.map((i) => ({ pou: i.pou, prefix: `${i.name}.`, blocks: false })),
+          { pou: globalPou, prefix: '', blocks: true },
+          ...instances.map((i) => ({ pou: i.pou, prefix: `${i.name}.`, blocks: true })),
+        ]),
+      }).plan,
     get memory() {
       const out: Record<string, TagValue> = {}
       globalPou?.watchInto(out, '', Infinity)

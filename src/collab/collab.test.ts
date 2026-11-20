@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { createPart, createSdkPart, nextId, serializeScene, setNextIdSuffix } from '../core/scene'
-import { isAncestor } from '../core/hierarchy'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartPackage } from '../core/partPackage'
+import { createPart, createSdkPart, nextId, serializeScene, setNextIdSuffix } from '../core/scene/scene'
+import { isAncestor } from '../core/scene/hierarchy'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartPackage } from '../core/parts/partPackage'
 import { DEFAULT_SIM_HZ, SCENE_VERSION } from '../core/types'
 import type { PartInstance, SceneJSON, SdkPart, SimRate } from '../core/types'
 import { applySceneDiff } from './diff'
@@ -15,6 +15,7 @@ import {
   metaMap,
   partsMap,
   orderArray,
+  packagesMap,
   readRoomBuild,
   readSimHz,
   readStDoc,
@@ -27,7 +28,7 @@ import {
 import { seedIfEmpty } from './provider'
 import { authoredCargoView, CollabBridge, overrideScene, withRunLocalCargo } from './bridge'
 import type { BridgeStore, DragPose, PresenceSource } from './bridge'
-import { PACKAGE_FORMAT } from '../core/partPackage'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 
 /** a representative scene: a building (its `rules` wall-rule list param exercises the nested-list shape) plus
  *  a few generic movable Group bodies to carry position / name / parent / provenance through the room */
@@ -654,6 +655,49 @@ describe('live drag streaming', () => {
   })
 })
 
+/** a minimal EditorStore stand-in: holds the scene + run flag and notifies the bridge the way setState does */
+function fakeStore(initial: SceneJSON): {
+  store: BridgeStore
+  scene: () => SceneJSON
+  setRunning: (r: boolean) => void
+  commit: (next: SceneJSON) => void
+} {
+  let scene = initial
+  let running = false
+  let notify = (): void => {}
+  return {
+    store: {
+      getState: () => ({ scene, selectedIds: [], running }),
+      subscribe: (cb) => {
+        notify = cb
+        return () => {}
+      },
+      applyRemote: (s) => void (scene = s),
+      setTransient: (s) => void (scene = s),
+      selectMany: () => {},
+      setUndoDelegate: () => {},
+      applyRemotePackages: () => {},
+      setPackageSink: () => {},
+      setEditEventSink: () => {},
+      applyRemoteEditFeed: () => {},
+      setStProgramSink: () => {},
+      applyRemoteStProgram: () => {},
+      setSimHzSink: () => {},
+      applyRemoteSimHz: () => {},
+      setProgramTransaction: () => {},
+    },
+    scene: () => scene,
+    setRunning: (r) => {
+      running = r
+      notify()
+    },
+    commit: (next) => {
+      scene = next
+      notify()
+    },
+  }
+}
+
 /**
  * "Shared design, personal run" (docs/collab.md): the sim is a private per-client preview, so its
  * runtime must not reach the shared doc. Handling a live box (pilot pick-up, click/band-select of a
@@ -682,49 +726,6 @@ describe('cargo while the local sim runs stays out of the shared doc', () => {
   }
 
   const box = (id: string, at: [number, number, number]): PartInstance => createSdkPart(BOX, id, at, 0)
-
-  /** a minimal EditorStore stand-in: holds the scene + run flag and notifies the bridge the way setState does */
-  function fakeStore(initial: SceneJSON): {
-    store: BridgeStore
-    scene: () => SceneJSON
-    setRunning: (r: boolean) => void
-    commit: (next: SceneJSON) => void
-  } {
-    let scene = initial
-    let running = false
-    let notify = (): void => {}
-    return {
-      store: {
-        getState: () => ({ scene, selectedIds: [], running }),
-        subscribe: (cb) => {
-          notify = cb
-          return () => {}
-        },
-        applyRemote: (s) => void (scene = s),
-        setTransient: (s) => void (scene = s),
-        selectMany: () => {},
-        setUndoDelegate: () => {},
-        applyRemotePackages: () => {},
-        setPackageSink: () => {},
-        setEditEventSink: () => {},
-        applyRemoteEditFeed: () => {},
-        setStProgramSink: () => {},
-        applyRemoteStProgram: () => {},
-        setSimHzSink: () => {},
-        applyRemoteSimHz: () => {},
-        setProgramTransaction: () => {},
-      },
-      scene: () => scene,
-      setRunning: (r) => {
-        running = r
-        notify()
-      },
-      commit: (next) => {
-        scene = next
-        notify()
-      },
-    }
-  }
 
   const docIds = (doc: Y.Doc): string[] => docToScene(doc).parts.map((p) => p.id)
   const docPart = (doc: Y.Doc, id: string): PartInstance => docToScene(doc).parts.find((p) => p.id === id)!
@@ -959,5 +960,89 @@ describe('the scene unit system in a room (UNITS_META)', () => {
     expect(docToScene(ydoc).units).toBe('imperial')
     ydoc.transact(() => applySceneDiff(ydoc, { ...scene, units: 'imperial' }, { version: SCENE_VERSION, parts: [] }), LOCAL_ORIGIN)
     expect('units' in docToScene(ydoc)).toBe(false)
+  })
+
+  it('carries the Length beside it', () => {
+    const ydoc = new Y.Doc()
+    const scene: SceneJSON = { version: SCENE_VERSION, parts: [], units: 'imperial', lengthUnit: 'mm' }
+    sceneToDoc(scene, ydoc)
+    expect(docToScene(ydoc)).toMatchObject({ units: 'imperial', lengthUnit: 'mm' })
+    ydoc.transact(() => applySceneDiff(ydoc, scene, { ...scene, lengthUnit: 'in' }), LOCAL_ORIGIN)
+    expect(docToScene(ydoc).lengthUnit).toBe('in')
+    ydoc.transact(() => applySceneDiff(ydoc, { ...scene, lengthUnit: 'in' }, { ...scene, lengthUnit: undefined }), LOCAL_ORIGIN)
+    expect('lengthUnit' in docToScene(ydoc)).toBe(false)
+  })
+
+  it("reads a room holding 'metric-mm' as metric in mm, and a Length cleared there stays cleared", () => {
+    const ydoc = new Y.Doc()
+    metaMap(ydoc).set('units', 'metric-mm')
+    const read = docToScene(ydoc)
+    expect(read).toMatchObject({ units: 'metric', lengthUnit: 'mm' })
+    const cleared: SceneJSON = { ...read, lengthUnit: undefined }
+    ydoc.transact(() => applySceneDiff(ydoc, read, cleared), LOCAL_ORIGIN)
+    expect(docToScene(ydoc).units).toBe('metric')
+    expect('lengthUnit' in docToScene(ydoc)).toBe(false)
+  })
+})
+
+describe("the scene's controllers in a room (PLCS_META)", () => {
+  it('seeds, reads back, follows a local edit, and refuses what is not a controller list', () => {
+    const ydoc = new Y.Doc()
+    const plcs = [
+      { name: 'PLC1', runsOn: 'app' as const, protocol: 'serve' as const, connect: true },
+      { name: 'Cell2', runsOn: 'plc' as const, protocol: 's7' as const, connect: true },
+    ]
+    const scene: SceneJSON = { version: SCENE_VERSION, parts: [], plcs }
+    sceneToDoc(scene, ydoc)
+    expect(docToScene(ydoc).plcs).toEqual(plcs)
+    const renamed = [plcs[0]!, { ...plcs[1]!, name: 'Packing' }]
+    ydoc.transact(() => applySceneDiff(ydoc, scene, { ...scene, plcs: renamed }), LOCAL_ORIGIN)
+    expect(docToScene(ydoc).plcs?.map((p) => p.name)).toEqual(['PLC1', 'Packing'])
+    // a peer's malformed value reads as no list, never as code or a half list
+    ydoc.getMap('meta').set('plcs', '{not json')
+    expect('plcs' in docToScene(ydoc)).toBe(false)
+  })
+})
+
+describe("the scene's display list in a room (DISPLAY_META)", () => {
+  it('seeds, reads back, follows a local edit, and refuses what is not a list of names', () => {
+    const ydoc = new Y.Doc()
+    const scene: SceneJSON = { version: SCENE_VERSION, parts: [], display: ['%IX100.0', 'Speed'] }
+    sceneToDoc(scene, ydoc)
+    expect(docToScene(ydoc).display).toEqual(['%IX100.0', 'Speed'])
+    ydoc.transact(() => applySceneDiff(ydoc, scene, { ...scene, display: ['Speed'] }), LOCAL_ORIGIN)
+    expect(docToScene(ydoc).display).toEqual(['Speed'])
+    // emptied, the key goes: a display then shows the scene alone
+    ydoc.transact(() => applySceneDiff(ydoc, { ...scene, display: ['Speed'] }, { version: SCENE_VERSION, parts: [] }), LOCAL_ORIGIN)
+    expect(ydoc.getMap('meta').has('display')).toBe(false)
+    ydoc.getMap('meta').set('display', '{not json')
+    expect('display' in docToScene(ydoc)).toBe(false)
+  })
+})
+
+describe('the room gets every definition the scene uses', () => {
+  afterEach(() => clearPackages())
+
+  it('a spawner product nothing places still reaches the room', () => {
+    // the safety net for parts this client brought (bridge.syncReferencedPackages): a product named only in a
+    // spawner's params is needed by whoever presses Play, so it travels like the spawner
+    const pkgOf = (id: string, params: PartPackage['params'] = {}): PartPackage => ({
+      format: PACKAGE_FORMAT,
+      id,
+      name: id,
+      params,
+      behavior: 'definePart({ step(){} })',
+      geometry: { kind: 'rig', links: [{ name: 'base', shape: { kind: 'box', size: [1, 0.1, 1] }, offset: [0, 0, 0] }], joints: [], bounds: { length: 1, width: 1, top: 0.1, bottom: 0 } },
+    }) as PartPackage
+    const spawner = pkgOf('room.spawner', { product: { type: 'string', default: 'room.crate', product: true } } as unknown as PartPackage['params'])
+    registerPackage(spawner)
+    registerPackage(pkgOf('room.crate'))
+    const empty: SceneJSON = { version: SCENE_VERSION, parts: [] }
+    const doc = seededDoc(empty)
+    const fake = fakeStore(empty)
+    const bridge = new CollabBridge(fake.store, doc)
+    fake.commit({ version: SCENE_VERSION, parts: [createSdkPart(spawner, 'sp_1', [0, 0, 0], 0)] })
+    expect([...packagesMap(doc).keys()].sort()).toEqual(['room.crate', 'room.spawner'])
+    bridge.destroy()
   })
 })

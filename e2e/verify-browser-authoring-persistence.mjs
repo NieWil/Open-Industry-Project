@@ -46,7 +46,7 @@ try {
   await page.screenshot({ path: `${OUT}/01-loaded.png` })
 
   // ---- author a blank part in-app, then edit its behavior (both should persist) ----
-  const authored = await page.evaluate((behavior) => {
+  const authored = await page.evaluate(async (behavior) => {
     const c = window.__oip.controller
     const id = c.createBlankPart()
     const diags = c.editBehavior(id, behavior) // [] on success
@@ -60,7 +60,7 @@ try {
       inUserPackages: st.userPackages.some((p) => p.id === id),
       inScene: st.scene.parts.some((p) => p.type === 'part' && p.packageId === id),
       embedded: (st.scene.packages || []).some((p) => p.id === id),
-      lsRaw: localStorage.getItem('oip-web/project'),
+      lsRaw: (await window.__oip.savedProject()),
       lsLegacy: localStorage.getItem('oip-web/user-packages'),
     }
   }, EDITED_BEHAVIOR)

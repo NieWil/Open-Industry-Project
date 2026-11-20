@@ -1,6 +1,6 @@
 // Get parts (docs/part-libraries.md): where a project gets parts it does not have, from the part libraries it reads
-// (editor/partLibraryUrls.ts). Sources on the left, the selected library's parts in the middle, the selected part on the
-// right. Getting a part copies it into the project's library (editor/partLibraries.ts installFromLibrary); placing it is
+// (editor/parts/partLibraryUrls.ts). Sources on the left, the selected library's parts in the middle, the selected part on the
+// right. Getting a part copies it into the project's library (editor/parts/partLibraries.ts installFromLibrary); placing it is
 // the Parts dock's job, where it then shows in its own category tab beside the built-ins.
 //
 // Each listed part's offered version is downloaded and checked when the window opens (a few KB each), so Add and Update
@@ -15,20 +15,22 @@ import type { ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { asCopyOfBuiltIn } from '../../core/builtInVersion'
 import { CARGO_CAP_FORK_POCKETS, CARGO_CAP_HEAVY, CARGO_CAP_LOAD_BASE, cargoCapsOf } from '../../core/frame'
-import { partChanges } from '../../core/partChanges'
-import { libraryCredit, libraryStatus, libraryUrl, offeredVersion } from '../../core/partLibrary'
-import type { LibraryPart, LibraryVersion } from '../../core/partLibrary'
-import type { SourceStatus } from '../../core/partOrigin'
-import { isCargoPackage } from '../../core/partPackage'
-import type { PartPackage } from '../../core/partPackage'
-import { PART_SDK_LEVEL } from '../../core/partSdk'
-import { dialogHost } from '../dialogHost'
-import { addLibrary, downloadVersion, installFromLibrary, readLibrary } from '../partLibraries'
-import type { LibraryListing } from '../partLibraries'
-import { LIBRARIES_CHANGED, libraryUrls } from '../partLibraryUrls'
-import { documentSceneOf, type EditorState, type EditorStore } from '../store'
+import { partChanges } from '../../core/parts/partChanges'
+import { libraryCredit, libraryStatus, libraryUrl, offeredVersion } from '../../core/parts/partLibrary'
+import type { LibraryPart, LibraryVersion } from '../../core/parts/partLibrary'
+import type { SourceStatus } from '../../core/parts/partOrigin'
+import { isCargoPackage } from '../../core/parts/partPackage'
+import type { PartPackage } from '../../core/parts/partPackage'
+import { PART_SDK_LEVEL } from '../../core/parts/partSdk'
+import { dialogHost, isElement } from '../dialogHost'
+import { addLibrary, downloadVersion, installFromLibrary, readLibrary } from '../parts/partLibraries'
+import { noteLibraryListings } from '../parts/libraryUpdates'
+import { getShelfApi } from '../parts/partShelf'
+import type { LibraryListing } from '../parts/partLibraries'
+import { LIBRARIES_CHANGED, libraryUrls } from '../parts/partLibraryUrls'
+import { documentSceneOf, type EditorState, type EditorStore } from '../store/store'
 import { trapTab, useModalKeys } from './inspector/menu'
-import { ShelfChangeDialog } from './ShelfChangeDialog'
+import { PartChangeDialog } from './PartChangeDialog'
 import { CloseIcon, PartGlyph } from './toolbarIcons'
 import { defineMessages, t, type MessageId } from '../../core/i18n'
 
@@ -87,11 +89,13 @@ const M = defineMessages('getParts', {
   cancel: 'Cancel',
   readingOne: 'Reading…',
   add: 'Add',
-  addHint: "A team's library or a mirror: the address of its index.json. Settings, Part libraries removes one.",
+  addHint: "Another publisher's library or a mirror: the address of its index.json. Settings, Part libraries removes one.",
+  addHintShelf:
+    "Another publisher's library or a mirror: the address of its index.json. Settings, Part libraries removes one. To share parts within a team, use the parts shelf.",
   addLibrary: '+ Add a library',
   yourParts: 'Your parts',
   noOwnParts: 'Publishing starts from a part of your own: make one with New part in the Parts dock, or Save as New Part on a built-in.',
-  noLibrary: "No part library yet. Add one with Add a library: a team's library, or a mirror of one, by the address of its index.json.",
+  noLibrary: "No part library yet. Add one with Add a library: another publisher's library, or a mirror of one, by the address of its index.json.",
   emptyLibrary: 'No parts listed here yet. A part you make can be the first.',
   choose: 'Choose a part to see what it is.',
 })
@@ -142,7 +146,7 @@ export function GetPartsWindow({ store, state, onClose, onPublish }: Props): Rea
   const [query, setQuery] = useState('')
   // "More from <publisher>": the library's parts narrowed to one publisher's, shown as a removable filter by the search
   const [byPublisher, setByPublisher] = useState<string | null>(null)
-  const [review, setReview] = useState<Parameters<typeof ShelfChangeDialog>[0] | null>(null)
+  const [review, setReview] = useState<Parameters<typeof PartChangeDialog>[0] | null>(null)
   // adding a library happens here, not in Settings: Settings would open under this window
   const [adding, setAdding] = useState<{ draft: string; busy: boolean; error: string } | null>(null)
   const addSource = async (): Promise<void> => {
@@ -159,7 +163,7 @@ export function GetPartsWindow({ store, state, onClose, onPublish }: Props): Rea
     if (review) return
     if (dialogRef.current) trapTab(dialogRef.current, e)
     // this listener stops every key on the window first, so a field's own onKeyDown never sees Enter
-    if (e.key === 'Enter' && e.target instanceof HTMLElement && e.target.dataset.testid === 'get-parts-library-url' && !adding?.busy) void addSource()
+    if (e.key === 'Enter' && isElement(e.target) && e.target.dataset.testid === 'get-parts-library-url' && !adding?.busy) void addSource()
   })
 
   // the viewer's lists change in Settings
@@ -177,16 +181,20 @@ export function GetPartsWindow({ store, state, onClose, onPublish }: Props): Rea
     void Promise.all(urlsKey === '' ? [] : urlsKey.split('\n').map((u) => readLibrary(u))).then((read) => {
       if (!live) return
       setListings(read)
+      // the Catalog's "Update" badges read the same listing (editor/parts/libraryUpdates.ts)
+      noteLibraryListings(read)
       for (const l of read) {
         for (const part of l.index?.parts ?? []) {
           const { version } = offeredVersion(part)
           if (!version) continue
-          void downloadVersion(l.url, part.id, version).then((d) => {
-            if (live) setDownloads((m) => new Map(m).set(keyOf(l.url, part.id), d))
-          })
+          void downloadVersion(l.url, part.id, version)
+            .then((d) => {
+              if (live) setDownloads((m) => new Map(m).set(keyOf(l.url, part.id), d))
+            })
+            .catch((e: unknown) => console.warn('[oip] downloading a library part failed', e))
         }
       }
-    })
+    }).catch((e: unknown) => console.warn('[oip] reading the part libraries failed', e))
     return () => {
       live = false
     }
@@ -234,7 +242,7 @@ export function GetPartsWindow({ store, state, onClose, onPublish }: Props): Rea
     </button>
   )
 
-  // who made it, kept with the project's copy (core/partPackage.ts PartCredit)
+  // who made it, kept with the project's copy (core/parts/partPackage.ts PartCredit)
   const creditOf = (l: LibraryListing, partId: string) => libraryCredit(l.index!, l.index!.parts.find((p) => p.id === partId), l.firstParty)
   const add = (l: LibraryListing, pkg: PartPackage): void => installFromLibrary(store, pkg, creditOf(l, pkg.id))
   const update = (l: LibraryListing, pkg: PartPackage, status: SourceStatus, library: string): void => {
@@ -455,7 +463,7 @@ export function GetPartsWindow({ store, state, onClose, onPublish }: Props): Rea
                     {adding.busy ? t(M.readingOne) : t(M.add)}
                   </button>
                 </div>
-                <p className="getparts-hint">{t(M.addHint)}</p>
+                <p className="getparts-hint">{t(getShelfApi() ? M.addHintShelf : M.addHint)}</p>
               </div>
             ) : (
               <button type="button" className="getparts-secondary getparts-add-library" data-testid="get-parts-add-library" onClick={() => setAdding({ draft: '', busy: false, error: '' })}>
@@ -516,7 +524,7 @@ export function GetPartsWindow({ store, state, onClose, onPublish }: Props): Rea
           <aside className="getparts-side">{source?.index && chosen ? detail(source, chosen) : <p className="getparts-hint">{t(M.choose)}</p>}</aside>
         </div>
       </div>
-      {review && <ShelfChangeDialog {...review} />}
+      {review && <PartChangeDialog {...review} />}
     </div>,
     host,
   )

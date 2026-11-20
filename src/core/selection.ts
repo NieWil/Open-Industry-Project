@@ -1,4 +1,4 @@
-import { groupRoot } from './hierarchy'
+import { groupRoot, partsById } from './scene/hierarchy'
 import type { PartInstance } from './types'
 
 /**
@@ -27,8 +27,9 @@ export function bandSelection(
 ): string[] {
   const out = [...current]
   const seen = new Set(out)
+  const byId = partsById(parts)
   for (const id of hits) {
-    const root = groupRoot(parts, id)
+    const root = groupRoot(parts, id, byId)
     if (seen.has(root)) continue
     seen.add(root)
     out.push(root)

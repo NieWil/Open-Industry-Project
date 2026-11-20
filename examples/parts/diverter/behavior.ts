@@ -2,8 +2,8 @@
 // three are fixed to the blade and move with it as ONE stage, pushing it across the lane to deflect cargo onto a
 // takeaway conveyor. The blade carries the collision box that shoves cargo (the hidden `blade` link, a child of
 // partEnd: a hidden link hides what is drawn on it too, so the meshes ride the visible partEnd frame instead).
-// Driven by an authored 'diverted' toggle / a hand Use, or — while a PLC program drives its tag (comms on +
-// ctx.tagDriven) — the tag. The auto-vs-hand handoff follows output ownership, like a real panel.
+// Driven by an authored 'diverted' toggle / a hand Use, or by its tag while a PLC program drives it
+// (ctx.tagDriven). The auto-vs-hand handoff follows output ownership, like a real panel.
 //
 // Demonstrates procedural geometry riding a rig joint (geometry() submeshes tagged `link`) and sized by a param. The
 // block is the same for every stroke; what `divertDistance` sizes is what has to be as long as the stroke: the guide
@@ -38,7 +38,6 @@ definePart({
     divertDistance: { type: 'number', default: 0.75, min: 0.1, max: 1.5, step: 0.05, label: 'Divert distance (m)', desc: 'How far the blade travels across the lane. Size it so the blade pushes cargo clear of the running surface rather than leaving it straddling the edge. The guide rods, the cylinder and the stand are built for this stroke, so a longer one makes a longer machine.' },
     // the default is the stand a free-standing drop gets: the origin 0.3847 above the floor, the footprint's `bottom`
     standHeight: { type: 'number', default: 0.3847, min: 0.1, max: 3, step: 0.01, rest: 'surfaceBelow', label: 'Stand height (m)', desc: 'From the part origin, 0.2 m below the belt surface it is mounted against, down to whatever the stand stands on. Set automatically when the diverter is dropped or snapped, so its legs reach the floor at any belt height.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
     // autoWhenDriven: this tag COMMANDS the pusher, so a program driving it owns the device — the pilot prompt
     // shows "In auto - PLC controlled" instead of a dead "Use".
     tag: { type: 'tag', dir: 'in', stType: 'BOOL', autoWhenDriven: true, default: '', label: 'Extend tag (true extends the pusher)', group: 'Comms', desc: 'Extend the pusher from the program. While a program drives this tag it OWNS the diverter, so a hand Use in pilot mode is refused with "In auto - PLC controlled".' },
@@ -247,13 +246,13 @@ definePart({
     ]
   },
   step(ctx) {
-    // Signal precedence, modelled on a real panel: (1) the tag, while comms are on and an attached program
-    // actually drives it (ctx.tagDriven); (2) otherwise the hand signal — the 'diverted' param or a pilot Use.
+    // Signal precedence, modelled on a real panel: (1) the tag, while an attached program actually drives it
+    // (ctx.tagDriven); (2) otherwise the hand signal — the 'diverted' param or a pilot Use.
     if (ctx.params.diverted !== lastDiverted) { diverted = ctx.params.diverted; lastDiverted = ctx.params.diverted }
     if (ctx.used()) diverted = !diverted
     // auto wins by overwriting the hand latch: a press while owned is undone the same tick, and when ownership
     // releases (program detach) the pusher holds its last commanded state.
-    if (ctx.params.enableComms && ctx.tagDriven(ctx.params.tag)) diverted = ctx.readTag(ctx.params.tag)
+    if (ctx.tagDriven(ctx.params.tag)) diverted = ctx.readTag(ctx.params.tag)
     // the hand latch AFTER the auto gate — what the device is really doing, for the Inspector readout
     ctx.report('diverted', diverted)
     const want = diverted ? 1 : 0

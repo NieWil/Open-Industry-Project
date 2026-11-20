@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import { agentGuideMarkdown } from './agentGuide'
 import type { GuideDoc, PartExtent } from './agentGuide'
-import type { ParamSchema } from './partApi'
+import type { ParamSchema } from './parts/partApi'
 
 /** A scene shaped like the real thing: parts referring to packages the scene embeds. */
 function scene(params: ParamSchema, partParams: Record<string, unknown>, partName?: string): unknown {
@@ -151,8 +151,15 @@ describe('the honesty clauses', () => {
     expect(agentGuideMarkdown(doc(scene(TAG_SPECS, {})))).toContain('Almost nothing checks geometry')
   })
 
-  it('tells the agent the app does not write back while following the folder', () => {
-    expect(agentGuideMarkdown(doc(scene(TAG_SPECS, {})))).toContain('does not write back')
+  // an agent told it was the only writer treated the folder as the one source, never used the editing tools, and
+  // was surprised when a file load stopped its run
+  it('tells the agent the folder syncs both ways and that a load stops the run', () => {
+    for (const door of ['files', 'tools'] as const) {
+      const md = agentGuideMarkdown(doc(scene(TAG_SPECS, {})), { door })
+      expect(md).toMatch(/both ways/)
+      expect(md).toMatch(/stops a running sim/)
+      expect(md).toContain('sync_folder')
+    }
   })
 })
 
@@ -329,5 +336,28 @@ describe('the ST section teaches the language as it stands', () => {
   it('reading a failed test before changing anything', () => {
     expect(md).toContain('--trace')
     expect(md).toContain('--context')
+  })
+})
+
+describe('the guide an agent reads through the tools (get_guide)', () => {
+  const files = agentGuideMarkdown(doc(scene(TAG_SPECS, { runTag: 'Motor' })))
+  const tools = agentGuideMarkdown(doc(scene(TAG_SPECS, { runTag: 'Motor' })), { door: 'tools' })
+
+  it('names the tools, and none of the files or CLIs an agent at the folder uses', () => {
+    for (const tool of ['set_pou', 'run_test', 'save_test', 'snap_part', 'get_package', 'capture_view', 'open_project']) expect(tools).toContain(`\`${tool}\``)
+    expect(tools).toMatch(/`trace: \["A", "B"\]`/)
+    expect(tools).not.toMatch(/npm run|project\.json|scene\.json|tests\/|AGENTS\.md|GENERATED/)
+  })
+
+  it('keeps what both doors share: the tag table, the ST notes, the test format', () => {
+    expect(tools).toContain('| `Motor` |')
+    expect(tools).toContain('Writing the Structured Text program')
+    expect(tools).toContain('Each check names exactly one **source**')
+  })
+
+  it('leaves the folder guide as it was', () => {
+    expect(files).toContain('npm run test-project')
+    expect(files).toContain('### Adding a file')
+    expect(files).not.toContain('## What you can do with the tools')
   })
 })

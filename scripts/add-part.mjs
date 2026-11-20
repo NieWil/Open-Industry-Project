@@ -9,20 +9,31 @@
 //     its own, docs/part-sources.md). A project that already has its own copy keeps it.
 //   • a PART FOLDER (manifest.json|rig.json + behavior.js|ts - your own part): baked to prove it loads, copied
 //     to `parts/<id>/` as manifest.json + behavior.js, and listed in project.json `packages`, which is how a
-//     project carries an authored part.
+//     project carries an authored part. A folder already in the project's `parts/` is not copied: it is listed, and
+//     moved to `parts/<id>/` (with its part.js) when it has another name, so no unlisted duplicate is left.
+//   • the ID of a part in the project's `parts/` (listed, or just authored there): placed, and listed if it was not.
+//   • `building`: the warehouse shell, as the app's New makes it (core/scene/scene.ts defaultBuilding), id `bld_1`
+//     unless --id says otherwise. A scene holds at most one. Its --params are checked by core/building/buildingEdit.ts:
+//     `lengthSections`, `widthSections`, `heightSections`, `columnSpacing`, the wall `rules` as a JSON list, and
+//     `openDoors` (`npm run edit-part -- <folder> bld_1 --docks` lists the door keys). It is not a library part, so
+//     nothing is copied to `parts/`. --at x,z puts its centre there on the floor.
 //
 // A folder with no project.json becomes a new project with an empty scene, so a part can be tested
 // from nothing: `npm run add-part -- my-test oip.roller-conveyor oip.box ./my-part --place`.
-// `--place` also drops one instance of each part: at the origin, or where that part's own options say. The options
+// `--place` also drops one instance of each part: at the origin, or where that part's own options say. A part given
+// any of the options below is placed whether or not --place is there (they describe a placed part). The options
 // after a part apply to that part only:
-//   --params k=v,...  its params, each checked against the param's declared type (core/partParamArgs.ts). A param
+//   --params k=v,...  its params, each checked against the param's declared type (core/parts/partParamArgs.ts). A param
 //                     that takes effect only under a switch setting turns the switch to it unless the switch is given
 //                     too (`speedFpm=200` on a metric belt sets `fpmUnits=true`: said, never silent); with the switch
 //                     given the other way it is warned about. A value the part has already is not stored (printed).
 //                     A list is ONE comma-joined value: `--params 'boxColors=#e33,#3e3,width=1'`
 //   --id <id>         its scene id (default `<stem>-<n>`); an id already in the scene, or given twice, is an error
-//   --at x,y,z        its position: the part's ORIGIN (`npm run catalog -- <id>` prints where that is: a belt's is
-//                     its tail end), in metres, y up
+//   --at x,z          its position on the floor, in metres: rested there by the editor's own rule (core floorRestPose:
+//                     its underside on the floor, a legged deck at its stand height). A placed part with no --at
+//                     rests on the floor at the origin.
+//   --at x,y,z        its ORIGIN exactly (`npm run catalog -- <id>` prints where that is: a belt's is its tail end),
+//                     in metres, y up
 //   --rot <deg>       its yaw about +Y, in degrees
 // (`npm run snap-part -- <part> --project <folder> --host <id> --id <id> --write` seats one where the editor would.)
 // `--scaffold` places them AS A STRAIGHT LINE instead, wired, with a start/stop program and a starter test: what it
@@ -59,7 +70,7 @@ const scaffold = argv.includes('--scaffold')
 const place = scaffold || argv.includes('--place')
 const usage = (why) => {
   if (why) console.error(`✗ ${why}`)
-  console.error('usage: npm run add-part -- <project-folder> <built-in id | part-folder> [--params k=v,...] [--id <id>] [--at x,y,z] [--rot <deg>] ... [--place | --scaffold]')
+  console.error('usage: npm run add-part -- <project-folder> <built-in id | own part id | part-folder> [--params k=v,...] [--id <id>] [--at x,z | x,y,z] [--rot <deg>] ... [--place | --scaffold]')
   process.exit(2)
 }
 // the options after a part apply to that part: index into parts -> { params, id, at, rot }
@@ -79,7 +90,7 @@ for (let i = 0; i < argv.length; i++) {
       o.id = v
     } else if (a === '--at') {
       const xyz = v.split(',').map(Number)
-      if (xyz.length !== 3 || xyz.some((n) => !Number.isFinite(n))) usage(`--at wants x,y,z in metres, not "${v}"`)
+      if ((xyz.length !== 2 && xyz.length !== 3) || xyz.some((n) => !Number.isFinite(n))) usage(`--at wants x,z (on the floor) or x,y,z (the origin) in metres, not "${v}"`)
       o.at = xyz
     } else {
       const d = Number(v)
@@ -93,7 +104,6 @@ for (let i = 0; i < argv.length; i++) {
 }
 const [folder, ...parts] = positional
 if (!folder || parts.length === 0) usage()
-if (optsFor.size > 0 && !place) usage('--params / --id / --at / --rot describe a PLACED part: add --place or --scaffold')
 {
   const ids = [...optsFor.values()].map((o) => o.id).filter(Boolean)
   const twice = ids.find((id, i) => ids.indexOf(id) !== i)
@@ -130,14 +140,30 @@ try {
     scene = lib.scene
     bundled = lib.bundled
   } else {
-    const { emptyScene } = await vite.ssrLoadModule('/src/core/scene.ts')
+    const { emptyScene } = await vite.ssrLoadModule('/src/core/scene/scene.ts')
     scene = emptyScene()
     bundled = await bakeBundled(vite)
   }
-  const { registerPackage } = await vite.ssrLoadModule('/src/core/partRegistry.ts')
-  const { createSdkPart } = await vite.ssrLoadModule('/src/core/scene.ts')
-  const { parseParamArgs, withParamArgs } = await vite.ssrLoadModule('/src/core/partParamArgs.ts')
+  const { registerPackage } = await vite.ssrLoadModule('/src/core/parts/partRegistry.ts')
+  const { createSdkPart } = await vite.ssrLoadModule('/src/core/scene/scene.ts')
+  const { parseParamArgs, withParamArgs } = await vite.ssrLoadModule('/src/core/parts/partParamArgs.ts')
   const { packageParamSpecs } = await vite.ssrLoadModule('/src/core/packageParams.ts')
+  const { floorRestPose } = await vite.ssrLoadModule('/src/core/parts/partGeometry.ts')
+  // a new project has no parts of its own yet: a built-in id or a folder
+  const resolveNew = async (arg) => {
+    if (!isFolder(arg)) {
+      const pkg = bundled.get(arg)
+      if (pkg) return { pkg }
+      const near = [...bundled.keys()].filter((id) => id.includes(arg.replace(/^oip\./, '')))
+      return { error: `"${arg}" is neither a folder nor a built-in part id${near.length ? ` - did you mean ${near.join(', ')}?` : ' (npm run catalog lists them)'}`, exit: 1 }
+    }
+    const baked = await bakeFolder(vite, arg)
+    if (baked.error) return baked
+    if (bundled.has(baked.pkg.id)) {
+      return { error: `${arg}: id "${baked.pkg.id}" is a BUILT-IN id - an authored part under it would shadow the bundled part. Give your part its own id (e.g. "acme.${baked.pkg.id.replace(/^oip\./, '')}").`, exit: 1 }
+    }
+    return { pkg: baked.pkg }
+  }
 
   const idsTaken = new Set(scene.parts.map((p) => p.id))
   for (const o of optsFor.values()) {
@@ -145,31 +171,46 @@ try {
     if (o.id !== undefined) idsTaken.add(o.id)
   }
   const plan = [] // in argument order: { arg, pkg, part?, given }
+  const buildingEdit = await vite.ssrLoadModule('/src/core/building/buildingEdit.ts')
+  const { defaultBuilding } = await vite.ssrLoadModule('/src/core/scene/scene.ts')
   for (const [index, arg] of parts.entries()) {
-    let pkg
-    if (isFolder(arg)) {
-      const baked = await bakeFolder(vite, arg)
-      if (baked.error) {
-        fail(baked.error, baked.exit)
+    if (arg === 'building') {
+      const has = scene.parts.find((p) => p.type === 'building') ?? plan.find((s) => s.building)?.part
+      if (has) {
+        fail(`building: the scene already has one (${has.id}); a scene holds at most one. Change it with npm run edit-part -- ${folder} ${has.id} --params ...`, 2)
         continue
       }
-      pkg = baked.pkg
-      if (bundled.has(pkg.id)) {
-        fail(`${arg}: id "${pkg.id}" is a BUILT-IN id - an authored part under it would shadow the bundled part. Give your part its own id (e.g. "acme.${pkg.id.replace(/^oip\./, '')}").`)
-        continue
+      const o = optsFor.get(index) ?? {}
+      let id = o.id ?? 'bld_1'
+      for (let n = 2; !o.id && idsTaken.has(id); n++) id = `bld_${n}`
+      idsTaken.add(id)
+      const part = defaultBuilding(id)
+      if (o.at) part.position = o.at.length === 3 ? o.at : [o.at[0], 0, o.at[1]]
+      if (o.rot !== undefined) part.rotationY = r6((o.rot * Math.PI) / 180)
+      if (o.params !== undefined) {
+        try {
+          const notes = []
+          part.params = buildingEdit.editBuildingParams(part, parseParamArgs(o.params), notes).params
+          for (const n of notes) console.log(`  building --params: ${n}`)
+        } catch (e) {
+          fail(`building --params: ${e.message.replace(/^params: /, '')}`)
+          continue
+        }
       }
-    } else {
-      pkg = bundled.get(arg)
-      if (!pkg) {
-        const near = [...bundled.keys()].filter((id) => id.includes(arg.replace(/^oip\./, '')))
-        fail(`"${arg}" is neither a folder nor a built-in part id${near.length ? ` - did you mean ${near.join(', ')}?` : ' (npm run catalog lists them)'}`)
-        continue
-      }
+      plan.push({ arg, building: true, part, given: [] })
+      continue
     }
+    const resolved = lib ? await lib.resolvePart(arg) : await resolveNew(arg)
+    if (resolved.error) {
+      fail(resolved.error, resolved.exit)
+      continue
+    }
+    const pkg = resolved.pkg
     registerPackage(pkg)
     const step = { arg, pkg, given: [] }
     plan.push(step)
-    if (!place) continue
+    // a part's own options describe a placed part, so they place it even without --place
+    if (!place && !optsFor.has(index)) continue
     const o = optsFor.get(index) ?? {}
     let id = o.id
     if (!id) {
@@ -181,7 +222,7 @@ try {
     }
     const part = { id, type: 'part', packageId: pkg.id, position: [0, 0, 0], rotationY: 0, params: freshParams(pkg, scene.units) }
     // the scaffold lays the line out itself and reads --at / --rot as it says (core/lineScaffold.ts)
-    if (o.at && !scaffold) part.position = o.at
+    if (o.at?.length === 3 && !scaffold) part.position = o.at
     if (o.rot !== undefined && !scaffold) part.rotationY = r6((o.rot * Math.PI) / 180)
     if (o.params !== undefined) {
       // applied to the FULL part (an extent such as a belt's length resolves through its other params), and the
@@ -212,11 +253,22 @@ try {
         continue
       }
     }
+    if (o.at?.length !== 3 && !scaffold) {
+      // on the floor: rested by its full params (a legged deck's stand height, a rig's bounds.bottom) and its yaw
+      try {
+        const full = createSdkPart(pkg, part.id, [0, 0, 0], part.rotationY, { placed: true, units: scene.units })
+        const [x, z] = o.at ?? [0, 0]
+        part.position = floorRestPose({ ...full, params: { ...full.params, ...part.params } }, x, z).map(r6)
+      } catch (e) {
+        fail(`${arg}: could not rest it on the floor (${e.message}); give --at x,y,z`)
+        continue
+      }
+    }
     step.part = part
-    if (o.at) step.at = o.at
+    if (o.at) step.at = part.position
     if (o.rot !== undefined) step.rot = (o.rot * Math.PI) / 180
   }
-  const placed = plan.filter((s) => s.part)
+  const placed = plan.filter((s) => s.part && !s.building)
   let scaffolded = null
   if (scaffold && errors.length === 0 && placed.length > 0) {
     try {
@@ -234,6 +286,10 @@ try {
   // 2. write: the project (created now if new), each part's library copy, the placed parts, the scaffold's files
   if (!lib) lib = await projectLibrary(vite, folder)
   for (const step of plan) {
+    if (step.building) {
+      lib.scene.parts.push(step.part)
+      continue
+    }
     const r = await lib.addPart(step.arg)
     if (r.error) {
       // checked in step 1; only a change on disk in between gets here
@@ -244,10 +300,15 @@ try {
   }
   if (scaffolded) writeScaffold(scaffolded, lib.project)
   lib.save()
+  for (const s of plan.filter((s) => s.building)) {
+    const { lengthSections: L, widthSections: W } = s.part.params
+    const doors = buildingEdit.dockDoors(s.part)
+    console.log(`+ building ${s.part.id}: ${L} x ${W} sections (${L * 10} x ${W * 10} m), centred at [${s.part.position.join(', ')}], ${doors.length} dock door(s), ${doors.filter((d) => d.open).length} open (npm run edit-part -- ${folder} ${s.part.id} --docks)`)
+  }
   if (!scaffold) {
     for (const s of placed.filter((s) => s.at)) console.log(`+ placed ${s.part.id} at [${s.at.join(', ')}]${s.rot !== undefined ? ` yaw ${r6((s.rot * 180) / Math.PI)} deg` : ''}`)
-    const atOrigin = placed.filter((s) => !s.at).map((s) => s.part.id)
-    if (atOrigin.length > 0) console.log(`+ placed at the origin: ${atOrigin.join(', ')} - give each --at x,y,z (and --rot <deg>) after it, or seat one with npm run snap-part -- <part> --project ${folder} --host <id> --id <id> --write`)
+    const atOrigin = placed.filter((s) => !s.at).map((s) => `${s.part.id} [${s.part.position.join(', ')}]`)
+    if (atOrigin.length > 0) console.log(`+ placed on the floor at the origin: ${atOrigin.join(', ')} - give each --at x,z (and --rot <deg>) after it, or seat one with npm run snap-part -- <part> --project ${folder} --host <id> --id <id> --write`)
   }
   console.log(`
 next: npm run validate-project -- ${folder}   then   npm run test-project -- ${folder}`)
@@ -297,7 +358,7 @@ function writeScaffold({ out, sceneParts }, project) {
     // the program's files: format 7 lists one per POU (`program`), formats 4-6 name one (`stProgram`)
     const programFiles = Array.isArray(project.program) ? project.program : project.stProgram ? [project.stProgram] : []
     if (programFiles.length === 0) {
-      // one file; the app lays a program out one file per POU when it opens the folder (core/projectFolder.ts)
+      // one file; the app lays a program out one file per POU when it opens the folder (core/project/projectFolder.ts)
       const rel = 'plc/program.st'
       project.program = [rel]
       mkdirSync(dirname(folderOf(rel)), { recursive: true })

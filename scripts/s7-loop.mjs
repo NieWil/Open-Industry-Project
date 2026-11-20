@@ -2,7 +2,7 @@
 // AN S7 SERVER IN THE LOOP: the conveyor case (scripts/lib/conveyor-loop.mjs) over S7 PUT/GET, the simulator a
 // client of snap7's S7 server, which plays an S7-1200/1500's communication stack.
 //
-// What it proves: that the app's S7 link (src/editor/s7Link.ts over src/plc/s7Client.ts, on a real TCP socket)
+// What it proves: that the app's S7 link (src/editor/links/s7Link.ts over src/plc/link/s7Client.ts, on a real TCP socket)
 // speaks S7 as an implementation nobody here wrote understands: snap7 (C, via python-snap7 2.x) accepts our COTP
 // connect and PDU negotiation, multi-item writes land in the bytes the addresses name, BIT writes leave the rest
 // of their byte alone, and REALs cross big-endian both ways. The box only rests where it does in-process if every
@@ -10,7 +10,7 @@
 //
 // What it does not prove: snap7 is not a Siemens CPU: it enforces no PUT/GET setting, rack/slot, protection level
 // or item limits, and runs no program, so the program is transcribed into Python over the server's memory
-// (scripts/lib/s7-plc.py). Unit tests hold the client to a stricter fake CPU (src/plc/s7FakeCpu.ts); only a real
+// (scripts/lib/s7-plc.py). Unit tests hold the client to a stricter fake CPU (src/plc/link/s7FakeCpu.ts); only a real
 // CPU, or PLCSIM Advanced, proves those points. Until then the S7 link is "verified against snap7".
 //
 // What runs where:
@@ -102,7 +102,7 @@ async function startPlc() {
 
 /** The app's S7 session over a real socket, with runExternal's two calls on its one. */
 function s7Session(ours) {
-  // each tag with how many parts write it, as the dock derives it (editor/externalPlc.ts deriveS7Io)
+  // each tag with how many parts write it, as the dock derives it (editor/links/externalPlc.ts deriveS7Io)
   const wiring = ours.checkWiring(REMOTE.parts)
   const tags = wiring.tags.map((t) => ({ name: t.name, type: t.type, writers: t.writers.length }))
   const { io, problems } = ours.s7ClientFromTags({ host: '127.0.0.1', port: PORT, rack: 0, slot: 1 }, tags)
@@ -152,7 +152,7 @@ async function main() {
   const plc = await startPlc()
   try {
     console.log(`  plc:         snap7's S7 server on 127.0.0.1:${PORT}${SNAP7 ? ` (python-snap7 from ${SNAP7})` : ''}, the program scanning every ${SCAN_MS} ms`)
-    console.log(`  simulator:   the app's S7 session (src/editor/s7Link.ts), running ${SECONDS} s of wall-clock time`)
+    console.log(`  simulator:   the app's S7 session (src/editor/links/s7Link.ts), running ${SECONDS} s of wall-clock time`)
     const ext = await runExternal(ours, REMOTE, s7.link, { drivenTags: s7.drivenTags, startPlc: () => s7.start() })
     const st = s7.session.status()
     await s7.session.stop()

@@ -11,8 +11,10 @@
 // This is the part's source. `npm run build-parts` writes behavior.ts (this script as the app ships it, with the
 // _shared/ modules it imports joined in and `manifest` left out) and rig.json (the manifest).
 
-import { commandedSpeed, conveyorDrive, driveFeedbackParams, driveRampParams, publishDrive, rampedSpeed } from '../_shared/conveyorDrive.js'
+import { commandedSpeed, conveyorDrive, driveAgain, driveFeedbackParams, driveRampParams, publishDrive, rampedSpeed } from '../_shared/conveyorDrive.js'
+import { frictionParam } from '../_shared/conveyorFriction.js'
 import { METRIC_ONLY, reportSpeed, speedFpmTagParam, speedUnitParams } from '../_shared/conveyorUnits.js'
+import { guardGapRuns, guardGapsParam } from '../_shared/guardGaps.js'
 import { HOLE_PANEL, holePanel } from '../_shared/guardHolePanel.js'
 import { guardBand, guardMitresParam, mitreLookup, railCutLookup, railCutsParam, spurRailCutter } from '../_shared/guardMitre.js'
 import { LEG_CLEARANCE, LEG_END_INSET, LEG_SPACING, legPieces } from '../_shared/legs.js'
@@ -29,8 +31,7 @@ definePart({
     id: 'oip.spur-roller-conveyor',
     name: 'Spur Roller Conveyor',
     category: 'Equipment',
-    conveyor: { bed: 'spur', surface: 'roller', speedParam: 'speed' },
-    commsParam: 'enableComms',
+    conveyor: { bed: 'spur', surface: 'roller', speedParam: 'speed', frictionParam: 'friction' },
     // `conveys` makes it a powered surface (the sim builds the flat length×width deck)
     geometry: { kind: 'drawn', bounds: { length: OUTER, width: 1.524, top: 2.3 }, conveys: true },
     // the drive bands' urethane
@@ -47,8 +48,9 @@ definePart({
     ...speedUnitParams(1),
     speed: { type: 'number', unit: 'm/s', ...METRIC_ONLY, default: 1, min: -3, max: 3, step: 0.1, label: 'Speed', desc: 'Surface speed carried along the bed. Negative runs it backwards, which is the ONLY way to reverse flow - rotating the part 180 degrees moves its ends and their splay instead. A program can command this through the speed tag below.' },
     ...driveRampParams(0.2, 0.2),
-    angleFrontDeg: { type: 'number', default: 30, min: -60, max: 60, step: 5, label: 'Front angle (°)', group: 'Ends', desc: 'Splay angle of the DISCHARGE end face. This is what makes the part a spur: an angled face merges flush onto the side of a straight conveyor instead of butting square against it. 0 leaves the end square.' },
-    angleBackDeg: { type: 'number', default: 0, min: -60, max: 60, step: 5, label: 'Back angle (°)', group: 'Ends', desc: 'Splay angle of the INFEED end face. Leave it at 0 for a spur fed square from behind; angle it too when the piece has to sit between two angled neighbours.' },
+    ...frictionParam(0.42),
+    angleFrontDeg: { type: 'number', default: 30, min: -60, max: 60, step: 1, label: 'Front angle (°)', group: 'Ends', desc: 'Splay angle of the DISCHARGE end face. This is what makes the part a spur: an angled face merges flush onto the side of a straight conveyor instead of butting square against it. 0 leaves the end square.' },
+    angleBackDeg: { type: 'number', default: 0, min: -60, max: 60, step: 1, label: 'Back angle (°)', group: 'Ends', desc: 'Splay angle of the INFEED end face. Leave it at 0 for a spur fed square from behind; angle it too when the piece has to sit between two angled neighbours.' },
     rollerClass: {
       type: 'enum', default: 'light', label: 'Roller class', group: 'Size',
       desc: 'Duty rating, which sets how thick the rollers are and how closely they are pitched: light 24 mm at 75 mm centres, medium 30 at 100, heavy 40 at 130. Heavier rollers sit further apart, so small product needs the lighter class to stay supported.',
@@ -64,13 +66,13 @@ definePart({
     guardExtents: { type: 'numberList', hidden: true, arity: 3, default: [], label: 'Rail extents [side ±1, back m, front m]', group: 'Guards', desc: 'Where the rails and guards STOP on each side, in bed-local X. Normally written by the host: when this spur merges flush onto another conveyor, this retracts the rails to its outer wall instead of running them through its frame. Worked out by the host from the scene; not for editing.' },
     // mitred guard ends as [x m, c, side ±1] rows (_shared/guardMitre.js). HOST-FED at a side merge, so hidden.
     ...guardMitresParam('Guards'),
+    ...guardGapsParam('Guards'),
     ...railCutsParam('Guards'),
     // deck height above the floor — drives the LEG length; host auto-fills it from the surface beneath at drop/snap.
     standHeight: { type: 'number', default: 2.0, min: 0.1, max: 3, step: 0.01, rest: 'surfaceBelow', label: 'Stand height (m)', desc: 'Height of the deck above whatever is beneath it, which sets the leg length. The host fills this in when you drop or snap the conveyor, so the legs reach the floor - or a platform crossing underneath - without you measuring. Pin it by hand when you want a deliberate height.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this conveyor to a PLC program. Its tags appear once this is on.' },
-    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag (m/s)', group: 'Comms', desc: 'The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed.' },
+    speedTag: { type: 'tag', ...METRIC_ONLY, dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '', label: 'Speed tag', group: 'Comms', desc: 'The program commands surface speed here, replacing the Speed field above, which then shows the live value read-only. Careful: once BOUND this takes over even if no program drives it, and an undriven tag reads 0 - so a half-wired conveyor sits still rather than running at its authored speed.' },
     ...speedFpmTagParam('Comms'),
-    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Run tag (rollers run while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the bed.' },
+    runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Run tag (rollers run while true)', group: 'Comms', desc: 'Start/stop gate: false forces the speed to 0 whatever the setpoint says. Unlike the speed tag, this only takes effect once a program actually DRIVES it, so binding it alone will not stop the bed.' },
     runningTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Running tag (true while moving)', group: 'Comms', desc: 'Feedback the conveyor publishes for the program to read: true whenever it is actually moving. This is the EFFECTIVE speed, gates included, so a run tag holding it at zero reads false here.' },
     ...driveFeedbackParams(1, 'Comms'),
   },
@@ -173,31 +175,37 @@ definePart({
       var on = g_sign < 0 ? p.leftGuard !== false : p.rightGuard !== false
       if (!on) continue
       var run = railRuns[s2 === 0 ? 0 : 1]
-      // SENSOR-BEAM HOLES (host-fed rows [x, y, side], guardHoles.ts): the sheet is split around a panel-long gap
-      // at each hole inside this guard's run, and a sheet panel with the hole cut through fills it (the top return
-      // below runs on unbroken over it). The pieces stay ONE collision part, so its AABB collider is the same
-      // whole wall; the sim never sees the holes anyway.
-      var gLo = run.cx - run.len / 2, gHi = run.cx + run.len / 2, gCuts = []
-      for (var hi = 0; hi < holes.length; hi++) {
-        var hrow = holes[hi], h0 = hrow[0] - HOLE_PANEL / 2, h1 = hrow[0] + HOLE_PANEL / 2
-        if (hrow[2] !== g_sign || h0 < gLo || h1 > gHi) continue
-        gCuts.push([h0, h1])
-        var hKey = hrow[1].toFixed(4)
-        if (!holePanels[hKey]) holePanels[hKey] = { y: hrow[1], descs: [] }
-        // the panel's frame: outward +z from the sheet's inner face; the −Z side is it yawed 180°, never mirrored
-        holePanels[hKey].descs.push({ x: hrow[0], sign: g_sign })
+      // GUARD GAPS (host-fed rows [x0, x1, side], _shared/guardGaps.js): where the host opens this guard, for a
+      // diverter whose arms cross it. Each solid run between gaps is its own collision part, so the collider stops
+      // at the gap as the mesh does. With no gap there is one run, the whole guard.
+      var gRuns = guardGapRuns(p, g_sign, run.cx - run.len / 2, run.cx + run.len / 2)
+      for (var gr = 0; gr < gRuns.length; gr++) {
+        // SENSOR-BEAM HOLES (host-fed rows [x, y, side], guardHoles.ts): the sheet is split around a panel-long gap
+        // at each hole inside this guard's run, and a sheet panel with the hole cut through fills it (the top return
+        // below runs on unbroken over it). A run's pieces stay ONE collision part, so its AABB collider is the same
+        // whole wall; the sim never sees the holes anyway.
+        var gLo = gRuns[gr][0], gHi = gRuns[gr][1], gCuts = []
+        for (var hi = 0; hi < holes.length; hi++) {
+          var hrow = holes[hi], h0 = hrow[0] - HOLE_PANEL / 2, h1 = hrow[0] + HOLE_PANEL / 2
+          if (hrow[2] !== g_sign || h0 < gLo || h1 > gHi) continue
+          gCuts.push([h0, h1])
+          var hKey = hrow[1].toFixed(4)
+          if (!holePanels[hKey]) holePanels[hKey] = { y: hrow[1], descs: [] }
+          // the panel's frame: outward +z from the sheet's inner face; the −Z side is it yawed 180°, never mirrored
+          holePanels[hKey].descs.push({ x: hrow[0], sign: g_sign })
+        }
+        gCuts.sort(function (a, b) { return a[0] - b[0] })
+        var gPieces = [], gCur = gLo
+        for (var gc = 0; gc < gCuts.length; gc++) { if (gCuts[gc][0] - gCur > 1e-4) gPieces.push([gCur, gCuts[gc][0]]); gCur = Math.max(gCur, gCuts[gc][1]) }
+        if (gHi - gCur > 1e-4) gPieces.push([gCur, gHi])
+        var gboxes = gPieces.map(function (pc) { return guardBand(g, pc[0], pc[1], mitreAt(g_sign, pc[0]), mitreAt(g_sign, pc[1]), 0, GT, RAIL_TOP, GH, g_sign, hw + FWT) })
+        if (gboxes.length) guardParts.push({ desc: gboxes.length === 1 ? gboxes[0] : g.merge.apply(g, gboxes), finish: 'guard', collision: 'box', sideGuard: g_sign < 0 ? 'left' : 'right' })
+        // the guard's formed top: a 20 mm OUTWARD return along its top edge (as every conveyor guard has). Its own
+        // part with NO collision: the host's collider is this guard part's AABB, and the return would widen it off
+        // the one guard cross-section every family shares - the one butted guards merge on (core/guardRuns.ts).
+        var lip = guardBand(g, gLo, gHi, mitreAt(g_sign, gLo), mitreAt(g_sign, gHi), GT, GT + 0.02, GH - GT, GH, g_sign, hw + FWT)
+        guardParts.push({ desc: lip, finish: 'guard' })
       }
-      gCuts.sort(function (a, b) { return a[0] - b[0] })
-      var gPieces = [], gCur = gLo
-      for (var gc = 0; gc < gCuts.length; gc++) { if (gCuts[gc][0] - gCur > 1e-4) gPieces.push([gCur, gCuts[gc][0]]); gCur = Math.max(gCur, gCuts[gc][1]) }
-      if (gHi - gCur > 1e-4) gPieces.push([gCur, gHi])
-      var gboxes = gPieces.map(function (pc) { return guardBand(g, pc[0], pc[1], mitreAt(g_sign, pc[0]), mitreAt(g_sign, pc[1]), 0, GT, RAIL_TOP, GH, g_sign, hw + FWT) })
-      if (gboxes.length) guardParts.push({ desc: gboxes.length === 1 ? gboxes[0] : g.merge.apply(g, gboxes), finish: 'guard', collision: 'box', sideGuard: g_sign < 0 ? 'left' : 'right' })
-      // the guard's formed top: a 20 mm OUTWARD return along its top edge (as every conveyor guard has). Its own
-      // part with NO collision: the host's collider is this guard part's AABB, and the return would widen it off
-      // the one guard cross-section every family shares - the one butted guards merge on (core/guardRuns.ts).
-      var lip = guardBand(g, gLo, gHi, mitreAt(g_sign, gLo), mitreAt(g_sign, gHi), GT, GT + 0.02, GH - GT, GH, g_sign, hw + FWT)
-      guardParts.push({ desc: lip, finish: 'guard' })
     }
 
     // 4. SUPPORT LEGS — real floor supports (_shared/legs.js) at both ends of the bed.
@@ -287,22 +295,23 @@ definePart({
     if (railFills.length) parts.push({ desc: g.merge.apply(g, railFills), finish: 'frame' })
     return parts
   },
-  step(ctx) {
-    // Comms precedence: speedTag (REAL in) replaces the speed param; runTag (BOOL) gates to 0 only while a
+  react(ctx) {
+    // Tag precedence: speedTag (REAL in) replaces the speed param; runTag (BOOL) gates to 0 only while a
     // controller DRIVES it (ctx.tagDriven — undriven, the authored speed rules); runningTag (BOOL out) = effective
     // speed ≠ 0. This drives the flat conveying deck; the host spins the rollers from the same commanded speed.
-    const comms = ctx.params.enableComms
     // the unit the conveyor is set up in: everything below this line is m/s
-    const cmd = commandedSpeed(ctx, comms)
+    const cmd = commandedSpeed(ctx)
     const fpm = cmd.fpm, commanded = cmd.commanded
-    const running = comms && ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true
+    const running = ctx.tagDriven(ctx.params.runTag) ? ctx.readTag(ctx.params.runTag) : true
     const s = rampedSpeed(ctx, drive, cmd, running ? commanded : 0)
     // the readout the Inspector shows for 'speed' while a setpoint tag owns it: the EFFECTIVE value,
     // gates and all, not the raw setpoint (a runTag holding this at 0 must not read as the commanded rate)
     reportSpeed(ctx, fpm, s)
-    if (comms && ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, s !== 0)
+    if (ctx.params.runningTag) ctx.writeTag(ctx.params.runningTag, s !== 0)
     // drive feedback: the velocity as a share of the speed at 30, an encoder pulse and the odometer
     publishDrive(ctx, drive, cmd, s)
     ctx.setSurfaceVelocity({ x: ctx.forward.x * s, y: 0, z: ctx.forward.z * s })
+    // the next tick is needed only while the drive ramps or counts travel (conveyorDrive.js)
+    driveAgain(ctx, drive, running ? commanded : 0)
   },
 })

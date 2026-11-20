@@ -15,7 +15,7 @@ const { execFileSync } = require('node:child_process')
 const { existsSync, readdirSync } = require('node:fs')
 const { join } = require('node:path')
 
-const KEYPAIR = process.env.OIP_SIGN_KEYPAIR || 'key_1387363956'
+const KEYPAIR = process.env.OIP_SIGN_KEYPAIR || 'key_1638501538'
 
 function smctlPath() {
   return process.env.OIP_SMCTL || 'C:\\Program Files\\DigiCert\\DigiCert One Signing Manager Tools\\smctl.exe'

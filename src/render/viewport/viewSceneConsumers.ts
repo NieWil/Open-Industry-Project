@@ -2,10 +2,10 @@
 // touches none of them skips it, and each carrying an idle audit against a from-scratch derivation. The design and
 // the rules for adding one: docs/scene-change-consumers.md.
 
-import { deltaTouches } from '../../core/sceneDelta'
-import type { SceneDelta } from '../../core/sceneDelta'
-import { getPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { deltaTouches } from '../../core/scene/sceneDelta'
+import type { SceneDelta } from '../../core/scene/sceneDelta'
+import { getPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { PartInstance } from '../../core/types'
 import type { MergeCoherenceCheck } from './viewTypes'
 

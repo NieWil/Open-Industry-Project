@@ -2,7 +2,7 @@
 // what the pilot carries. Every hold goes through claim() / letGo() here. SimWorld owns one; the cargo registry asks
 // it to let go of a piece before a unit is taken apart and to forget a body leaving the world.
 import type Jolt from 'jolt-physics'
-import type { BodyHolder, JoltModule, KinematicScratch, LiveBox, PartGroup } from './worldTypes'
+import type { BodyHolder, JoltModule, KinematicScratch, LiveBox, PartGroup, PlaceBody } from './worldTypes'
 
 // Pilot carry: a held box stays dynamic (gravity off) and is velocity-driven
 // toward the hold point each step, so conveyor/wall contacts resolve it instead of
@@ -28,7 +28,8 @@ export class BodyHolds {
   /** cargo parts held by the pilot: part id -> world-space target pose the body chases each step */
   private readonly pilotHeld = new Map<string, { x: number; y: number; z: number; yaw: number }>()
 
-  /** `boxes` and `partGroups` are the world's live cargo list and part groups, read (never written) here */
+  /** `boxes` and `partGroups` are the world's live cargo list and part groups, read (never written) here; `placeBody`
+   *  is how a hold sets a body's pose (CargoRegistry.placeBody) */
   constructor(
     private readonly J: JoltModule,
     private readonly bodyInterface: Jolt.BodyInterface,
@@ -36,6 +37,7 @@ export class BodyHolds {
     private readonly kin: KinematicScratch,
     private readonly boxes: readonly LiveBox[],
     private readonly partGroups: ReadonlyMap<string, PartGroup>,
+    private readonly placeBody: PlaceBody,
   ) {}
 
   /** cargo the walking pilot is carrying: in a person's hands, not on the line. Zones never count or despawn it,
@@ -95,6 +97,14 @@ export class BodyHolds {
     for (const h of load) this.drop(h.bodyId)
   }
 
+  /** a rig leaving the world lets go of everything its grippers hold, so the load falls as dynamic cargo
+   *  instead of staying kinematic under a holder that no longer exists */
+  releaseRig(rig: GripRig): void {
+    const loads = [...rig.grips.values()]
+    rig.grips.clear()
+    for (const load of loads) for (const h of load) this.drop(h.bodyId)
+  }
+
   /** the pilot lets go of a carried part: every body of it the pilot holds, and its hold target */
   dropPilotPart(partId: string): void {
     this.pilotHeld.delete(partId)
@@ -142,10 +152,9 @@ export class BodyHolds {
     if (this.holders.get(bodyId)?.kind !== 'grip') return
     const box = this.boxes.find((b) => b.id === bodyId)
     if (!box) return
-    const J = this.J
     this.kin.pos.Set(position[0], position[1], position[2])
     this.kin.quat.Set(quat[0], quat[1], quat[2], quat[3])
-    this.bodyInterface.SetPositionAndRotation(box.body.GetID(), this.kin.pos, this.kin.quat, J.EActivation_Activate)
+    this.placeBody(box.body.GetID(), this.kin.pos, this.kin.quat)
   }
 
   /** start (or restart) the pilot's carry of `partId` with its hold target at a pose */
@@ -199,7 +208,7 @@ export class BodyHolds {
         const rot = J.Quat.prototype.sRotation(this.axisY, t.yaw)
         this.bodyInterface.SetLinearVelocity(id, v)
         this.bodyInterface.SetAngularVelocity(id, zero)
-        this.bodyInterface.SetRotation(id, rot, J.EActivation_Activate)
+        this.placeBody(id, null, rot)
         J.destroy(v)
         J.destroy(zero)
         J.destroy(rot)

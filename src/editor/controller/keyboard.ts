@@ -3,6 +3,7 @@
 // each area through the controller's entry points.
 
 import { resolveKeyAction } from '../../core/keymap'
+import { keyBelongsToTarget } from '../dialogHost'
 import * as dragOps from './drag'
 import * as placementOps from './placement'
 import type { EditorController } from '../controller'
@@ -16,16 +17,9 @@ function isPlainUseKey(e: KeyboardEvent): boolean {
 
 export function onKeyDown(ec: EditorController, e: KeyboardEvent): void {
   if (ec.view.isNavigating()) return
-  const t = e.target
-  // Don't steal keystrokes meant for a focused text field. isContentEditable also
-  // covers the ST editor (CodeMirror renders its buffer as a contenteditable div,
-  // not a <textarea>), so typing there doesn't trigger 3D-editor shortcuts.
-  if (
-    t instanceof HTMLElement &&
-    (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
-  ) {
-    return
-  }
+  // a key meant for the focused field or control (dialogHost.ts): typing, the ST editor and its find bar, Space on a
+  // checkbox. A control keeps only the keys it uses, so Ctrl+Z still undoes after clicking an Inspector checkbox.
+  if (keyBelongsToTarget(e)) return
   // keyboard edits interleaved with an in-flight transient drag would corrupt history
   if (ec.drag) {
     if (e.key === 'Escape') {
@@ -93,7 +87,16 @@ export function onKeyDown(ec: EditorController, e: KeyboardEvent): void {
   // flight", so it can't be a single table entry. It's listed there as `fixed` - documented in
   // the shortcuts panel, never routed through the resolver, never remappable.
   if (e.key === 'Escape') {
-    if (ec.rulerVisible) ec.clearRuler()
+    // one press backs out one level. Without this, holding Escape to cancel a drag (handled above)
+    // or a camera move (the view stops only the first press) lets the auto-repeats walk on through
+    // the ruler, placing and guard mode to the selection.
+    if (e.repeat) {
+      e.preventDefault()
+      return
+    }
+    // editing the display's values included: each change is saved as it is made, so leaving loses nothing
+    if (s.presenting) ec.store.setState({ presenting: false })
+    else if (ec.rulerVisible) ec.clearRuler()
     else if (s.mode === 'placing') ec.store.cancelPlacing()
     // guard-openings mode backs out one level at a time: the selected opening, then the mode (the conveyor
     // stays selected), and only then the selection
@@ -108,7 +111,8 @@ export function onKeyDown(ec: EditorController, e: KeyboardEvent): void {
   // inline: spatial keys match the physical key so the tool cluster doesn't scatter on AZERTY,
   // the Ctrl family matches the printed legend, and the shortcuts panel renders off the same
   // table - a binding can't ship undocumented.
-  switch (resolveKeyAction(e, 'editor')) {
+  const action = resolveKeyAction(e, 'editor')
+  switch (action) {
     case 'edit.undo':
       ec.store.undo()
       e.preventDefault()
@@ -152,6 +156,16 @@ export function onKeyDown(ec: EditorController, e: KeyboardEvent): void {
       ec.store.setLocked(s.selectedIds, false)
       e.preventDefault()
       return
+    case 'edit.toggleVisible': {
+      // the scene-tree menu's Hide / Show rule: hide when all of the selection is visible,
+      // otherwise show all of it, so a mixed selection resolves the same from either place
+      if (s.selectedIds.length === 0) return
+      const sel = new Set(s.selectedIds)
+      const allVisible = s.scene.parts.every((p) => !sel.has(p.id) || p.visible !== false)
+      ec.store.setVisible(s.selectedIds, !allVisible)
+      e.preventDefault()
+      return
+    }
     case 'edit.group':
       ec.store.setGrouped(s.selectedIds, true)
       e.preventDefault()
@@ -203,6 +217,16 @@ export function onKeyDown(ec: EditorController, e: KeyboardEvent): void {
       // Perspective/Orthogonal view toggle. Numpad 5 is the second chord and
       // is matched by e.code - with NumLock off that key reports 'Clear'.
       ec.store.toggleProjection()
+      e.preventDefault()
+      return
+    case 'view.front':
+    case 'view.rear':
+    case 'view.right':
+    case 'view.left':
+    case 'view.top':
+    case 'view.bottom':
+      // the orbit gizmo's axis snap. Matched by e.code, so they work with NumLock off too.
+      ec.viewAlongAxis(action)
       e.preventDefault()
       return
     case 'place.floor':

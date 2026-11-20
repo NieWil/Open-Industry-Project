@@ -2,7 +2,6 @@
   "id": "oip.blade-stop",
   "name": "Blade Stop",
   "category": "Equipment",
-  "commsParam": "enableComms",
   "snap": {
     "track": {
       "fitWidthParam": "width"

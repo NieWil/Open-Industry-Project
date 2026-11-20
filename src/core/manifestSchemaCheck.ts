@@ -1,5 +1,5 @@
 // Checks a part manifest against packages/part-sdk/manifest.schema.json, the schema build-part-sdk.mjs generates
-// from src/core/partPackage.ts. A validator for exactly the JSON Schema subset that generator emits (type / const /
+// from src/core/parts/partPackage.ts. A validator for exactly the JSON Schema subset that generator emits (type / const /
 // enum / properties / required / additionalProperties / items / prefixItems / min+maxItems / if-then under allOf /
 // anyOf / $ref), so neither the CLIs nor the app need a schema library.
 //

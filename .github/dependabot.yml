@@ -1,5 +1,6 @@
-# Dependency update PRs. Weekly, and few at a time: every bump still has to pass CI and be merged
-# by hand, so a flood of PRs is noise rather than safety.
+# Dependency update PRs. Every bump still has to pass CI and be merged by hand, so the npm folders get one grouped
+# PR a month, and an update that needs its own decision is listed under `ignore` with what would lift it. Security
+# advisories are checked separately on every PR (scripts/audit-deps.mjs).
 version: 2
 updates:
   # The workflows pin every action to a commit SHA (with its tag in a comment); Dependabot keeps
@@ -13,7 +14,7 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 3
     groups:
       # minor + patch in one PR; a major still gets a PR of its own
@@ -21,3 +22,47 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Its version is part of every model's and texture's asset version (scripts/lib/asset-versions.mjs), so a
+      # bump re-versions them all for every visitor and needs a part-asset re-bake. Bump it in a commit of its own.
+      - dependency-name: meshoptimizer
+      # TypeScript 7: typescript-eslint, which enforces the layer bans, still requires typescript <6.1. Lift this
+      # when a typescript-eslint release accepts 7.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+      # A major changes how the service worker caches the app for returning visitors. Read its changelog and test
+      # on `npm run preview:prod` before taking one.
+      - dependency-name: vite-plugin-pwa
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: npm
+    directory: /apps/desktop
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Electron majors are planned upgrades (packaged-app smoke run, the agent MCP gate, the protocol loops).
+      # Electron supports only its latest three majors, so take one at least every other release.
+      - dependency-name: electron
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Server v4 is a migration: Node 22 on the collab VM, sqlite3 replaced by better-sqlite3, and hook payloads
+      # that no longer carry the client's socket address. The v4 provider works with the v3 server.
+      - dependency-name: '@hocuspocus/*'
+        update-types: ['version-update:semver-major']

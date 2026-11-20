@@ -1,8 +1,36 @@
 /* ===== Shortcuts: the editable half (components/ShortcutsOverlay.tsx) ====== */
 .shortcuts-toolbar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   padding: 0 0 6px;
+}
+
+.shortcuts-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 280px;
+  padding: 3px 10px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
+}
+
+.shortcuts-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* the restore button keeps its old place at the right edge */
+.shortcuts-reset-all {
+  margin-left: auto;
+}
+
+.shortcuts-empty {
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
 .shortcuts-reset-all,
@@ -206,6 +234,16 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* a folder path beside its buttons (the parts shelf): ellipsized, the whole path is its title */
+.setting-path {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 /* Reload-scoped settings say so. A live shadow-map resize destroys a texture that recorded WebGPU

@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { instrumentLoops, LOOP_GUARD } from '../core/loopGuard'
-import { instantiatePartScript } from '../core/partScript'
+import { instantiatePartScript } from '../core/parts/partScript'
 import { DEFAULT_SIM_HZ } from '../core/types'
 import { create, destroy, error, step } from './embeddedBehavior'
 

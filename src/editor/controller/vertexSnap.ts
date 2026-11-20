@@ -3,8 +3,8 @@
 // itself is a drag (./drag.ts helpers), so every function takes the owning controller (`ec`).
 
 import { Vector3 } from 'three'
-import { subtreeIds } from '../../core/hierarchy'
-import type { SnapPose } from '../../core/snapFeatures'
+import { subtreeIds } from '../../core/scene/hierarchy'
+import type { SnapPose } from '../../core/snap/snapFeatures'
 import type { PartInstance } from '../../core/types'
 import * as dragOps from './drag'
 import type { Drag } from './drag'

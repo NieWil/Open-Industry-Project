@@ -19,8 +19,8 @@
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { crashReportText, crashSummary } from '../crashReport'
-import { downloadProject } from '../projectFile'
-import type { EditorStore } from '../store'
+import { downloadProject } from '../project/projectFile'
+import type { EditorStore } from '../store/store'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('crash', {

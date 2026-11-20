@@ -6,7 +6,7 @@
 // names whichever task runs that code, so retiming it, moving it or adding PROGRAMs beside it renames
 // nothing. A PROGRAM instance's variables are its own tags, `Instance.Name`, so renaming an instance moves
 // tags that parts in the scene may be wired to. The edits that do that return a list of renames, and the
-// panel rewires the scene's parts with it (editor/controllerRewire.ts), so a line that ran before the edit
+// panel rewires the scene's parts with it (editor/program/controllerRewire.ts), so a line that ran before the edit
 // still runs after it.
 
 import type { Controller } from '../core/controller'
@@ -102,11 +102,23 @@ export function programNameError(controller: Controller, index: number, name: st
   return nameError(name, controller.programs.filter((_, i) => i !== index).map((p) => p.name), 'program')
 }
 
-/** A new task, named `Task1`, `Task2`, ..., at the last task's interval. */
-export function addTask(controller: Controller): Controller {
+/** A new task, named `Task1`, `Task2`, ..., at the last task's interval, on the controller `plc` (none: the default one). */
+export function addTask(controller: Controller, plc?: string): Controller {
   const name = unusedIn(controller.tasks.map((t) => t.name), 'Task')
   const intervalMs = controller.tasks[controller.tasks.length - 1]?.intervalMs ?? 100
-  return { ...controller, tasks: [...controller.tasks, { name, intervalMs, priority: DEFAULT_TASK_PRIORITY }] }
+  return { ...controller, tasks: [...controller.tasks, { name, intervalMs, priority: DEFAULT_TASK_PRIORITY, ...(plc !== undefined ? { plc } : {}) }] }
+}
+
+/** Run task `index`, and the program instances on it, on the controller `plc`, or on the default one with null. */
+export function setTaskPlc(controller: Controller, index: number, plc: string | null): Controller {
+  return {
+    ...controller,
+    tasks: controller.tasks.map((t, i) => {
+      if (i !== index) return t
+      const { plc: _old, ...rest } = t
+      return plc === null ? rest : { ...rest, plc }
+    }),
+  }
 }
 
 /** Rename task `index`, and every program that runs on it follows. (Task names are not part of any tag.) */
@@ -183,14 +195,30 @@ export function alignProgramType(source: string, controller: Controller, index: 
   return { source: edit.source, controller: { ...controller, programs: controller.programs.map((q, i) => (i === index ? { ...q, type: p.name } : q)) } }
 }
 
-/** Run program instance `index` on `task`, or continuously (once per step, after the periodic tasks) with null. */
-export function setProgramTask(controller: Controller, index: number, task: string | null): Controller {
+/**
+ * Run program instance `index` on `task`, and so on that task's controller, or continuously (once per step, after the
+ * periodic tasks) with null, on the controller `plc` (none: the default one).
+ */
+export function setProgramTask(controller: Controller, index: number, task: string | null, plc?: string): Controller {
   return {
     ...controller,
     programs: controller.programs.map((p, i) => {
       if (i !== index) return p
-      const { task: _old, ...rest } = p
-      return task === null ? rest : { ...rest, task }
+      const { task: _old, plc: _plc, ...rest } = p
+      return task !== null ? { ...rest, task } : { ...rest, ...(plc !== undefined && p.type !== undefined ? { plc } : {}) }
+    }),
+  }
+}
+
+/** Run program instance `index`, one on no task, on the controller `plc`, or on the default one with null. An instance on
+ *  a task runs on the task's controller (setTaskPlc), so it is left as it is. */
+export function setProgramPlc(controller: Controller, index: number, plc: string | null): Controller {
+  return {
+    ...controller,
+    programs: controller.programs.map((p, i) => {
+      if (i !== index || p.task !== undefined) return p
+      const { plc: _old, ...rest } = p
+      return plc === null ? rest : { ...rest, plc }
     }),
   }
 }
@@ -201,8 +229,9 @@ export function setProgramType(controller: Controller, index: number, type: stri
     ...controller,
     programs: controller.programs.map((p, i) => {
       if (i !== index) return p
-      const { name, task } = p
-      return { name, ...(type !== null ? { type } : {}), ...(task !== undefined ? { task } : {}) }
+      const { name, task, plc } = p
+      // the code outside every PROGRAM is the default controller's, so an instance pointed at it leaves its controller
+      return { name, ...(type !== null ? { type } : {}), ...(task !== undefined ? { task } : {}), ...(plc !== undefined && type !== null ? { plc } : {}) }
     }),
   }
 }

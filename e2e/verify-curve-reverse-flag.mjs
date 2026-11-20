@@ -72,7 +72,7 @@ async function main() {
     check('the flag persists on the part', after.reverse === true)
 
     // The direction fold itself (arc field, flow arrow, pilot mirror, render scroll all reading
-    // speed × reverse) is pure and lives in core/conveyorDirection.ts - unit-tested there and in
+    // speed × reverse) is pure and lives in core/conveyor/conveyorDirection.ts - unit-tested there and in
     // snapFeatures.test.ts, which is a better home for it than a browser round-trip.
   } catch (e) {
     fails.push('exception')

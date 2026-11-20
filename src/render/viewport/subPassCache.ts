@@ -1,4 +1,5 @@
 import type { Camera, Object3D, Scene } from 'three'
+import type { StandardDrawingPipeline } from 'three/webgpu'
 import { bundleStructureEpoch } from '../bundleGroups'
 import { hasUrlFlag } from '../urlFlags'
 
@@ -7,7 +8,7 @@ import { hasUrlFlag } from '../urlFlags'
  * `?nopasscache` turns all of it off.
  *
  * These passes (consolidatedOutlineNode: the overlay pass and the selection-mask pass) render with
- * bundles inert, so three's `_projectObject` walks the full scene graph once per pass per frame even
+ * bundles inert, so three's projection walks the full scene graph once per pass per frame even
  * when the output is a handful of meshes (the bundle-children skip exists only on the active-bundle
  * replay path). That cost grows with part count while the output doesn't, and a selection adds two
  * more such passes per frame.
@@ -19,15 +20,18 @@ import { hasUrlFlag } from '../urlFlags'
  * (bundleStructureEpoch; (un)hides must notify anyway or the main-pass bundles would be stale), plus the
  * per-pass churn the caller encodes in `sig` (overlay: visible subtree; mask: scene-activity serial).
  *
- * Mechanism: `_renderScene` calls `_projectObject(scene, ...)` once at the top level. Bracketed by the
- * caller's begin/end, the patched version either replays the captured `push`/`pushLight` calls into
- * the empty render list without traversing (hit), or runs the stock traversal while capturing them
- * (miss). A stale sort-depth `z` only affects front-to-back sorting, not correctness; draw-time state is
- * read live, so replayed content still moves. Only list membership is frozen between records.
+ * Mechanism: `_renderScene` calls `drawingPipeline.project(scene, ...)` once at the top level. Bracketed
+ * by the caller's begin/end, the patched version either replays the captured `push`/`pushLight` calls
+ * into the empty render list without traversing (hit), or runs the stock traversal while capturing them
+ * (miss). The stock traversal pushes through `pushRenderItem`, which calls `renderList.push`, so the
+ * capture sees every item. A stale sort-depth `z` only affects front-to-back sorting, not correctness;
+ * draw-time state is read live, so replayed content still moves. Only list membership is frozen between
+ * records.
  *
- * Feature-detects `_projectObject` (r186). If a bump moves it, the brackets no-op and the passes run the
- * stock traversal again: a perf regression, never a rendering bug, so no forced fallback (unlike
- * bundleReplayRefresh). Diagnostics on `globalThis.__oipSubPassCache` ({ records, replays }).
+ * Wraps `project` on the renderer's drawing pipeline instance (three 0.187; the class is marked
+ * experimental). If a bump moves it, the brackets no-op and the passes run the stock traversal again: a
+ * perf regression, never a rendering bug, so no forced fallback (unlike bundleReplayRefresh).
+ * Diagnostics on `globalThis.__oipSubPassCache` ({ records, replays }).
  */
 
 type PushArgs = readonly unknown[]
@@ -37,8 +41,8 @@ interface RenderListLike {
   pushLight(light: unknown): void
 }
 
-interface ProjectableRenderer {
-  _projectObject(object: Object3D, camera: Camera, groupOrder: number, renderList: RenderListLike, clippingContext: unknown): void
+interface Projector {
+  project(object: Object3D, camera: Camera, groupOrder: number, renderList: RenderListLike, clippingContext: unknown): void
 }
 
 interface CacheEntry {
@@ -63,20 +67,21 @@ const caches = new Map<string, CacheEntry>()
 let activeKey: string | null = null
 let activeSig = ''
 // One-shot latch: only the first top-level projection inside the bracket is the bracketed pass.
-// A nested render can occur inside it (a frozen shadow map's self-heal re-renders it in
+// A nested render can occur inside it (a re-armed frozen shadow map renders in
 // ShadowNode.updateBefore), and its projection must run stock, not hit or overwrite the pass
-// cache. Recursion during a record is covered by the same latch.
+// cache. Recursion during a record (`project` recurses through `this.project`, which is this
+// wrapper) is covered by the same latch.
 let armed = false
 const patched = new WeakSet<object>()
 const stats: SubPassCacheStats = { records: 0, replays: 0 }
 
 function ensurePatched(renderer: unknown): boolean {
-  const r = renderer as Partial<ProjectableRenderer>
-  if (typeof r._projectObject !== 'function') return false // three internals moved: brackets no-op (stock traversal)
-  if (patched.has(r as object)) return true
-  patched.add(r as object)
-  const orig = r._projectObject
-  r._projectObject = function (this: ProjectableRenderer, object, camera, groupOrder, renderList, clippingContext) {
+  const p = (renderer as { drawingPipeline?: StandardDrawingPipeline }).drawingPipeline as Partial<Projector> | undefined
+  if (typeof p?.project !== 'function') return false // three moved it: brackets no-op (stock traversal)
+  if (patched.has(p)) return true
+  patched.add(p)
+  const orig = p.project
+  p.project = function (this: Projector, object, camera, groupOrder, renderList, clippingContext) {
     if (!armed) {
       orig.call(this, object, camera, groupOrder, renderList, clippingContext)
       return

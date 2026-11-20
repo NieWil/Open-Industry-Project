@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PartInstance } from '../../core/types'
-import { SceneDeltaBuilder } from '../../core/sceneDelta'
+import { SceneDeltaBuilder } from '../../core/scene/sceneDelta'
 import { SceneConsumers } from './viewSceneConsumers'
 
 const part = (id: string, packageId: string): PartInstance =>

@@ -8,7 +8,7 @@ import { tagBankMembers, writeSlotMatrices } from './linkBank'
  * A rig's primitive lamp links drawn as one InstancedMesh (a stack light's lens tiers: 8 links, 8
  * materials, 8 draws, 5 of them zero-height slivers when the tower has 3 segments → 1 draw).
  *
- * What rig.ts paintLamp changes per tick lives in per-instance data instead of a per-link material:
+ * What rigLamps.ts paintLamp changes per tick lives in per-instance data instead of a per-link material:
  *
  *   - `instanceColor`  - the albedo: the lit colour when on, the unlit `off` colour when off.
  *   - `lampGlow` (vec4) - rgb = emissive (the lit colour, or black), a = opacity (the lamp's

@@ -1,0 +1,295 @@
+{
+  "format": 6,
+  "id": "oip.diverter",
+  "name": "Diverter",
+  "params": {
+    "diverted": {
+      "type": "boolean",
+      "default": false,
+      "label": "Diverted",
+      "group": "Start state",
+      "desc": "Push the blade across the lane to deflect cargo. This is the state it starts in; Use cycles it by hand. While a program drives the tag below, that program owns it instead."
+    },
+    "divertTime": {
+      "type": "number",
+      "default": 0.25,
+      "min": 0.05,
+      "max": 2,
+      "step": 0.01,
+      "label": "Divert time (s)",
+      "desc": "How long the blade takes to travel the full stroke, out or back. Too slow and cargo passes before the blade arrives."
+    },
+    "divertDistance": {
+      "type": "number",
+      "default": 0.75,
+      "min": 0.1,
+      "max": 1.5,
+      "step": 0.05,
+      "label": "Divert distance (m)",
+      "desc": "How far the blade travels across the lane. Size it so the blade pushes cargo clear of the running surface rather than leaving it straddling the edge. The guide rods, the cylinder and the stand are built for this stroke, so a longer one makes a longer machine."
+    },
+    "standHeight": {
+      "type": "number",
+      "default": 0.3847,
+      "min": 0.1,
+      "max": 3,
+      "step": 0.01,
+      "rest": "surfaceBelow",
+      "label": "Stand height (m)",
+      "desc": "From the part origin, 0.2 m below the belt surface it is mounted against, down to whatever the stand stands on. Set automatically when the diverter is dropped or snapped, so its legs reach the floor at any belt height."
+    },
+    "tag": {
+      "type": "tag",
+      "dir": "in",
+      "stType": "BOOL",
+      "autoWhenDriven": true,
+      "default": "",
+      "label": "Extend tag (true extends the pusher)",
+      "group": "Comms",
+      "desc": "Extend the pusher from the program. While a program drives this tag it OWNS the diverter, so a hand Use in pilot mode is refused with \"In auto - PLC controlled\"."
+    }
+  },
+  "behavior": "// Pop-up Diverter — a guided pusher. A short bearing block holds two guide rods and the rod of a drive cylinder; all\n// three are fixed to the blade and move with it as ONE stage, pushing it across the lane to deflect cargo onto a\n// takeaway conveyor. The blade carries the collision box that shoves cargo (the hidden `blade` link, a child of\n// partEnd: a hidden link hides what is drawn on it too, so the meshes ride the visible partEnd frame instead).\n// Driven by an authored 'diverted' toggle / a hand Use, or by its tag while a PLC program drives it\n// (ctx.tagDriven). The auto-vs-hand handoff follows output ownership, like a real panel.\n//\n// Demonstrates procedural geometry riding a rig joint (geometry() submeshes tagged `link`) and sized by a param. The\n// block is the same for every stroke; what `divertDistance` sizes is what has to be as long as the stroke: the guide\n// rods (retracted, they stand out behind the block by the stroke, tied by a bar that comes up against the block at\n// full reach), the drive cylinder's barrel behind the block, and the stand under both. So the stroke is visible at\n// rest. The joint limit stays at the 1.5 m maximum stroke: the behavior never drives past the param.\n//\n// Its finish is textures on code-built shapes: the rods and the cylinder sample a brushed-metal image triplanar (in\n// object space, so the grain rides the moving rods instead of swimming), and the warning label is an image on a\n// thin box, drawn by scripts/build-diverter-textures.mjs.\n//\n// Frame: local -Z is the push direction. The blade's face at rest is z = -1.103 and stays there for every stroke,\n// so the conveyor-guard mount (snap `at`) never moves; the machine grows back from it along +Z.\n//\n// It stands on its own legs wherever it is mounted: `standHeight` is a host-resolved placement fact (rest:\n// 'surfaceBelow'), the distance from the origin down to whatever is under it, which the host writes at drop and\n// snap. So a diverter seated on a conveyor's guard grows its legs to the floor at any belt height, the same way a\n// conveyor's own legs do.\n\nlet progress = 0 // 0 retracted .. 1 fully extended\nlet diverted = false\nlet lastDiverted // adopt the Inspector 'diverted' toggle whenever it changes\n\ndefinePart({\n  interactive: true,\n  useParam: 'diverted', // the hand state is the param: the state a run starts from. The Inspector sets it; Use never writes it\n  joints: ['ext3'],\n  lamps: ['red', 'green'], // the control box's two lenses\n  params: {\n    diverted: { type: 'boolean', default: false, label: 'Diverted', group: 'Start state', desc: 'Push the blade across the lane to deflect cargo. This is the state it starts in; Use cycles it by hand. While a program drives the tag below, that program owns it instead.' },\n    divertTime: { type: 'number', default: 0.25, min: 0.05, max: 2, step: 0.01, label: 'Divert time (s)', desc: 'How long the blade takes to travel the full stroke, out or back. Too slow and cargo passes before the blade arrives.' },\n    divertDistance: { type: 'number', default: 0.75, min: 0.1, max: 1.5, step: 0.05, label: 'Divert distance (m)', desc: 'How far the blade travels across the lane. Size it so the blade pushes cargo clear of the running surface rather than leaving it straddling the edge. The guide rods, the cylinder and the stand are built for this stroke, so a longer one makes a longer machine.' },\n    // the default is the stand a free-standing drop gets: the origin 0.3847 above the floor, the footprint's `bottom`\n    standHeight: { type: 'number', default: 0.3847, min: 0.1, max: 3, step: 0.01, rest: 'surfaceBelow', label: 'Stand height (m)', desc: 'From the part origin, 0.2 m below the belt surface it is mounted against, down to whatever the stand stands on. Set automatically when the diverter is dropped or snapped, so its legs reach the floor at any belt height.' },\n    // autoWhenDriven: this tag COMMANDS the pusher, so a program driving it owns the device — the pilot prompt\n    // shows \"In auto - PLC controlled\" instead of a dead \"Use\".\n    tag: { type: 'tag', dir: 'in', stType: 'BOOL', autoWhenDriven: true, default: '', label: 'Extend tag (true extends the pusher)', group: 'Comms', desc: 'Extend the pusher from the program. While a program drives this tag it OWNS the diverter, so a hand Use in pilot mode is refused with \"In auto - PLC controlled\".' },\n  },\n  geometry(g, p) {\n    const S = typeof p.divertDistance === 'number' ? Math.min(1.5, Math.max(0.1, p.divertDistance)) : 0.75\n    // along Z: the blade (rubber face, plate, the boss the rods mount to), the glands, the bearing block, then the\n    // cylinder barrel behind it\n    const BLADE_FRONT = -1.103, RUBBER = 0.012, PLATE = 0.025, BOSS = 0.035, GLAND = 0.04, BLOCK = 0.42\n    const bladeBack = BLADE_FRONT + RUBBER + PLATE + BOSS\n    const front = bladeBack + GLAND // the block's front face, where the rods leave it\n    const blockRear = front + BLOCK\n    const TIE = 0.03 // the tie bar's depth: at full reach it sits against the rear glands\n    const REAR_GLAND = 0.025 // a shallower gland round each guide rod where it leaves the block's rear face\n    const glandRear = blockRear + REAR_GLAND\n    const rodTail = glandRear + S + TIE // the guide rods' back end, at rest\n    const barrelEnd = blockRear + S + 0.04 // the barrel holds the piston's whole travel\n    const CAP = 0.03\n    // vertically: a compact body round the rods (the rods at cargo height, the hood just over them), carried on a\n    // steel stand down to whatever is under it (`standHeight` below the origin)\n    const FLOOR = -(typeof p.standHeight === 'number' && p.standHeight > 0 ? p.standHeight : 0.3847), PLATE_T = 0.012\n    const base = 0.24 // the block's underside, just under the blade's bottom edge\n    const ROD_Y = 0.446, ROD_X = 0.13, GUIDE_R = 0.025 // the guide rods\n    const DRIVE_Y = 0.33, DRIVE_R = 0.016, BARREL_R = 0.045, CAP_W = 0.12 // the drive cylinder, below the tie bar's path\n    const BLADE_Y = 0.447, BLADE_W = 0.47, BLADE_H = 0.395\n    const HW = 0.31, CAB_HW = 0.29, CAB_TOP = 0.5, TOP = 0.66\n\n    const into = (desc, origin) => g.transform(desc, { translate: [-origin[0], -origin[1], -origin[2]] })\n    const tube = (x, y, z0, length, r, segments) => g.lathe([[0, 0], [r, 0], [r, length], [0, length]], { axis: 'z', center: [x, y, z0], segments: segments || 20 })\n\n    // the stand: four square-tube legs on foot plates under a top frame that runs the machine's length, a mounting\n    // plate under the block, a saddle under the barrel's end, and a rail round the legs low down\n    const LEG = 0.05, LEG_X = 0.27, FOOT = 0.12, FOOT_T = 0.012, RAIL = 0.04, RAIL_Y = FLOOR + 0.12\n    const legZ = [front + 0.07, barrelEnd - 0.03]\n    const frameTop = base - PLATE_T, frameY = frameTop - RAIL / 2\n    const legH = frameTop - RAIL - FLOOR - FOOT_T\n    const span = legZ[1] - legZ[0], spanMid = (legZ[0] + legZ[1]) / 2\n    const standParts = [g.box([2 * HW, PLATE_T, BLOCK], [0, base - PLATE_T / 2, front + BLOCK / 2])]\n    for (const x of [-LEG_X, LEG_X]) {\n      for (const z of legZ) {\n        standParts.push(g.box([LEG, legH, LEG], [x, FLOOR + FOOT_T + legH / 2, z]))\n        standParts.push(g.bevelBox([FOOT, FOOT_T, FOOT], [x, FLOOR + FOOT_T / 2, z], 0.003, ['y-']))\n      }\n      standParts.push(g.box([RAIL, RAIL, span + LEG], [x, frameY, spanMid]))\n      standParts.push(g.box([RAIL, RAIL, span - LEG], [x, RAIL_Y, spanMid]))\n    }\n    for (const z of legZ) {\n      standParts.push(g.box([2 * LEG_X - LEG, RAIL, RAIL], [0, frameY, z]))\n      standParts.push(g.box([2 * LEG_X - LEG, RAIL, RAIL], [0, RAIL_Y, z]))\n    }\n    const saddleH = DRIVE_Y - BARREL_R - frameTop\n    standParts.push(g.box([0.12, saddleH, 0.05], [0, frameTop + saddleH / 2, legZ[1]]))\n    const stand = g.merge(...standParts)\n\n    // the bearing block: a dark cabinet, stopping 1 cm short of the hood's rear face so the two never share a plane\n    const cabinet = g.box([2 * CAB_HW, CAB_TOP - base, BLOCK - 0.01], [0, (base + CAB_TOP) / 2, front + BLOCK / 2 - 0.005])\n    // The hood, drawn as its SIDE profile and run across the width: a rounded nose just behind the rod face, a\n    // rounded back, and a diagonal cut-away from the nose down toward the stand that leaves the cabinet showing\n    // under the rods. In the profile's (z, y): along the bottom, up the back, over the top, down the nose.\n    const NOSE_R = 0.06, BACK_R = 0.07, LOW = base + 0.06\n    const nose = front + 0.06\n    const cut = nose + Math.min(0.2, 0.5 * (blockRear - BACK_R - nose)) // where the diagonal meets the hood's bottom edge\n    const zy = [[cut, LOW], [blockRear, LOW]]\n    for (const q of g.arc([blockRear - BACK_R, TOP - BACK_R, 0], BACK_R, 0, Math.PI / 2, 6)) zy.push([q[0], q[1]])\n    for (const q of g.arc([nose + NOSE_R, TOP - NOSE_R, 0], NOSE_R, Math.PI / 2, Math.PI, 6)) zy.push([q[0], q[1]])\n    zy.push([nose, CAB_TOP])\n    // an outline across X is (y, z): the swap mirrors it, so reverse it to keep it counter-clockwise\n    const hood = g.extrude(zy.map(([z, y]) => [y, z]).reverse(), -HW, HW, { axis: 'x', bevel: 0.012 })\n    // a gland on the block's face round each rod\n    const glands = g.merge(\n      g.bevelBox([0.09, 0.09, GLAND], [-ROD_X, ROD_Y, front - GLAND / 2], 0.006, ['z+']),\n      g.bevelBox([0.09, 0.09, GLAND], [ROD_X, ROD_Y, front - GLAND / 2], 0.006, ['z+']),\n      g.bevelBox([0.07, 0.07, GLAND], [0, DRIVE_Y, front - GLAND / 2], 0.006, ['z+']),\n      // and on the rear face, so the rods pass through a part rather than into the hood's bare panel; at full reach\n      // the tie bar stops against these\n      g.bevelBox([0.09, 0.09, REAR_GLAND], [-ROD_X, ROD_Y, blockRear + REAR_GLAND / 2], 0.006, ['z-']),\n      g.bevelBox([0.09, 0.09, REAR_GLAND], [ROD_X, ROD_Y, blockRear + REAR_GLAND / 2], 0.006, ['z-']),\n    )\n    // the drive cylinder: a barrel between two square end caps, held together by four tie rods with a nut at the\n    // back, and an air port on the side of each cap. The front cap is bolted to the block's rear face.\n    const CAP_L = 0.04, NUT = 0.008, machineRear = barrelEnd + CAP // the nuts end the machine\n    const capFront = blockRear + CAP_L / 2, capRear = machineRear - NUT - CAP_L / 2\n    const TIE_R = 0.006, TIE_OFF = CAP_W / 2 - 0.014\n    const cylinder = [\n      tube(0, DRIVE_Y, blockRear + CAP_L, machineRear - NUT - blockRear - 2 * CAP_L, BARREL_R, 24),\n      g.bevelBox([CAP_W, CAP_W, CAP_L], [0, DRIVE_Y, capFront], 0.006, ['z-']),\n      g.bevelBox([CAP_W, CAP_W, CAP_L], [0, DRIVE_Y, capRear], 0.006),\n    ]\n    for (const tx of [-TIE_OFF, TIE_OFF]) {\n      for (const ty of [-TIE_OFF, TIE_OFF]) {\n        cylinder.push(tube(tx, DRIVE_Y + ty, blockRear, machineRear - blockRear - 0.002, TIE_R, 8))\n        cylinder.push(g.lathe([[0, 0], [0.011, 0], [0.011, NUT], [0, NUT]], { axis: 'z', center: [tx, DRIVE_Y + ty, machineRear - NUT], segments: 6, smooth: false }))\n      }\n    }\n    // an air port on the -X side of each cap: a hex body and a push-in fitting, the hose starting at its tip\n    const PORT_X = -CAP_W / 2 - 0.022\n    const port = (z) => [\n      g.lathe([[0, 0], [0.012, 0], [0.012, 0.01], [0, 0.01]], { axis: 'x', center: [-CAP_W / 2 - 0.01, DRIVE_Y, z], segments: 6, smooth: false }),\n      g.lathe([[0, 0], [0.008, 0], [0.008, 0.012], [0, 0.012]], { axis: 'x', center: [PORT_X, DRIVE_Y, z], segments: 12 }),\n    ]\n    cylinder.push(...port(capFront), ...port(capRear))\n    const barrel = g.merge(...cylinder)\n    // the valve that switches the cylinder, on the block's rear face beside it, and its two hoses: one from the front\n    // port straight across, one from the rear port along the barrel's side and round into the valve's back\n    const VALVE = [0.06, 0.05, 0.05], VALVE_X = -0.21\n    const valve = g.bevelBox(VALVE, [VALVE_X, DRIVE_Y, blockRear + VALVE[2] / 2], 0.004, ['z-'])\n    const HOSE_R = 0.0055, HOSE_BEND = 0.05\n    const hoseProfile = []\n    // [up, width], up first: the other order turns the tube inside out\n    for (let i = 0; i < 10; i++) hoseProfile.push([HOSE_R * Math.cos((2 * Math.PI * i) / 10), HOSE_R * Math.sin((2 * Math.PI * i) / 10)])\n    // each hose starts inside its port's fitting (which runs +X from PORT_X) and ends inside the valve, behind a\n    // fitting of the same size on the valve's face, so neither end shows a gap or an open tube end\n    const SEAT = 0.004\n    const valveFace = VALVE_X + VALVE[0] / 2, valveBack = blockRear + VALVE[2]\n    const valveFittings = g.merge(\n      g.lathe([[0, 0], [0.008, 0], [0.008, 0.012], [0, 0.012]], { axis: 'x', center: [valveFace, DRIVE_Y, capFront], segments: 12 }),\n      g.lathe([[0, 0], [0.008, 0], [0.008, 0.012], [0, 0.012]], { axis: 'z', center: [VALVE_X, DRIVE_Y, valveBack], segments: 12 }),\n    )\n    const hoseFront = g.sweep(hoseProfile, [[PORT_X + SEAT, DRIVE_Y, capFront], [valveFace - SEAT, DRIVE_Y, capFront]])\n    // the rear hose runs out along -X, bends a quarter turn round a centre inside the corner, and runs along -Z to\n    // the valve's back face\n    const bendC = [VALVE_X + HOSE_BEND, capRear - HOSE_BEND]\n    const rearPath = [[PORT_X + SEAT, DRIVE_Y, capRear]]\n    for (let i = 0; i <= 8; i++) {\n      const a = Math.PI / 2 + (Math.PI / 2) * (i / 8)\n      rearPath.push([bendC[0] + HOSE_BEND * Math.cos(a), DRIVE_Y, bendC[1] + HOSE_BEND * Math.sin(a)])\n    }\n    rearPath.push([VALVE_X, DRIVE_Y, valveBack - SEAT])\n    const hoseRear = g.sweep(hoseProfile, rearPath)\n    // the control box on the block's side (its back is where the rods come out): two buttons and the two lenses\n    const PANEL_Y = 0.44, PANEL_Z = blockRear - 0.11, PANEL_D = 0.03, face = HW + PANEL_D\n    const panel = g.bevelBox([PANEL_D + 0.01, 0.22, 0.18], [HW + PANEL_D / 2 - 0.005, PANEL_Y, PANEL_Z], 0.006, ['x-'])\n    const knob = (y, z, profile) => g.lathe(profile, { axis: 'x', center: [face, y, z], segments: 16 })\n    const BUTTON = [[0, 0], [0.024, 0], [0.024, 0.015], [0, 0.015]]\n    const LENS = [[0, 0], [0.02, 0], [0.02, 0.01], [0.014, 0.018], [0, 0.02]]\n    // a steel bezel round each button and lens, and a visor over each lens so it reads in a bright hall\n    const ring = (y, z, r) => g.lathe([[r, 0], [r + 0.008, 0], [r + 0.008, 0.005], [r, 0.005], [r, 0]], { axis: 'x', center: [face, y, z], segments: 16 })\n    const bezels = g.merge(\n      ring(0.48, PANEL_Z + 0.045, 0.024), ring(0.4, PANEL_Z + 0.045, 0.024),\n      ring(0.48, PANEL_Z - 0.045, 0.02), ring(0.4, PANEL_Z - 0.045, 0.02),\n    )\n    const visors = g.merge(\n      g.box([0.024, 0.005, 0.05], [face + 0.012, 0.48 + 0.028, PANEL_Z - 0.045]),\n      g.box([0.024, 0.005, 0.05], [face + 0.012, 0.4 + 0.028, PANEL_Z - 0.045]),\n    )\n\n    // a louvred vent on the block's other side: a dark back plate with slats across it\n    const VENT_Z = blockRear - 0.13, VENT_Y = 0.52\n    const ventBack = g.box([0.006, 0.1, 0.16], [-HW - 0.002, VENT_Y, VENT_Z])\n    const slats = []\n    for (let i = 0; i < 4; i++) slats.push(g.box([0.012, 0.012, 0.15], [-HW - 0.006, VENT_Y - 0.0375 + i * 0.025, VENT_Z]))\n    // The warning label: a thin box whose outward face carries a whole texture (the builder maps every box face 0..1;\n    // scripts/build-diverter-textures.mjs draws it), on the back face above the rods' path (the tie bar comes up to\n    // y 0.48 at full reach).\n    const label = g.box([0.1, 0.1, 0.003], [0, 0.538, blockRear + 0.0015])\n    // a cable gland under the control box, its cable bending down and into the cabinet below the hood\n    const glandY = PANEL_Y - 0.11, cableX = HW + PANEL_D / 2\n    const cableGland = g.lathe([[0, 0], [0.011, 0], [0.011, 0.012], [0.008, 0.02], [0, 0.02]], { axis: 'y', center: [cableX, glandY - 0.02, PANEL_Z], segments: 6, smooth: false })\n    const cablePath = g.fillet([[cableX, glandY - 0.02, PANEL_Z], [cableX, base + 0.025, PANEL_Z], [CAB_HW - 0.01, base + 0.025, PANEL_Z]], 0.025)\n    const cable = g.sweep(hoseProfile, cablePath)\n\n    // hex bolt heads: two anchor bolts through each foot plate, four on the face of each guide gland\n    const hex = (center, axis) => g.lathe([[0, 0], [0.011, 0], [0.011, 0.007], [0, 0.007]], { axis, center, segments: 6, smooth: false })\n    const bolts = []\n    for (const x of [-LEG_X, LEG_X]) for (const z of legZ) for (const dz of [-0.035, 0.035]) bolts.push(hex([x, FLOOR + FOOT_T, z + dz], 'y'))\n    for (const gx of [-ROD_X, ROD_X]) for (const bx of [-0.035, 0.035]) for (const by of [-0.035, 0.035]) bolts.push(hex([gx + bx, ROD_Y + by, front - GLAND - 0.007], 'z'))\n    // a rubber wiper ring where each rod leaves its gland\n    const wiper = (x, y, r) => g.lathe([[r, 0], [r + 0.008, 0], [r + 0.008, 0.006], [r, 0.006], [r, 0]], { axis: 'z', center: [x, y, front - GLAND - 0.006], segments: 20 })\n    const rearWiper = (x) => g.lathe([[GUIDE_R, 0], [GUIDE_R + 0.008, 0], [GUIDE_R + 0.008, 0.006], [GUIDE_R, 0.006], [GUIDE_R, 0]], { axis: 'z', center: [x, ROD_Y, glandRear], segments: 20 })\n    const wipers = g.merge(wiper(-ROD_X, ROD_Y, GUIDE_R), wiper(ROD_X, ROD_Y, GUIDE_R), wiper(0, DRIVE_Y, DRIVE_R), rearWiper(-ROD_X), rearWiper(ROD_X))\n\n    // the moving stage, drawn in partEnd's frame: the blade (rubber face, plate, a boss across the guide rods with a\n    // rib up and down from each, a boss on the drive rod), the two guide rods with the tie bar across their back\n    // ends, and the drive rod, whose back end stays inside the barrel at rest and inside the block at full reach\n    const S3 = [0, BLADE_Y, -0.853]\n    const zPlate = BLADE_FRONT + RUBBER, zBoss = zPlate + PLATE\n    const rubber = g.box([BLADE_W - 0.02, BLADE_H - 0.02, RUBBER], [0, BLADE_Y, BLADE_FRONT + RUBBER / 2])\n    const plate = g.bevelBox([BLADE_W, BLADE_H, PLATE], [0, BLADE_Y, zPlate + PLATE / 2], 0.008, ['z-'])\n    const fittings = g.merge(\n      g.bevelBox([2 * ROD_X + 0.1, 0.08, BOSS], [0, ROD_Y, zBoss + BOSS / 2], 0.006, ['z-']),\n      g.bevelBox([0.03, BLADE_H - 0.06, BOSS * 0.8], [-ROD_X, BLADE_Y, zBoss + BOSS * 0.4], 0.004, ['z-']),\n      g.bevelBox([0.03, BLADE_H - 0.06, BOSS * 0.8], [ROD_X, BLADE_Y, zBoss + BOSS * 0.4], 0.004, ['z-']),\n      g.bevelBox([0.07, 0.07, BOSS], [0, DRIVE_Y, zBoss + BOSS / 2], 0.006, ['z-']),\n      g.bevelBox([2 * ROD_X + 0.1, 0.07, TIE], [0, ROD_Y, rodTail - TIE / 2], 0.006),\n    )\n    const rods = g.merge(\n      tube(-ROD_X, ROD_Y, bladeBack, rodTail - TIE - bladeBack, GUIDE_R),\n      tube(ROD_X, ROD_Y, bladeBack, rodTail - TIE - bladeBack, GUIDE_R),\n      tube(0, DRIVE_Y, bladeBack, blockRear + S - 0.02 - bladeBack, DRIVE_R, 16),\n    )\n\n    return [\n      { desc: g.merge(stand, bezels), material: 'frame' },\n      { desc: g.merge(cabinet, panel, visors, ventBack, valve, wipers, cableGland, cable), material: 'cabinet' },\n      { desc: g.merge(hood, glands, ...slats), material: 'hood' },\n      { desc: g.merge(barrel, valveFittings, ...bolts), material: 'barrel' },\n      { desc: g.merge(hoseFront, hoseRear), material: 'hose' },\n      { desc: label, material: 'label' },\n      { desc: g.merge(knob(0.48, PANEL_Z + 0.045, BUTTON), knob(0.4, PANEL_Z + 0.045, BUTTON)), material: 'button' },\n      { desc: knob(0.48, PANEL_Z - 0.045, LENS), material: 'lampRed', lamps: [{ name: 'red', emissive: [0.74902, 0.05098, 0.05098] }] },\n      { desc: knob(0.4, PANEL_Z - 0.045, LENS), material: 'lampGreen', lamps: [{ name: 'green', emissive: [0, 1, 0.28235] }] },\n      { desc: into(rods, S3), material: 'rod', link: 'partEnd' },\n      { desc: into(plate, S3), material: 'hood', link: 'partEnd' },\n      { desc: into(fittings, S3), material: 'frame', link: 'partEnd' },\n      { desc: into(rubber, S3), material: 'rubber', link: 'partEnd' },\n    ]\n  },\n  step(ctx) {\n    // Signal precedence, modelled on a real panel: (1) the tag, while an attached program actually drives it\n    // (ctx.tagDriven); (2) otherwise the hand signal — the 'diverted' param or a pilot Use.\n    if (ctx.params.diverted !== lastDiverted) { diverted = ctx.params.diverted; lastDiverted = ctx.params.diverted }\n    if (ctx.used()) diverted = !diverted\n    // auto wins by overwriting the hand latch: a press while owned is undone the same tick, and when ownership\n    // releases (program detach) the pusher holds its last commanded state.\n    if (ctx.tagDriven(ctx.params.tag)) diverted = ctx.readTag(ctx.params.tag)\n    // the hand latch AFTER the auto gate — what the device is really doing, for the Inspector readout\n    ctx.report('diverted', diverted)\n    const want = diverted ? 1 : 0\n    const step = ctx.dt / Math.max(ctx.params.divertTime, 0.01)\n    progress = ctx.approach(progress, want, step)\n    const reach = ctx.params.divertDistance * progress\n    ctx.joints.ext3 = reach\n    // Panel indicators, read off the HOME end-of-stroke the way a real pusher's reed switches are: green while\n    // the blade is home and the lane is clear, red the moment it leaves — held through the whole travel, out\n    // and back, not just at full extension. Lighting green on extend and never driving red at\n    // all would leave one lens permanently dead; both lenses carry a state here.\n    const home = progress <= 1e-4\n    ctx.lamps.green = home\n    ctx.lamps.red = !home\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "pusher",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "partEnd",
+        "parent": "pusher",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.447,
+          -0.853
+        ]
+      },
+      {
+        "name": "blade",
+        "parent": "partEnd",
+        "shape": {
+          "kind": "box",
+          "size": [
+            0.47,
+            0.4,
+            0.5
+          ]
+        },
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "hidden": true
+      }
+    ],
+    "joints": [
+      {
+        "name": "ext3",
+        "link": "partEnd",
+        "type": "prismatic",
+        "axis": [
+          0,
+          0,
+          -1
+        ],
+        "min": 0,
+        "max": 1.5
+      }
+    ],
+    "bounds": {
+      "length": 0.73,
+      "width": 1.352,
+      "top": 0.66,
+      "bottom": -0.3847,
+      "centerZ": -0.427,
+      "params": [
+        {
+          "field": "width",
+          "param": "divertDistance",
+          "add": 0.602,
+          "min": 0.702,
+          "max": 2.102
+        },
+        {
+          "field": "centerZ",
+          "param": "divertDistance",
+          "scale": 0.5,
+          "add": -0.802,
+          "min": -0.752,
+          "max": -0.052
+        },
+        {
+          "field": "bottom",
+          "param": "standHeight",
+          "scale": -1,
+          "max": -0.1
+        }
+      ]
+    }
+  },
+  "category": "Equipment",
+  "interactive": true,
+  "useParam": "diverted",
+  "snap": {
+    "mounts": [
+      {
+        "at": [
+          0,
+          0,
+          -1.0635
+        ],
+        "accepts": "conveyorGuard",
+        "face": "out",
+        "yOffset": 0.2,
+        "outwardOffset": 0.05,
+        "opens": true
+      }
+    ]
+  },
+  "assets": [
+    {
+      "id": "metalTex",
+      "mime": "image/webp",
+      "url": "/part-assets/fb0fbb34f108535b05ae4d288bf01486a8ab2dfb213545f7573b3506d6b7f8ac.webp",
+      "sha256": "fb0fbb34f108535b05ae4d288bf01486a8ab2dfb213545f7573b3506d6b7f8ac"
+    },
+    {
+      "id": "labelTex",
+      "mime": "image/webp",
+      "url": "/part-assets/5231ae69ccfc5170b86255012514e71a762ae29fd022a029383e2de32e8e71af.webp",
+      "sha256": "5231ae69ccfc5170b86255012514e71a762ae29fd022a029383e2de32e8e71af"
+    }
+  ],
+  "materials": [
+    {
+      "id": "hood",
+      "color": [
+        0.6377,
+        0.21222,
+        0.03189
+      ],
+      "metalness": 0.511,
+      "roughness": 0.361
+    },
+    {
+      "id": "cabinet",
+      "color": [
+        0.03072,
+        0.03689,
+        0.0497
+      ],
+      "metalness": 0,
+      "roughness": 0.45
+    },
+    {
+      "id": "frame",
+      "color": [
+        0.21956,
+        0.22322,
+        0.22321
+      ],
+      "metalness": 1,
+      "roughness": 0.539
+    },
+    {
+      "id": "barrel",
+      "albedo": "metalTex",
+      "color": [
+        0.78,
+        0.8,
+        0.84
+      ],
+      "metalness": 0.75,
+      "roughness": 0.42,
+      "triplanar": {
+        "space": "object",
+        "scale": 3,
+        "boost": 1
+      }
+    },
+    {
+      "id": "rod",
+      "albedo": "metalTex",
+      "metalness": 0.9,
+      "roughness": 0.3,
+      "triplanar": {
+        "space": "object",
+        "scale": 2.2,
+        "boost": 1.25
+      }
+    },
+    {
+      "id": "rubber",
+      "color": [
+        0.012,
+        0.012,
+        0.013
+      ],
+      "metalness": 0,
+      "roughness": 0.85
+    },
+    {
+      "id": "hose",
+      "color": [
+        0.02,
+        0.16,
+        0.55
+      ],
+      "metalness": 0,
+      "roughness": 0.5
+    },
+    {
+      "id": "label",
+      "albedo": "labelTex",
+      "metalness": 0,
+      "roughness": 0.55
+    },
+    {
+      "id": "button",
+      "color": [
+        0.00402,
+        0.491,
+        0.63755
+      ],
+      "metalness": 0,
+      "roughness": 0.5
+    },
+    {
+      "id": "lampRed",
+      "color": [
+        0.29182,
+        0.11443,
+        0.11192
+      ],
+      "metalness": 0,
+      "roughness": 0.654
+    },
+    {
+      "id": "lampGreen",
+      "color": [
+        0.15295,
+        0.31398,
+        0.14995
+      ],
+      "metalness": 0,
+      "roughness": 0.612
+    }
+  ],
+  "sdk": {
+    "level": 6,
+    "of": "v2:23519:6ms01pqtol"
+  }
+}

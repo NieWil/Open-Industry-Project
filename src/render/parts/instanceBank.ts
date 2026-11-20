@@ -1,5 +1,5 @@
 import { DynamicDrawUsage, InstancedMesh, type BufferGeometry, type Group, type Material } from 'three'
-import type { InstanceTransform } from '../../core/partApi'
+import type { InstanceTransform } from '../../core/parts/partApi'
 import { bucketCapacity } from './instanceCapacity'
 import { writeInstanceMatrices } from './instancedTemplate'
 import { retireInstancedMeshOnly } from '../gpuRetire'

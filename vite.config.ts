@@ -138,9 +138,10 @@ const DEV_ASSET_MIME: Record<string, string> = {
 // the rest of the app keeps fast HMR. Dev-only (handleHotUpdate never runs in a build).
 const renderFullReload = {
   name: 'oip-render-full-reload',
-  handleHotUpdate({ file, server }: { file: string; server: { ws: { send: (p: { type: 'full-reload' }) => void } } }) {
+  handleHotUpdate({ file, server }: { file: string; server: { ws: { send: (p: { type: 'full-reload'; path: string; triggeredBy: string }) => void } } }) {
     if (file.replace(/\\/g, '/').includes('/src/render/')) {
-      server.ws.send({ type: 'full-reload' })
+      // triggeredBy names the file to an agent whose call the reload cut off (editor/agent/desktopAgent.ts)
+      server.ws.send({ type: 'full-reload', path: '*', triggeredBy: file })
       return [] // skip the default partial HMR - we've triggered a full reload instead
     }
   },
@@ -241,13 +242,18 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // An activating worker takes control of tabs that loaded without one (a first visit, Ctrl+Shift+R), so the
+        // Reload toast's controllerchange fires in every tab. It does not skip waiting: a new build still waits
+        // for Reload.
+        clientsClaim: true,
         // precache the app shell. The Jolt SIMD build ships a separate ~2 MB .wasm
         // and the three.js chunk is large, so the default 2 MiB cap would silently
         // drop them from the precache and break offline launch.
         globPatterns: ['**/*.{js,css,html,wasm}'],
-        // ...except the STEP importer's CAD kernel (editor/stepImport.ts): 7.6 MB that only an author importing
-        // a CAD file ever needs, so it downloads on that first import instead of for every visitor
-        globIgnores: ['**/occt-import-js-*.wasm'],
+        // ...except the model importers' readers: the STEP CAD kernel (editor/stepImport.ts, 7.6 MB) and the USD
+        // reader (editor/usdImport.ts, 2.3 MB). Only an author importing such a file needs them, so they download
+        // on that first import instead of for every visitor
+        globIgnores: ['**/occt-import-js-*.wasm', '**/usd_wasm_bg-*.wasm'],
         maximumFileSizeToCacheInBytes: 16 * 1024 * 1024,
         // The SPA lives under /app/; its deep links (e.g. /app/?scene=demo) must fall back
         // to the app shell, not the marketing landing. Falling back to /index.html would serve
@@ -301,8 +307,12 @@ export default defineConfig({
   // pre-bundle so first use doesn't trigger a mid-boot "optimized dependencies changed"
   // reload that races the app mount. occt-import-js: the STEP importer's worker (editor/stepImport.worker.ts),
   // first reached when someone imports a CAD file - a reload then would throw away the import.
+  // meshoptimizer: the USD importer's simplifier (editor/usdImport.ts), the same case as occt-import-js.
+  // @huggingface/usd-web-viewer (editor/usdImport.ts) is left out: it finds its worker and wasm next to its own
+  // module (new URL(..., import.meta.url)), which pre-bundling would move.
   optimizeDeps: {
-    include: ['jolt-physics', 'jolt-physics/wasm', 'jolt-physics/wasm-multithread', 'iwer', '@iwer/devui', 'occt-import-js'],
+    include: ['jolt-physics', 'jolt-physics/wasm', 'jolt-physics/wasm-multithread', 'iwer', '@iwer/devui', 'occt-import-js', 'meshoptimizer'],
+    exclude: ['@huggingface/usd-web-viewer'],
     rolldownOptions: { plugins: [monarchKeywordHash, monacoDompurify()] },
   },
   // The watcher walks the whole root before the first response goes out, so local tool output the app never imports
@@ -344,8 +354,13 @@ export default defineConfig({
         guideOpcua: entry('./guides/opcua/index.html'),
         guidePlcServer: entry('./guides/plc-server/index.html'),
         guideS7: entry('./guides/s7/index.html'),
+        guideSlmp: entry('./guides/slmp/index.html'),
         guideAds: entry('./guides/ads/index.html'),
         guideReference: entry('./guides/reference/index.html'),
+        guidePartModel: entry('./guides/part-model/index.html'),
+        guidePartMotion: entry('./guides/part-motion/index.html'),
+        guidePartFeedback: entry('./guides/part-feedback/index.html'),
+        guidePartProduct: entry('./guides/part-product/index.html'),
         guides: entry('./guides/index.html'),
         privacy: entry('./privacy/index.html'),
       },

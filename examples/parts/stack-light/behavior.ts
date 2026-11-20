@@ -1,7 +1,7 @@
 // Stack Light — a parametric 1-8 segment signal tower. Each segment is an emissive lens lamp; one integer
 // bitmask lights them — bit i (LSB = the bottom segment) lights segment i+1, colours cycling bottom-up
 // green → amber → red → blue → white. The bitmask comes from a PLC INT tag while a program actually DRIVES it
-// (comms on + ctx.tagDriven); any other time the authored 'value' param drives the same lamps. Bits above the
+// (ctx.tagDriven); any other time the authored 'value' param drives the same lamps. Bits above the
 // segment count are masked off. Use/click is a LAMP TEST: every tier lights briefly, then the pattern returns.
 //
 // The tower: a black housing (foot + stem + base collar + seam rings + floating cap under a low cone roof)
@@ -34,7 +34,6 @@ definePart({
   params: {
     segments: { type: 'number', default: DEF_SEGS, min: 1, max: MAX_SEGS, step: 1, label: 'Tiers', desc: 'How many lamp tiers are stacked. Colours are fixed and cycle bottom-up: green, amber, red, blue, white.' },
     value: { type: 'number', bits: 'segments', default: 1, min: 0, max: 255, step: 1, label: 'Lit tiers', group: 'Start state', desc: 'Which tiers are lit, one box per tier, the BOTTOM tier first (bit 0 of the bitmask the tag carries: 1 lights green, 2 amber, 3 both). Bits above the segment count are masked off. A program driving the tag below replaces this value.' },
-    enableComms: { type: 'boolean', default: false, whenAbsent: true, label: 'Enable comms', group: 'Comms', desc: 'Connect this part to a PLC program. Its tags appear once this is on.' },
     // autoWhenDriven: this tag COMMANDS the lamps (the step's auto gate reads it), so a program driving it
     // owns the device — the pilot prompt shows "In auto - PLC controlled" instead of a dead "Use".
     tag: { type: 'tag', dir: 'in', stType: 'INT', autoWhenDriven: true, setpointFor: 'value', default: '', label: 'Lamp bitmask tag', group: 'Comms', desc: 'The program writes the lit-tier bitmask here. While it drives the tag it OWNS the light, so the Value field above becomes a read-only readout and a hand Use is refused with "In auto - PLC controlled".' },
@@ -45,7 +44,7 @@ definePart({
     // Output ownership (ctx.tagDriven): the tag lights the lamps only while a controller actually drives it —
     // gating on the tag NAME instead would pin the tower to a dead tag the moment one was typed. Release falls
     // back to the authored pattern instead of freezing the last commanded one (right for an indicator).
-    const auto = ctx.params.enableComms && ctx.tagDriven(ctx.params.tag)
+    const auto = ctx.tagDriven(ctx.params.tag)
     // Use = a lamp test, in hand mode only: while a program drives the tag it owns the light, and the press is
     // refused ("In auto - PLC controlled"). It never changes the pattern — that is the Value field's, or the PLC's.
     if (ctx.used() && !auto) test = LAMP_TEST_S

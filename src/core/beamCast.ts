@@ -1,10 +1,10 @@
 // Ray-vs-box intersection for sensor beams (C-sensing) - pure plain-number math, deterministic,
 // headless-testable, shared by the sim (a sensor custom part's beam, in the worker) and reusable by render.
-// Mirrors the slab test in render/sensorBeam.ts (which keeps its three.js aim), but expressed on the same
-// quaternion helpers as core/rigPose so a sensor rig's beam casts against cargo box OBBs without three.js.
+// A slab test on the same quaternion helpers as core/rig/rigPose, so a sensor rig's beam casts against cargo box
+// OBBs without three.js.
 
 import type { BoxFrame } from './frame'
-import type { Quat, Vec3 } from './rigPose'
+import type { Quat, Vec3 } from './rig/rigPose'
 
 /**
  * Ray (origin `o`, unit dir `d`) vs an axis-aligned box of half-extents `h` centred at the origin. Returns
@@ -153,4 +153,70 @@ export function castBeamFrame(origin: Vec3, dir: Vec3, range: number, frame: Box
     }
   }
   return best < 0 ? null : { index: best, distance: bestT }
+}
+
+const differs = (a: Float32Array, b: Float32Array, at: number, n: number): boolean => {
+  for (let k = at; k < at + n; k++) if (a[k] !== b[k]) return true
+  return false
+}
+
+/**
+ * The rows whose beam-visible state (pose, size, tint) differs between two cargo frames, or null when the row count
+ * differs: rows then shift, so there is no row-for-row answer. A beam cast against `b` can only answer differently
+ * from the same cast against `a` if it enters one of these rows in `a` or in `b`.
+ */
+export function changedCargoRows(a: BoxFrame, b: BoxFrame): number[] | null {
+  if (a.count !== b.count) return null
+  const rows: number[] = []
+  for (let i = 0; i < a.count; i++) {
+    const p3 = i * 3
+    if (
+      differs(a.positions, b.positions, p3, 3) ||
+      differs(a.quats, b.quats, i * 4, 4) ||
+      differs(a.halfExtents, b.halfExtents, p3, 3) ||
+      differs(a.colors, b.colors, p3, 3)
+    ) {
+      rows.push(i)
+    }
+  }
+  return rows
+}
+
+/** values per cast in a {@link castsCrossRows} list: origin xyz, unit dir xyz, range */
+export const BEAM_CAST_STRIDE = 7
+
+const _ccO: Vec3 = [0, 0, 0]
+const _ccD: Vec3 = [0, 0, 0]
+
+/**
+ * Whether any of `casts` (a flat list, {@link BEAM_CAST_STRIDE} values per cast) enters one of `rows` of `frame` within
+ * its range. Costs casts x rows, against castBeamFrame's casts x every row.
+ */
+export function castsCrossRows(casts: readonly number[], frame: BoxFrame, rows: readonly number[]): boolean {
+  for (let c = 0; c + BEAM_CAST_STRIDE <= casts.length; c += BEAM_CAST_STRIDE) {
+    _ccO[0] = casts[c]!
+    _ccO[1] = casts[c + 1]!
+    _ccO[2] = casts[c + 2]!
+    _ccD[0] = casts[c + 3]!
+    _ccD[1] = casts[c + 4]!
+    _ccD[2] = casts[c + 5]!
+    const range = casts[c + 6]!
+    for (const i of rows) {
+      const p3 = i * 3
+      const p4 = i * 4
+      _cbPos[0] = frame.positions[p3]!
+      _cbPos[1] = frame.positions[p3 + 1]!
+      _cbPos[2] = frame.positions[p3 + 2]!
+      _cbQuat[0] = frame.quats[p4]!
+      _cbQuat[1] = frame.quats[p4 + 1]!
+      _cbQuat[2] = frame.quats[p4 + 2]!
+      _cbQuat[3] = frame.quats[p4 + 3]!
+      _cbHalf[0] = frame.halfExtents[p3]!
+      _cbHalf[1] = frame.halfExtents[p3 + 1]!
+      _cbHalf[2] = frame.halfExtents[p3 + 2]!
+      const t = rayObb(_ccO, _ccD, _cbPos, _cbQuat, _cbHalf)
+      if (t !== null && t <= range) return true
+    }
+  }
+  return false
 }

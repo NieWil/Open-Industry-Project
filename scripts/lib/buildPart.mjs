@@ -5,7 +5,7 @@
 // `manifest.geometry`), `rig(params)` (links, joints and bounds computed from the params), the params, geometry() and
 // step(). It may import other modules by relative path. From it:
 //   the behavior   part.js with its imports joined in and `manifest` / `rig()` left out (bundlePart.mjs)
-//   the manifest   `manifest`, its rig compiled from rig() (src/core/rigCompile.ts)
+//   the manifest   `manifest`, its rig compiled from rig() (src/core/rig/rigCompile.ts)
 //
 // The file names depend on where the part lives. A part folder anywhere (a project's parts/<slug>/, a library's source
 // folder) gets manifest.json + behavior.js, the names the app reads (docs/projects.md), and its banners and problems
@@ -65,7 +65,7 @@ export function buildPart(dir, repo, core) {
   return {
     files: [
       { name: names.behavior, text: bundled.source },
-      // a part folder's manifest ends in a newline, as the app writes one (core/projectFolder.ts)
+      // a part folder's manifest ends in a newline, as the app writes one (core/project/projectFolder.ts)
       { name: names.manifest, text: JSON.stringify(manifest, null, 2) + (example ? '' : '\n') },
     ],
     modules: bundled.modules,

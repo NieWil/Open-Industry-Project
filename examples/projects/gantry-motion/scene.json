@@ -12,7 +12,6 @@
       ],
       "rotationY": 0,
       "params": {
-        "enableComms": true,
         "mode": "follow",
         "enableTag": "Enable",
         "executeTag": "Execute",

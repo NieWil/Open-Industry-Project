@@ -4,7 +4,7 @@ const assert = require('node:assert/strict')
 const { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
-const { folderNameForId, listShelf, readChosenShelf, writeChosenShelf, writeShelfPart } = require('./partsShelf.cjs')
+const { folderNameForId, listShelf, readChosenShelf, shelfSignature, writeChosenShelf, writeShelfPart } = require('./partsShelf.cjs')
 
 const manifest = (id, name = 'Part') => JSON.stringify({ id, name, geometry: { kind: 'rig', links: [], joints: [] } })
 const tmp = mkdtempSync(join(tmpdir(), 'oip-shelf-'))
@@ -60,7 +60,7 @@ try {
     console.log('✓ a mismatched or broken manifest is refused')
   }
 
-  // 5b. embedded assets go on the shelf as hash-named files (src/core/partAssets.ts), read back as the same base64;
+  // 5b. embedded assets go on the shelf as hash-named files (src/core/parts/partAssets.ts), read back as the same base64;
   //     a new version replaces the files the old one named
   {
     const { createHash } = require('node:crypto')
@@ -77,6 +77,26 @@ try {
     assert.equal(writeShelfPart(root, 'acme.modelled', withAsset(next), 'definePart({})'), '')
     assert.deepEqual(readdirSync(join(part.dir, 'assets')), [`${createHash('sha256').update(next).digest('hex')}.glb`])
     console.log('✓ assets go on the shelf as hash-named files, one version at a time')
+  }
+
+  // 5c. the card image goes beside the part and comes back as a data URL; a version written without one drops it
+  {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])
+    const url = `data:image/png;base64,${png.toString('base64')}`
+    assert.equal(writeShelfPart(root, 'acme.pictured', manifest('acme.pictured'), 'definePart({})', url), '')
+    assert.equal(listShelf(root).parts.find((p) => p.id === 'acme.pictured').thumbnail, url)
+    assert.equal(writeShelfPart(root, 'acme.pictured', manifest('acme.pictured'), 'definePart({})', 'data:text/html,<b>'), '')
+    assert.equal(listShelf(root).parts.find((p) => p.id === 'acme.pictured').thumbnail, undefined)
+    console.log('✓ the card image goes on the shelf with its part, and only a PNG is written')
+  }
+
+  // 5d. the signature moves when a part's files change, and not otherwise
+  {
+    const before = shelfSignature(root)
+    assert.equal(shelfSignature(root), before)
+    assert.equal(writeShelfPart(root, 'acme.signed', manifest('acme.signed'), 'definePart({})'), '')
+    assert.notEqual(shelfSignature(root), before)
+    console.log('✓ the signature tells a changed shelf from an unchanged one without reading it')
   }
 
   // 6. the chosen shelf folder round-trips through its settings file

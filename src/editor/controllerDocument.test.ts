@@ -4,12 +4,12 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Controller } from '../core/controller'
-import { sceneToProject } from '../core/project'
+import { sceneToProject } from '../core/project/project'
 import { DEFAULT_SIM_HZ, SCENE_VERSION } from '../core/types'
 import type { SceneJSON } from '../core/types'
 import { collectProblems } from './problems'
-import { sceneFileText } from './sceneFile'
-import { EditorStore } from './store'
+import { sceneFileText } from './project/sceneFile'
+import { EditorStore } from './store/store'
 
 const PROGRAM = 'PROGRAM Counter\nVAR_OUTPUT n : INT; END_VAR\nn := n + 1;\nEND_PROGRAM\n'
 const TABLE: Controller = { tasks: [{ name: 'Fast', intervalMs: 10, priority: 1 }], programs: [{ name: 'A', type: 'Counter', task: 'Fast' }] }

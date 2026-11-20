@@ -3,7 +3,7 @@
 // A half-finished run persists across reloads. If that progress were a bare step index, a resume
 // would re-enter the tour at that step over whatever is on screen: start the tour, go back to
 // your real line, reload, and 'tag-conveyor' runs its onEnter against your conveyor (selecting it
-// and committing `enableComms: true` before you have clicked anything), after which the next card's
+// before you have clicked anything), after which the next card's
 // button writes the tutorial's ST program over yours. A fresh run gets a "Tutorial" project of its
 // own to prevent exactly that, and an unbound resume would bypass it.
 //
@@ -22,7 +22,7 @@
 //   4. the landing page's /app/?tour=1, over work, opens a fresh run in a "Tutorial" project of its own
 //      (theirs is filed untouched) and drops the param, so a reload does not make another one
 // Run: node e2e/verify-tutorial-scene-binding.mjs [--headed]
-/* global process, console, window, localStorage, document, location, URLSearchParams, indexedDB */
+/* global process, console, window, localStorage, document, location, URLSearchParams, indexedDB, sessionStorage */
 import { startServer } from './_server.mjs'
 import { afterReload, createProject, openProjectNamed, openProjectsList } from './_projectMenu.mjs'
 import { clickDemo } from './_demo.mjs'
@@ -86,7 +86,8 @@ const libraryProjects = (page) =>
           const all = db.transaction('docPayload').objectStore('docPayload').getAll()
           all.onsuccess = () => {
             db.close()
-            resolve(all.result)
+            // a row holds its project as text, or as an object when an earlier build wrote it
+            resolve(all.result.map((r) => ({ ...r, project: r.project ?? JSON.parse(r.text) })))
           }
           all.onerror = () => {
             db.close()
@@ -105,8 +106,8 @@ const probe = (page) =>
       title: document.querySelector('.tut-title')?.textContent ?? '(no tour)',
       project: s.projectName,
       doc: localStorage.getItem('oip-web/document-id'),
-      // the two things primeConveyorTagging does, unprompted, to whatever conveyor it finds
-      comms: conv ? conv.params.enableComms ?? false : null,
+      // what primeConveyorTagging does, unprompted, to whatever conveyor it finds
+      conv: !!conv,
       selected: s.selectedIds.length,
       progress: localStorage.getItem(key),
     }
@@ -131,8 +132,10 @@ async function main() {
 
     // Suppress the first-run offer while the board is set up. It does not mask what is under test:
     // a saved run is checked before the done flag, which is the whole point of a resume.
+    // the tab's own open-project pointer is in sessionStorage (libraryDb.ts): clear it too, so the reload boots fresh
     await page.evaluate((done) => {
       localStorage.clear()
+      sessionStorage.clear()
       localStorage.setItem(done, '1')
     }, DONE_KEY)
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -152,8 +155,6 @@ async function main() {
       }
       store.loadScene({
         version: store.getState().scene.version,
-        // comms deliberately off: turning it on is what the tour would do to it, so the assertion
-        // cannot pass vacuously on a part that was already wired
         parts: [
           {
             id: 'conv1',
@@ -161,7 +162,7 @@ async function main() {
             packageId: 'oip.roller-conveyor',
             position: [0, 0.5, 0],
             rotationY: 0,
-            params: { ...params, enableComms: false },
+            params,
           },
         ],
         packages: [roller],
@@ -192,8 +193,7 @@ async function main() {
     const parked = await probe(page)
     check('the user is in their own project', parked.project === 'Plant' && parked.doc === docPlant, `${parked.project} ${parked.doc}`)
     check("another project's run is not resumed here", parked.title === '(no tour)', `title="${parked.title}"`)
-    check('...and the tour did not enable comms on their conveyor', parked.comms === false, `enableComms=${parked.comms}`)
-    check('...nor select it out from under them', parked.selected === 0, `selected=${parked.selected}`)
+    check('...and the tour did not select their conveyor out from under them', parked.conv && parked.selected === 0, `conveyor=${parked.conv} selected=${parked.selected}`)
     check('...but the run is kept for the project it belongs to', JSON.parse(parked.progress ?? '{}').sceneId === tourSlot, `progress=${parked.progress}`)
 
     // --- 2. the Tutorial command is the way back: into the tour's own project, on the tour's own step

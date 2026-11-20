@@ -1,10 +1,10 @@
-// End-to-end check: other people's part code in a room runs sandboxed, and a viewer can Block it.
+// End-to-end check: other people's part code in a room runs sandboxed, and a held room asks before it runs.
 //
 // A part's behavior is JavaScript, and a room syncs every peer's packages, so joining downloads and runs
 // everyone's part code, view-only viewers included. The page and the sim worker run under SES lockdown and
 // part code compiles inside a Compartment (docs/part-sandbox.md): in a browser a room's code
-// runs by default, sandboxed, under a notice with Block; a blocked room holds its code (src/collab/codeTrust.ts)
-// until it is allowed again. (The desktop keeps asking before it runs; apps/desktop, not this gate.)
+// runs by default, sandboxed, with nothing shown; a safe open (`?nocode`, or after an open that never finished)
+// holds its code (src/collab/codeTrust.ts) until it is allowed.
 //
 // Stands up a real Hocuspocus server + a dev server and drives two isolated browser contexts. A (an editor) authors
 // a part whose script tries the classic escape - reach the host global, raise a flag there, broadcast on a
@@ -97,7 +97,7 @@ const flags = (page) =>
   page.evaluate(() => ({ pwned: window.__oipRoomPwned === true, msgs: window.__pwnedMsgs ?? 0 }))
 const promptShown = (page) => page.evaluate(() => !!document.querySelector('[data-testid="room-code-prompt"]'))
 const bannerShown = (page) => page.evaluate(() => !!document.querySelector('[data-testid="room-code-banner"]'))
-const noticeShown = (page) => page.evaluate(() => !!document.querySelector('[data-testid="room-code-sandbox-notice"]'))
+const shownNothing = async (page) => !(await promptShown(page)) && !(await bannerShown(page))
 /** run the sim until the part's plate says it ran (or `ms` passes), stop, and report: did it run, did it get out */
 async function runAndRead(page, ms = 20000) {
   await page.evaluate(() => window.__oip.controller.run())
@@ -160,57 +160,39 @@ try {
   const authored = await runAndRead(a)
   check("the author's part runs (its plate shows it), so a clean flag below means stopped, not skipped", authored.ran, JSON.stringify(authored))
   check("the author's own page does not let the escape out either (main thread and sim worker)", !authored.escaped, JSON.stringify(authored))
-  check('the author is shown nothing about its own code', !(await promptShown(a)) && !(await noticeShown(a)))
+  check('the author is shown nothing about its own code', await shownNothing(a))
 
-  // --- B joins by a view link: the room's code runs, sandboxed, under a notice rather than a question
+  // --- B joins by a view link: the room's code runs, sandboxed, without a question
   await b.goto(`${APP_URL}?room=${VIEW}&view`, { timeout: LOAD_MS })
   await waitForApp(b)
   await joined(b)
-  await waitShown(b, 'room-code-sandbox-notice', 30000).catch(() => {})
-  check('a viewer is told the room runs someone else\'s code in a sandbox', await noticeShown(b))
-  check('and is not stopped by a question', !(await promptShown(b)))
+  await sleep(1500)
+  check('a viewer is not stopped by a question', await shownNothing(b))
   const viewer = await runAndRead(b)
   check("the viewer runs the room's part (its plate shows it)", viewer.ran, JSON.stringify(viewer))
   check('nothing from the room got out on the viewer, main thread or sim worker', !viewer.escaped, JSON.stringify(viewer))
 
-  // Block: remembered, the room reloads with the code held, and the old question is back (worded for the sandbox)
-  // the click reloads the page from inside its handler: wait for the new document's load, armed before the click
-  await Promise.all([b.waitForEvent('load', { timeout: LOAD_MS }), clickIn(b, '[data-testid="room-code-block"]').catch(() => {})])
-  await waitForApp(b)
-  await joined(b)
-  await waitShown(b, 'room-code-prompt', 30000).catch(() => {})
-  check('a blocked room asks before its code runs again', await promptShown(b))
-  const promptText = await b.evaluate(() => document.querySelector('[data-testid="room-code-prompt"]')?.textContent ?? '')
-  check('the question names the part and says the code would run in a sandbox', promptText.includes('Innocent Crate') && promptText.includes('sandbox'), promptText.slice(0, 160))
-  const heldCode = await b.evaluate(() => window.__oip.getPackage('peer.pwn')?.behavior ?? '')
-  check("a blocked room's registry holds a stand-in, not the author's code", heldCode !== '' && !heldCode.includes('oip-room-pwned'))
-  await clickIn(b, '[data-testid="room-code-keep"]')
-  const blocked = await runAndRead(b, 4000)
-  check('a blocked room runs none of its code', !blocked.ran && !blocked.escaped, JSON.stringify(blocked))
-
-  // Review, then allow: that undoes the Block, the code runs again (sandboxed), and a reload shows the notice
-  await clickIn(b, '[data-testid="room-code-banner"] button')
-  await waitShown(b, 'room-code-prompt', 5000)
-  await clickIn(b, '[data-testid="room-code-allow"]')
-  const allowed = await runAndRead(b)
-  check('allowing a blocked room runs its code again, still contained', allowed.ran && !allowed.escaped, JSON.stringify(allowed))
-  await b.reload({ timeout: LOAD_MS })
-  await waitForApp(b)
-  await joined(b)
-  await waitShown(b, 'room-code-sandbox-notice', 30000).catch(() => {})
-  check('after allowing, a reload is back to the notice, not the question', (await noticeShown(b)) && !(await promptShown(b)))
-
   // --- staying openable when a room's code freezes the page (SES confines code, it cannot stop it spinning) ---
   const reason = (page) => page.evaluate(() => document.querySelector('[data-testid="room-code-reason"]')?.textContent ?? '')
-  // 1. the link asks: `&nocode` opens the room with its code held, whatever was decided before
+  // 1. the link asks: `&nocode` opens the room with its code held, and asks (worded for the sandbox)
   await b.goto(`${APP_URL}?room=${VIEW}&view&nocode`, { timeout: LOAD_MS })
   await waitForApp(b)
   await joined(b)
   await waitShown(b, 'room-code-prompt', 30000).catch(() => {})
   check('a nocode link holds the room\'s code and says why', (await promptShown(b)) && (await reason(b)).includes('nocode'), (await reason(b)).slice(0, 120))
+  const promptText = await b.evaluate(() => document.querySelector('[data-testid="room-code-prompt"]')?.textContent ?? '')
+  check('the question names the part and says the code would run in a sandbox', promptText.includes('Innocent Crate') && promptText.includes('sandbox'), promptText.slice(0, 160))
+  const heldCode = await b.evaluate(() => window.__oip.getPackage('peer.pwn')?.behavior ?? '')
+  check("a held room's registry holds a stand-in, not the author's code", heldCode !== '' && !heldCode.includes('oip-room-pwned'))
   await clickIn(b, '[data-testid="room-code-keep"]')
   const viaLink = await runAndRead(b, 4000)
   check('a nocode open runs none of it', !viaLink.ran && !viaLink.escaped, JSON.stringify(viaLink))
+  // Review, then allow: the code runs (sandboxed)
+  await clickIn(b, '[data-testid="room-code-banner"] button')
+  await waitShown(b, 'room-code-prompt', 5000)
+  await clickIn(b, '[data-testid="room-code-allow"]')
+  const allowed = await runAndRead(b)
+  check('allowing a held room runs its code, still contained', allowed.ran && !allowed.escaped, JSON.stringify(allowed))
   // 2. the last open never finished (what a frozen or crashed tab leaves behind): the next open holds the code
   // planted from a page of the same origin that is not the room: leaving the room normally (pagehide) clears the mark,
   // as intended, so it is set after that leave, as a frozen tab's open would have left it
@@ -227,15 +209,15 @@ try {
   await b.reload({ timeout: LOAD_MS }) // a normal leave (pagehide) clears the mark
   await waitForApp(b)
   await joined(b)
-  await waitShown(b, 'room-code-sandbox-notice', 30000).catch(() => {})
-  check('an open that finished leaves no mark: the next one is back to the notice', (await noticeShown(b)) && !(await promptShown(b)))
+  await sleep(1500)
+  check('an open that finished leaves no mark: the next one asks nothing', await shownNothing(b))
 
   // the author reopening the room: its own code, remembered by fingerprint, so nothing to say
   await a.reload({ timeout: LOAD_MS })
   await waitForApp(a)
   await joined(a)
   await sleep(1500)
-  check("the author reopening the room is shown nothing about its own code", !(await promptShown(a)) && !(await noticeShown(a)) && !(await bannerShown(a)))
+  check("the author reopening the room is shown nothing about its own code", await shownNothing(a))
 } catch (e) {
   failures++
   console.log(`FAIL  threw: ${e?.stack ?? e}`)
@@ -248,7 +230,6 @@ try {
         parts: window.__oip?.store?.getState().scene.parts.map((p) => p.id),
         prompt: !!document.querySelector('[data-testid="room-code-prompt"]'),
         banner: !!document.querySelector('[data-testid="room-code-banner"]'),
-        notice: !!document.querySelector('[data-testid="room-code-sandbox-notice"]'),
       })),
       sleep(60000).then(() => 'no answer in 60 s (main thread stuck)'),
     ]).catch((err) => `unreadable: ${err.message}`)

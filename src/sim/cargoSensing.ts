@@ -3,10 +3,10 @@
 import type Jolt from 'jolt-physics'
 import { rayCapsuleY, rayObb } from '../core/beamCast'
 import type { FrameBeamHit } from '../core/frame'
-import type { ParamValue } from '../core/partApi'
-import type { PartPackage } from '../core/partPackage'
-import { qApply, qConjugate, qFromAxisAngle, resolvedBeamRange, resolvedBoxSize, rigWorldPoses } from '../core/rigPose'
-import type { Quat, RigParams, Vec3 } from '../core/rigPose'
+import type { ParamValue } from '../core/parts/partApi'
+import type { PartPackage } from '../core/parts/partPackage'
+import { qApply, qConjugate, qFromAxisAngle, resolvedBeamRange, resolvedBoxSize, rigWorldPoses } from '../core/rig/rigPose'
+import type { Quat, RigParams, Vec3 } from '../core/rig/rigPose'
 import type { SdkPart } from '../core/types'
 import { marksOf } from './worldTypes'
 import type { BodyHolder, LiveBox } from './worldTypes'
@@ -100,9 +100,17 @@ export function rigBeams(part: SdkPart, geo: Extract<PartPackage['geometry'], { 
   return beams
 }
 
+function sameColor(a: readonly number[], b: readonly number[]): boolean {
+  return a === b || (a[0] === b[0] && a[1] === b[1] && a[2] === b[2])
+}
+
 // Cast one world beam against every cargo box; return the nearest hit (or a clear result at full range).
 // `snap` is the step's batched pose rows (null = stock build), `near` the rows the cargo registry's floor grid says may lie
 // near the beam (null = every row), `s` the sensor registry's scratch for the OBB test and `pilotBody` the walking pilot.
+// `hit.box` is left holding the cargo body the beam hit, or null when it is clear or hit the pilot (ctx.markHit).
+// `prev` is what this beam read on the step before. The same object is returned when the beam reads the same now,
+// so a beam with nothing new allocates nothing and its caller can tell by comparing the two. A reading is never
+// written in place.
 export function castBeamRows(
   origin: Vec3,
   dir: Vec3,
@@ -112,7 +120,10 @@ export function castBeamRows(
   near: readonly number[] | null,
   s: { pos: Vec3; quat: Quat; half: Vec3 },
   pilotBody: Jolt.Body | null,
+  hit?: { box: LiveBox | null },
+  prev?: FrameBeamHit,
 ): FrameBeamHit {
+  if (hit) hit.box = null
   let bestT = Infinity
   let best: LiveBox | null = null
   const ox = origin[0]
@@ -186,10 +197,18 @@ export function castBeamRows(
   if (pilotBody) {
     const p = pilotBody.GetPosition()
     const t = rayCapsuleY(origin, dir, p.GetX(), p.GetY(), p.GetZ(), (PILOT_BODY_HEIGHT - 2 * PILOT_BODY_RADIUS) / 2, PILOT_BODY_RADIUS)
-    if (t !== null && t <= range && t < bestT) return { hit: true, distance: t, color: PILOT_BEAM_COLOR }
+    if (t !== null && t <= range && t < bestT) {
+      if (prev && prev.hit && prev.distance === t && prev.marks === undefined && sameColor(prev.color, PILOT_BEAM_COLOR)) return prev
+      return { hit: true, distance: t, color: PILOT_BEAM_COLOR }
+    }
   }
-  if (!best) return { hit: false, distance: range, color: [0, 0, 0] }
+  if (!best) {
+    if (prev && !prev.hit && prev.distance === range) return prev
+    return { hit: false, distance: range, color: [0, 0, 0] }
+  }
+  if (hit) hit.box = best
   const marks = marksOf(best)
+  if (prev && prev.hit && prev.distance === bestT && prev.marks === (marks ?? undefined) && sameColor(prev.color, best.color)) return prev
   return { hit: true, distance: bestT, color: best.color, ...(marks ? { marks } : {}) }
 }
 

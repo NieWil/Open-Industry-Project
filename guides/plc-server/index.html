@@ -23,13 +23,14 @@
     <meta name="twitter:card" content="summary_large_image" />
 
     <!-- A hand-written page, unlike /plc/. Every label, default and status line below is read from the app
-         (editor/components/ExternalPlcSection.tsx, editor/externalPlc.ts, core/externalIo.ts, core/opcUa.ts). Change
+         (editor/components/plc/ExternalPlcSection.tsx, editor/links/externalPlc.ts, core/io/externalIo.ts, core/io/opcUa.ts). Change
          those and this goes stale. -->
 
     <link rel="preload" href="/fonts/plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
 
     <link rel="stylesheet" href="/src/site/site.css" />
+    <script type="module" src="/src/site/copyCode.js"></script>
   </head>
 
   <body class="doc">
@@ -39,7 +40,7 @@
         <a class="nav-logo" href="/" aria-label="Open Industry Project home"><img src="/oip-logo.svg" alt="Open Industry Project" /></a>
         <nav class="nav-links" aria-label="Site">
           <a href="/plc/">PLC reference</a>
-          <a href="/guides/">Connection guides</a>
+          <a href="/guides/">Guides</a>
           <a href="https://github.com/Open-Industry-Project/Open-Industry-Project" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
         <a class="btn btn-sm" href="/app/">Open the editor</a>
@@ -86,9 +87,8 @@
           <li>A <b>Photo Eye</b> beside the belt, about two thirds of the way along, facing across it.</li>
         </ol>
         <p>
-          Select the sensor and the belt, and in the Inspector's <span class="ui">Comms</span> group tick
-          <span class="ui">Enable Comms</span> on each. What you type into their tag fields depends on the connection, so
-          it is in part A and part B.
+          Select the sensor and the belt, and find the <span class="ui">Comms</span> group in the Inspector. What you
+          type into their tag fields depends on the connection, so it is in part A and part B.
         </p>
       </div>
     </section>
@@ -114,10 +114,10 @@
         </div>
 
         <h3>A2. Point the simulator at the PLC</h3>
-        <p>Open <span class="ui">Simulation &gt; External PLC…</span> and set:</p>
+        <p>Open <span class="ui">Simulation &gt; PLC Controllers…</span> and set:</p>
         <ol class="steps">
           <li><span class="ui">Runs on</span>: <b>An external PLC</b>.</li>
-          <li><span class="ui">PLC connection</span>: <b>The simulator polls the PLC</b> (the PLC is a Modbus server).</li>
+          <li>Under it, how the PLC connects: <b>The simulator polls the PLC</b> (the PLC is a Modbus server).</li>
           <li><span class="ui">PLC</span>: <b>127.0.0.1</b> if the PLC runs on this computer, otherwise its address. <span class="ui">Port</span>: <b>502</b>, unless its server device listens elsewhere.</li>
           <li>
             <span class="ui">Holding register 0 is %IW</span> and <span class="ui">Input register 0 is %QW</span>: where the PLC's
@@ -133,12 +133,12 @@
         </p>
         <figure class="shot">
           <img src="img/external-plc-modbus.webp" width="680" height="445" loading="lazy" decoding="async"
-            alt="The External PLC settings: Runs on An external PLC, PLC connection The simulator polls the PLC, PLC 127.0.0.1, Port 502, both register bases 0, and the list: %IX0.0 holding register 0 bit 0 and %QX0.0 input register 0 bit 0." />
+            alt="The External PLC settings: Runs on An external PLC, connecting with The simulator polls the PLC, PLC 127.0.0.1, Port 502, both register bases 0, and the list: %IX0.0 holding register 0 bit 0 and %QX0.0 input register 0 bit 0." />
           <figcaption>Set up to poll the PLC's Modbus server, with the two points it will read and write.</figcaption>
         </figure>
 
         <h3>A3. The PLC program</h3>
-        <pre class="code" translate="no"><code>PROGRAM PLC_PRG
+        <pre class="code" translate="no" data-copy><code>PROGRAM PLC_PRG
 VAR
   Eye AT %IX0.0 : BOOL;
   Run AT %QX0.0 : BOOL;
@@ -196,19 +196,25 @@ END_PROGRAM</code></pre>
         </p>
 
         <h3>B2. Point the simulator at the server</h3>
-        <p>In <span class="ui">Simulation &gt; External PLC…</span>:</p>
+        <p>In <span class="ui">Simulation &gt; PLC Controllers…</span>:</p>
         <ol class="steps">
           <li><span class="ui">Runs on</span>: <b>An external PLC</b>.</li>
-          <li><span class="ui">PLC connection</span>: <b>OPC UA, tags by name</b> (the PLC runs an OPC UA server).</li>
+          <li>Under it, how the PLC connects: <b>OPC UA, tags by name</b> (the PLC runs an OPC UA server).</li>
           <li><span class="ui">Server</span>: the PLC's endpoint, <code>opc.tcp://127.0.0.1:4840</code> on the same computer by default.</li>
         </ol>
         <p>
           The connection is unsecured, with security policy None and an anonymous login, so the PLC's server has to allow both.
           Use it on a test bench, not a plant network.
         </p>
+        <p>
+          On Play the simulator reads the server's whole tree under Objects to find each tag. If the server holds far more
+          than the program, as a controller that also runs a CNC or drives does, put where the program's variables are in
+          <span class="ui">Browse from</span>: a path from Objects like <code>DeviceSet.PLC.Programs</code>, or a NodeId,
+          several separated by commas. Tags keep the names they have; only less of the tree is read.
+        </p>
 
         <h3>B3. The PLC program</h3>
-        <pre class="code" translate="no"><code>PROGRAM PLC_PRG
+        <pre class="code" translate="no" data-copy><code>PROGRAM PLC_PRG
 VAR
   Eye : BOOL;
   Run : BOOL;
@@ -280,6 +286,12 @@ END_PROGRAM</code></pre>
           <dt>OPC UA: a tag is read only.</dt>
           <dd>The simulator writes the sensors, so their variables must be writable, which means a plain variable rather than a located input.</dd>
 
+          <dt>OPC UA: connecting takes long, or "a branch of the PLC's tags did not answer in time".</dt>
+          <dd>The server's tree is large, or part of it answers slowly. Set <span class="ui">Browse from</span> (see <a href="#opcua">B2</a>) to the folder that holds the program's variables.</dd>
+
+          <dt>OPC UA: "the PLC has no ... to browse from".</dt>
+          <dd>A <span class="ui">Browse from</span> path does not match the server's tree. Check the names under Objects in an OPC UA browser, or give the folder's NodeId.</dd>
+
           <dt>OPC UA: "... is an OPC UA discovery server, not a PLC".</dt>
           <dd>The PLC's server is on another port. See <a href="#opcua">B4</a>.</dd>
         </dl>
@@ -306,7 +318,7 @@ END_PROGRAM</code></pre>
             <ul>
               <li><a href="/guides/modbus/">Guide: a PLC that polls the simulator over Modbus TCP</a></li>
               <li><a href="/guides/opcua/">Guide: connect a SCADA or HMI over OPC UA</a></li>
-              <li><a href="/guides/">All connection guides</a></li>
+              <li><a href="/guides/">All guides</a></li>
               <li><a href="/guides/reference/">Reference: defaults, address rules, timings</a></li>
               <li><a href="/plc/">PLC language reference</a></li>
               <li><a href="/app/?scene=demo">See a PLC-driven line run</a></li>

@@ -79,11 +79,15 @@ try {
   const survey = await page.evaluate(() => {
     const s = window.__oip.store.getState()
     return {
-      comms: s.scene.parts.filter((p) => p && p.params && p.params.enableComms === true).length,
+      // a part is connected when one of its tag fields names a tag
+      comms: s.scene.parts.filter((p) => {
+        const specs = p?.params ? window.__oip.getPackage(p.packageId ?? '')?.params : null
+        return !!specs && Object.entries(specs).some(([k, spec]) => spec?.type === 'tag' && typeof p.params[k] === 'string' && p.params[k].trim() !== '')
+      }).length,
       program: s.stProgram.length,
     }
   })
-  expect(survey.comms >= 4, `the demo wires ${survey.comms} comms-enabled parts, so the wiring walk has real input`)
+  expect(survey.comms >= 4, `the demo wires ${survey.comms} parts to tags, so the wiring walk has real input`)
   expect(survey.program > 100, `the demo carries a ${survey.program}-char PLC program`)
 
   // ── clean baseline: the shipped demo has no errors and no coverage holes ──
@@ -156,7 +160,7 @@ try {
     // must not be reported as one. The package schema is what declares the direction.
     const owners = []
     for (const p of state.scene.parts) {
-      if (!p.params || p.params.enableComms !== true) continue
+      if (!p.params) continue
       const pkg = window.__oip.getPackage(p.packageId ?? '')
       if (!pkg || !pkg.params) continue
       for (const [k, spec] of Object.entries(pkg.params)) {
@@ -166,7 +170,7 @@ try {
       }
     }
     // any two parts driving the same param: the first owner's param may be one only it has (the demo's first
-    // comms part is not always a conveyor)
+    // wired part is not always a conveyor)
     let a = null
     let b = null
     for (const o of owners) {

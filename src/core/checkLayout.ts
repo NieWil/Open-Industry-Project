@@ -10,10 +10,13 @@
 // says it seats onto a host, with no host near it, is wrong. No heuristics, no tolerance tuning.
 //
 // The only collision reported is a part standing in an interior building column (`columnSpacing`,
-// core/buildingColumns.ts): solid floor-to-roof, nothing is ever meant to overlap it. Cargo is exempt, and so is
+// core/building/buildingColumns.ts): solid floor-to-roof, nothing is ever meant to overlap it. Cargo is exempt, and so is
 // anything flat on the floor (markings).
 //
-// One warning, never an error: a box feed (a part with a `keepSpacing` param: the box spawner) dropping onto a belt
+// Two warnings, never errors. The first: a conveyor's end placed against a spur's side. A spur is itself a merge and
+// takes end joins only, so its guard stays closed there (endJoinSideFindings).
+//
+// The second: a box feed (a part with a `keepSpacing` param: the box spawner) dropping onto a belt
 // whose run tag something drives, without being held with that belt. A program that stops the belt (accumulation, a
 // release, Stop) then gets boxes stacked on the stopped belt at the drop point, or one dropped the instant it
 // restarts onto the box still under the drop; see feedFindings. It needs to know which tags are driven (the
@@ -26,10 +29,11 @@
 // Registry-dependent: footprint and snap declaration resolve per package, so the scene's packages must be
 // registered (true anywhere a scene is loaded).
 
-import { getPackage } from './partRegistry'
-import { isConveyorLike, partFootprint, toLocalXZ, toWorldXZ } from './partGeometry'
-import { commsOn } from './conveyorDirection'
-import { INTERIOR_COLUMN_SIZE, interiorColumnHeight, interiorColumns } from './buildingColumns'
+import { getPackage } from './parts/partRegistry'
+import { packageParamSpecs, switchValue, visibleWhenHolds } from './packageParams'
+import { bedOf, conveyorEndsOf, isConveyorLike, partFootprint, toLocalXZ, toWorldXZ } from './parts/partGeometry'
+import { commsOn } from './conveyor/conveyorDirection'
+import { INTERIOR_COLUMN_SIZE, interiorColumnHeight, interiorColumns } from './building/buildingColumns'
 import { cargoView } from './frame'
 import type { PartInstance } from './types'
 
@@ -60,8 +64,9 @@ export interface LayoutFinding {
   /** the package for a package part, else the part's type */
   packageId: string
   /** 'unseated': declares a host and has none. 'column': stands in an interior building column. 'feed': a box feed
-   *  drops onto a driven belt without being held with it (a warning). */
-  kind: 'unseated' | 'column' | 'feed'
+   *  drops onto a driven belt without being held with it (a warning). 'endJoinSide': a conveyor's end meets the side
+   *  of a bed that takes end joins only, a spur (a warning). */
+  kind: 'unseated' | 'column' | 'feed' | 'endJoinSide'
   /** 'error' fails the CLI; 'warning' is reported and does not (unless --strict) */
   severity: 'error' | 'warning'
   detail: string
@@ -162,7 +167,7 @@ export interface LayoutCheckOptions {
   feedRunsWithoutBelt?: (feedTag: string, beltTag: string) => boolean | undefined
 }
 
-/** What {@link exerciseProgram} drives: a compiled program's link (plc/plcLink.ts LocalPlcLink), structurally. */
+/** What {@link exerciseProgram} drives: a compiled program's link (plc/link/plcLink.ts LocalPlcLink), structurally. */
 export interface ExercisableProgram {
   readonly inputs: readonly string[]
   /** the program's variables by the scene's tag names */
@@ -235,6 +240,7 @@ export function checkLayout(parts: readonly PartInstance[], options: LayoutCheck
     })
   }
   findings.push(...columnFindings(parts))
+  findings.push(...endJoinSideFindings(parts))
   if (options.drivenTags) findings.push(...feedFindings(parts, options.drivenTags, options.feedRunsWithoutBelt))
   return findings.sort((a, b) => a.partId.localeCompare(b.partId) || a.kind.localeCompare(b.kind))
 }
@@ -304,6 +310,51 @@ function columnFindings(parts: readonly PartInstance[]): LayoutFinding[] {
   return out
 }
 
+/** an end faces into a bed's side when its outward direction is within this of the side's inward normal (cos 45°) */
+const FACING = Math.SQRT1_2
+
+/**
+ * Conveyor ends placed against the side of a bed that takes end joins only (ConveyorBed.endJoinsOnly: a spur, which is
+ * itself a merge). Its guard stays closed where another conveyor's end meets its side (guardOpenings.ts), and cargo
+ * fed there stops at the guard. The snap engine never seats a side merge there, so this is a part placed by hand or
+ * by a script. A warning, since the layout may be meant as a sketch.
+ */
+function endJoinSideFindings(parts: readonly PartInstance[]): LayoutFinding[] {
+  const out: LayoutFinding[] = []
+  for (const spur of parts) {
+    const bed = bedOf(spur)
+    if (!bed?.endJoinsOnly) continue
+    const host = bed.guardHost(spur)
+    if (!host) continue
+    for (const other of parts) {
+      if (other === spur || !isConveyorLike(other)) continue
+      const meets = conveyorEndsOf(other).some((e) => {
+        const at = toLocalXZ(spur, e.x, e.z)
+        const side = at.z < 0 ? -1 : 1
+        if (Math.abs(Math.abs(at.z) - host.hw) > CONTACT_XZ) return false
+        const [lo, hi] = side < 0 ? host.sides.left : host.sides.right
+        if (at.x / host.slope < lo - CONTACT_XZ || at.x / host.slope > hi + CONTACT_XZ) return false
+        if (Math.abs(e.y - spur.position[1]) > CONTACT_Y) return false
+        // the end points into the bed, across its side, not along it (a bed parked alongside)
+        const tip = toLocalXZ(spur, e.x + e.outX, e.z + e.outZ)
+        return (tip.z - at.z) * side < -FACING
+      })
+      if (!meets) continue
+      const name = typeof other.name === 'string' && other.name !== '' ? other.name : undefined
+      const spurName = typeof spur.name === 'string' && spur.name !== '' ? `${spur.name} (${spur.id})` : spur.id
+      out.push({
+        partId: other.id,
+        ...(name !== undefined ? { partName: name } : {}),
+        packageId: other.type === 'part' ? other.packageId : other.type,
+        kind: 'endJoinSide',
+        severity: 'warning',
+        detail: `its end meets the side of ${spurName}, a ${bed.kind} conveyor that takes end joins only, so its guard stays closed there: merge onto a straight or a belt instead`,
+      })
+    }
+  }
+  return out
+}
+
 /** A param's value on the instance, else its package default. */
 function paramOf(part: PartInstance, key: string): unknown {
   if (part.type !== 'part') return undefined
@@ -361,6 +412,8 @@ function dropTarget(feed: PartInstance, parts: readonly PartInstance[]): PartIns
  *     first box after a restart lands on the one the stopped belt still carries under the drop. Explicit pairing
  *     only: through program logic (a copy, an implication) this check cannot tell a belt stopped every cycle from
  *     one stopped by an E-stop, and the box spawner's own doc names this pairing as where keepSpacing belongs.
+ *     Not while `keepSpacing` is switched out (the spawner's On each enable release, which drops at every enable on
+ *     purpose and ignores it): then it is neither the cause nor the fix.
  */
 function feedFindings(parts: readonly PartInstance[], driven: ReadonlySet<string>, seen: LayoutCheckOptions['feedRunsWithoutBelt']): LayoutFinding[] {
   const byId = new Map(parts.map((p) => [p.id, p]))
@@ -381,11 +434,17 @@ function feedFindings(parts: readonly PartInstance[], driven: ReadonlySet<string
     const interlocked = ref !== undefined && (ref.id === belt.id || runTagOf(ref) === beltTag)
     const feedTag = runTagOf(feed)
     const gated = feedTag !== '' && driven.has(feedTag) // a merely-named tag gates nothing (the spawner's runTag doc)
+    // keepSpacing counts only while its switch shows it, the rule the Inspector shows it by
+    const specs = packageParamSpecs(pkg)
+    const vw = specs.find((s) => s.key === 'keepSpacing')?.visibleWhen
+    const spacing = visibleWhenHolds(vw, vw ? switchValue(specs, feed.params, vw.param) : undefined)
     const keep = paramOf(feed, 'keepSpacing') === true
-    const fix = `Fix: conveyorId = "${belt.id}"${keep ? '' : ' and keepSpacing = true'} (holds the feed while the belt is stopped, and keeps one pitch between boxes across the stop)`
+    const fix = spacing
+      ? `Fix: conveyorId = "${belt.id}"${keep ? '' : ' and keepSpacing = true'} (holds the feed while the belt is stopped, and keeps one pitch between boxes across the stop)`
+      : `Fix: conveyorId = "${belt.id}" (holds the feed while the belt is stopped)`
     let detail: string
     if (interlocked || (gated && feedTag === beltTag)) {
-      if (keep) continue
+      if (keep || !spacing) continue
       detail =
         `holds with ${beltName} (${interlocked ? `conveyorId "${ref!.id}"` : `runTag "${beltTag}"`}) but keepSpacing is off: ` +
         'while held its interval runs down, so the first box after the belt restarts drops at once, onto the box ' +

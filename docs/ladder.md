@@ -2,14 +2,14 @@
 
 Ladder is a second front end on the Structured Text engine, not a second runtime. A rung lowers to the ST that
 means it, and everything downstream (checker, interpreter, TypeScript emitter, text exporters, the sim worker)
-sees ordinary statements. The code is [src/plc/ladder.ts](../src/plc/ladder.ts) (model, lowering, export caveats),
-[src/plc/parser.ts](../src/plc/parser.ts) (`ladderSection`) and [src/plc/ladderXml.ts](../src/plc/ladderXml.ts)
+sees ordinary statements. The code is [src/plc/ladder/ladder.ts](../src/plc/ladder/ladder.ts) (model, lowering, export caveats),
+[src/plc/parserLadder.ts](../src/plc/parserLadder.ts) (`ladderSection`) and [src/plc/ladder/ladderXml.ts](../src/plc/ladder/ladderXml.ts)
 (PLCopen `<LD>` in and out).
 
 **Its words are data, not branches in the checker.** A lowered place that an element requires to be BOOL carries a
 role, held in a side table keyed by the AST node (`ladderRole`, filled by `mapBack`) rather than as a field on
 `Expr`, so the ST AST stays free of ladder vocabulary. `LD_ROLES` says
-which side of a statement each role stands on and how to word its diagnostic, and `checker.ts` asks: one lookup on
+which side of a statement each role stands on and how to word its diagnostic, and the checker (`checkExpr.ts` `elementRule`) asks: one lookup on
 a read, one on a write. The identity key is safe because nothing clones a statement
 between the lowering and the check. A `structuredClone` introduced on that path would drop roles, which
 `ladder.test.ts` catches by asserting both messages exactly.
@@ -155,31 +155,31 @@ A POU is written in one language, and the PLC panel opens it in that language. A
 section opens as rungs, anything else as text, and a program opens on the PROGRAM its controller runs first (StEditor
 `openingFace`). "+ New > Ladder program" in the organizer beside the code adds a
 PROGRAM with a ladder for its body. A ladder POU's rung text is behind its organizer row's "Show as text". Each ladder
-section's header has a Variables pane ([LadderVariables.tsx](../src/editor/components/LadderVariables.tsx) over
+section's header has a Variables pane ([LadderVariables.tsx](../src/editor/components/plc/LadderVariables.tsx) over
 [plc/tags.ts](../src/plc/tags.ts)): the POU's
 declarations as rows to read, add, retype and delete, a declaration part above the ladder. It
 does not rename. A rename follows scope (`renameTag`), but it also moves the scene's wiring in the same commit
 (`tagRenamesForScene`), and a pane whose only output is `onEdit(next)` cannot make that commit. A Text | Ladder
 switch shows only while some POU holds a section among statements (`mixesLanguages`), the one POU with two faces.
-Nothing is remembered per browser. The Ladder face ([LadderView.tsx](../src/editor/components/LadderView.tsx)) draws
+Nothing is remembered per browser. The Ladder face ([LadderView.tsx](../src/editor/components/plc/LadderView.tsx)) draws
 every LADDER section of the program as rungs and edits them. It is a view over the text, not a second model.
 
 The sheet draws every element as one of three shapes (a contact, a coil, a box with a row per pin). The elements, how
 power passes them, the element bar and how a field is written are in
-[ladderLeaf.tsx](../src/editor/components/ladderLeaf.tsx). It shows the problem lines (each error links to its element,
+[ladderLeaf.tsx](../src/editor/components/plc/ladderLeaf.tsx). It shows the problem lines (each error links to its element,
 warnings amber), marks the element a problem is about, notes double coils (`duplicateDestructive`), and redraws values
-only on the rungs in view. Live values are read by [ladderWatch.ts](../src/editor/components/ladderWatch.ts): the image
+only on the rungs in view. Live values are read by [ladderWatch.ts](../src/editor/components/plc/ladderWatch.ts): the image
 indexed once per key set, a bit of a word (`Status.%X3`), and an index that is itself a variable (`A[i]`).
 
-- [plc/ladderRungs.ts](../src/plc/ladderRungs.ts) reads rungs out of the source as plain data (operands as written, a
+- [plc/ladder/ladderRungs.ts](../src/plc/ladder/ladderRungs.ts) reads rungs out of the source as plain data (operands as written, a
   rung's comment from the comment above it) and prints them back into the same string (`writeLadder`).
-- [plc/ladderEdit.ts](../src/plc/ladderEdit.ts) is every gesture as a pure transform on rungs: insert, move, delete,
+- [plc/ladder/ladderEdit.ts](../src/plc/ladder/ladderEdit.ts) is every gesture as a pure transform on rungs: insert, move, delete,
   branch, branch level, stretch a branch end, move a rung, paste. Nothing in it depends on what an element is: it is
   generic over the leaf (`RungOf<L>`). The tools built on it work the same way: Find and Replace
-  ([plc/ladderFind.ts](../src/plc/ladderFind.ts)) and Cross Reference with its double-coil check
+  ([plc/ladder/ladderFind.ts](../src/plc/ladder/ladderFind.ts)) and Cross Reference with its double-coil check
   ([plc/crossRef.ts](../src/plc/crossRef.ts)) read a leaf only through
-  [plc/ladderLeaves.ts](../src/plc/ladderLeaves.ts), a lazy module the view brings, beside `fieldsOf` / `setField`.
-  So is type-ahead ([plc/ladderComplete.ts](../src/plc/ladderComplete.ts)). The rest of the first name that continues
+  [plc/ladder/ladderLeaves.ts](../src/plc/ladder/ladderLeaves.ts), a lazy module the view brings, beside `fieldsOf` / `setField`.
+  So is type-ahead ([plc/ladder/ladderComplete.ts](../src/plc/ladder/ladderComplete.ts)). The rest of the first name that continues
   what was typed appears after the caret, selected, and only Enter or Tab accepts it. The field says what it takes
   (`fieldWants`: a contact a BOOL, a TON's PT a TIME), so names of that type are offered first, and after a dot the
   members of what stands before it (`T1.` -> `T1.IN`).
@@ -187,7 +187,8 @@ indexed once per key set, a bit of a word (`Status.%X3`), and an index that is i
 - While the program runs, Toggle Bit (Ctrl+T, or the toolbar) flips the BOOL under the selection once, and a pin's live
   number takes a value on double-click. Both write into the running program between scans
   (`EditorController.togglePlcBit` / `writePlcValue`), never into its text, so a variable the program writes itself is
-  overwritten by its next scan.
+  overwritten by its next scan. A variable forced in the Watch dock is held instead, and either write changes the held
+  value (src/plc/DEVICE-IO.md, "Writes and forces").
 - An edit goes into the text editor as one ordinary edit (`StCodeEditorHandle.edit`), so the view's Ctrl+Z is that
   editor's history (and a room's shared one), a save is a save, and a peer sees it as typing. The text editor stays
   mounted under the view for that reason.
@@ -201,7 +202,7 @@ indexed once per key set, a bit of a word (`Status.%X3`), and an index that is i
   That box is drawn with no wire into it, and lit by what it returned.
 - The palette's comparisons (GT ... LT) make a function that starts the rung and put it at the front of the selected
   rung, the one place it can stand. MOVE and the arithmetic sit on the rung by EN / ENO where the selection is.
-- **What a box can be is one derived list** ([plc/ladderCatalog.ts](../src/plc/ladderCatalog.ts) `ladderCatalog`): the
+- **What a box can be is one derived list** ([plc/ladder/ladderCatalog.ts](../src/plc/ladder/ladderCatalog.ts) `ladderCatalog`): the
   program's own FUNCTION_BLOCKs and FUNCTIONs (read off its text, the POU being edited left out), then the standard
   library. The standard library is the engine's own blocks and functions (`BUILTIN_FUNCTIONS`, `OPERATOR_FUNCTIONS`,
   every generated `<src>_TO_<dst>`), with pins from the one table they are called by (builtins.ts `standardInputs`).
@@ -211,7 +212,7 @@ indexed once per key set, a bit of a word (`Status.%X3`), and an index that is i
   fails it. A second pin table kept by the ladder would miss functions such as ADD_TIME and the other time functions
   and draw them with one `IN` pin, and this test catches that. The shape it inserts a program's own block in is a
   corpus case: fed by its first BOOL input, carried on by its first BOOL output, a block with no BOOL pair behind EN.
-- **Insert Box** (`Block…` on the bar, and Ctrl+B, [BoxPicker.tsx](../src/editor/components/BoxPicker.tsx)) opens
+- **Insert Box** (`Block…` on the bar, and Ctrl+B, [BoxPicker.tsx](../src/editor/components/plc/BoxPicker.tsx)) opens
   that list. Type to find (a name that is the query, then starts with it, then holds it, then a summary that does),
   Enter to insert. The bar keeps the few elements most rungs use. Everything else is reached through the picker.
   Everything a box can be goes on the rung through one path (`insertCatalogEntry`), the bar's blocks and functions
@@ -223,7 +224,7 @@ indexed once per key set, a bit of a word (`Status.%X3`), and an index that is i
   just inserted is titled and shows what comes out of it.
 - **A block's box draws every pin its type declares** (lowering records them: `resolved.inputs` / `outputs`). The ones
   nothing connects are dimmer and in italics: inputs after the inputs written, outputs last. Double-clicking one
-  connects it (plc/ladderLeaves.ts `connectPin`: the pin written blank where IEC draws it) and opens its field, the
+  connects it (plc/ladder/ladderLeaves.ts `connectPin`: the pin written blank where IEC draws it) and opens its field, the
   same field every other is typed in. Escape, or leaving it empty, removes it again, and clearing a connected pin's
   field disconnects it. So a block is wired on the sheet alone (a TON's ET, a counter's R and CV, a program's own
   block's outputs) without editing the rung's text.
@@ -242,14 +243,14 @@ Gated by [e2e/verify-ladder-view.mjs](../e2e/verify-ladder-view.mjs).
 
 ## The demo
 
-`createPlcDemoScene`'s program (editor/demoScenes.ts) is one program, each POU in the language that suits it, the way
+`createPlcDemoScene`'s program (editor/demo/demoScenes.ts) is one program, each POU in the language that suits it, the way
 a real project mixes them: `Palletizer`, the cell's program, in ladder (contacts, coils and steps), calling
 `PalletTruck`, the block each pallet truck runs, in Structured Text (arithmetic on route rows), as a box on its rungs.
 `DEMO_CONTROLLER` runs `Palletizer` as `Main`, over one set of top-level variables, which is what the scene is wired to. No
 POU mixes the two languages, so the PLC panel shows no Text | Ladder switch for it. Each organizer row opens its POU in
 its own language, and the panel opens on the rungs of the program `Main` runs.
 
-Each POU has a twin in the other language, and the twins live in `editor/demoReference.ts`, for the tests only:
+Each POU has a twin in the other language, and the twins live in `editor/demo/demoReference.ts`, for the tests only:
 `PalletizerST` (the cell's program in ST), `PalletTruckLD` (the truck block in ladder) and `PalletizerLD` (the shipped
 `Palletizer`, renamed and driving `PalletTruckLD`, derived from the shipped text so there is one ladder palletizer to
 maintain). They check that the shipped program is the same machine as the demo all in ST and all in ladder, not three

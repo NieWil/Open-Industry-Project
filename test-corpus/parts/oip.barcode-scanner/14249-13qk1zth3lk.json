@@ -1,0 +1,233 @@
+{
+  "format": 6,
+  "id": "oip.barcode-scanner",
+  "name": "Barcode Scanner",
+  "params": {
+    "width": {
+      "type": "number",
+      "default": 1,
+      "min": 0.4,
+      "max": 3,
+      "step": 0.01,
+      "label": "Clear width (m)",
+      "desc": "The gap between the two columns, across the direction of travel. Wider than the conveyor, so the columns stand clear of its legs."
+    },
+    "surfaceHeight": {
+      "type": "number",
+      "default": 0.8,
+      "min": 0.2,
+      "max": 2,
+      "step": 0.01,
+      "label": "Conveyor height (m)",
+      "desc": "Height of the conveying surface under the arch: the bottom of the read zone."
+    },
+    "clearance": {
+      "type": "number",
+      "default": 0.6,
+      "min": 0.2,
+      "max": 2,
+      "step": 0.01,
+      "label": "Clearance (m)",
+      "desc": "From the conveying surface up to the scanner head. The tallest load must pass under it; the read zone fills that height."
+    },
+    "readDepth": {
+      "type": "number",
+      "default": 0.5,
+      "min": 0.1,
+      "max": 2,
+      "step": 0.05,
+      "label": "Read depth (m)",
+      "desc": "How far along the direction of travel (local Z) the read window reaches, centred under the head. A case is read as it crosses the scan line once its CENTRE is in the window, and the scan window lights while one is."
+    },
+    "codeMark": {
+      "type": "string",
+      "default": "code",
+      "label": "Code attribute",
+      "desc": "The product attribute the label carries, read off each case into the code tag: a number, or digits in text. A case without it reads 0."
+    },
+    "showBeam": {
+      "type": "boolean",
+      "default": false,
+      "label": "Show scan line",
+      "desc": "Draw the scan line across the conveyor. A viewing aid only."
+    },
+    "beamColor": {
+      "type": "color",
+      "default": "#f2bd0f",
+      "label": "Beam color",
+      "desc": "Paint of the crossbeam the head hangs from."
+    },
+    "readTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "BOOL",
+      "default": "",
+      "label": "Good read tag (pulse)",
+      "group": "Comms",
+      "desc": "Goes true for a quarter of a second each time a case is read. Take its rising edge to count or to act on a read."
+    },
+    "countTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "DINT",
+      "default": "",
+      "label": "Read count tag",
+      "group": "Comms",
+      "desc": "Running total of cases read this run. It only ever climbs."
+    },
+    "codeTag": {
+      "type": "tag",
+      "dir": "out",
+      "stType": "DINT",
+      "default": "",
+      "label": "Code tag (the last code read)",
+      "group": "Comms",
+      "desc": "The code on the label of the last case read, set on the same scan the good-read pulse rises. It holds until the next read."
+    }
+  },
+  "behavior": "// Barcode Scanner - the receiving scan point over a conveyor: an arch whose head reads the label on every case that\n// passes under it. Its local Z is the direction of travel, the arch's two columns stand at +-X either side of the bed,\n// and the part origin is the centre of the arch, on the floor.\n//\n// The head reads along a scan line across the conveyor just above the belt: a case is READ as it crosses the line,\n// and the code on its label goes to the code tag with the good-read pulse, so a program can route the case by it. The\n// code is the case's product attribute that `codeMark` names (a cargo part's `attribute: true` param, or a mark an\n// upstream machine left). The read happens only while an unread case is in the read window, which counts CARGO only,\n// so a person walking through the line never reads.\n//\n// A case is read once, however long it stays under the arch: the scanner MARKS the case it read (`scanned`, on that\n// one case), and a case already marked is never read again. So a case stopped under the arch by a held line, or one\n// backed up into it, still counts one, and anything downstream can ask whether a case has been scanned (ctx.marked,\n// or a beam hit's `marks`) without being wired to this part.\n//\n// Today every read is a good read. What a real scan point adds on top - a no-read the program diverts to a reject\n// spur, a count checked against the shipment's expected count - builds on these same tags.\n//\n// Demonstrates a beam that reads what a case carries (`sense(...).marks`), a mark on the one case read (`markHit`)\n// as a read-once memory, and a one-shot pulse to the PLC. Its only indicators are the ones a real scan arch has: the red\n// scan window and a good-read beacon. The count goes to the PLC, where a real line keeps it (an HMI, not the arch).\n\nconst PULSE = 0.25 // s the good-read tag stays true after a read: several scans of any program, however slow its task\n\nlet count = 0\nlet pulse = 0 // s left on the good-read pulse (and the green lamp)\nlet code = 0 // the last code read\n\n/** a label's code as a whole number for a DINT tag: a number as it is, a numeric string parsed, anything else 0 */\nfunction codeOf(v) {\n  if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v)\n  if (typeof v === 'boolean') return v ? 1 : 0\n  if (typeof v === 'string' && /^\\s*-?\\d+\\s*$/.test(v)) return parseInt(v, 10)\n  return 0\n}\n\ndefinePart({\n  lamps: ['read', 'scan'],\n  params: {\n    width: { type: 'number', default: 1.0, min: 0.4, max: 3, step: 0.01, label: 'Clear width (m)', desc: 'The gap between the two columns, across the direction of travel. Wider than the conveyor, so the columns stand clear of its legs.' },\n    surfaceHeight: { type: 'number', default: 0.8, min: 0.2, max: 2, step: 0.01, label: 'Conveyor height (m)', desc: 'Height of the conveying surface under the arch: the bottom of the read zone.' },\n    clearance: { type: 'number', default: 0.6, min: 0.2, max: 2, step: 0.01, label: 'Clearance (m)', desc: 'From the conveying surface up to the scanner head. The tallest load must pass under it; the read zone fills that height.' },\n    readDepth: { type: 'number', default: 0.5, min: 0.1, max: 2, step: 0.05, label: 'Read depth (m)', desc: 'How far along the direction of travel (local Z) the read window reaches, centred under the head. A case is read as it crosses the scan line once its CENTRE is in the window, and the scan window lights while one is.' },\n    codeMark: { type: 'string', default: 'code', label: 'Code attribute', desc: 'The product attribute the label carries, read off each case into the code tag: a number, or digits in text. A case without it reads 0.' },\n    showBeam: { type: 'boolean', default: false, label: 'Show scan line', desc: 'Draw the scan line across the conveyor. A viewing aid only.' },\n    beamColor: { type: 'color', default: '#f2bd0f', label: 'Beam color', desc: 'Paint of the crossbeam the head hangs from.' },\n    readTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Good read tag (pulse)', group: 'Comms', desc: 'Goes true for a quarter of a second each time a case is read. Take its rising edge to count or to act on a read.' },\n    countTag: { type: 'tag', dir: 'out', stType: 'DINT', default: '', label: 'Read count tag', group: 'Comms', desc: 'Running total of cases read this run. It only ever climbs.' },\n    codeTag: { type: 'tag', dir: 'out', stType: 'DINT', default: '', label: 'Code tag (the last code read)', group: 'Comms', desc: 'The code on the label of the last case read, set on the same scan the good-read pulse rises. It holds until the next read.' },\n  },\n  geometry(g, p) {\n    const width = typeof p.width === 'number' && p.width > 0 ? p.width : 1.0\n    const s = typeof p.surfaceHeight === 'number' ? p.surfaceHeight : 0.8\n    const c = typeof p.clearance === 'number' && p.clearance > 0 ? p.clearance : 0.6\n    // two PW x PD aluminium profiles on anchored floor plates, a crossbeam resting ON them, and the scanner head hung\n    // on a bracket under the beam's centre with its window at the clearance height. The columns stop at the beam's\n    // underside: run up into it, they share its end, front, back and top faces and those z-fight. Everything dark (slots, end caps, brackets, bolts, the head) is ONE submesh\n    // with no collider, so the detail costs neither a draw nor a change to what the arch collides as.\n    const PW = 0.05, PD = 0.1, FOOT_X = 0.14, FOOT_Z = 0.22, FOOT_T = 0.012, B = 0.003\n    const HEAD_H = 0.12, BEAM_H = 0.08, HEAD_X = 0.24, HEAD_Z = 0.09\n    const hw = width / 2\n    const beamBottom = s + c + HEAD_H\n    const top = beamBottom + BEAM_H\n    const win = s + c // the window's underside\n    const bb = (size, center, square) => g.bevelBox(size, center, B, square)\n    // a hex head standing on a face: `face` its coordinate along the axis, sg the side it stands out to\n    const hex = (axis, center, face, sg, af, h) => {\n      const a = sg > 0 ? face : face - h, b = sg > 0 ? face + h : face, r = af / Math.sqrt(3)\n      return g.lathe([[0, a], [r, a], [r, b], [0, b]], { axis, center, segments: 6, smooth: false })\n    }\n    const dark = []\n    const parts = []\n    for (const side of [-1, 1]) {\n      const cx = side * (hw + PW / 2)\n      parts.push({\n        desc: g.merge(\n          bb([PW, beamBottom - FOOT_T, PD], [cx, (FOOT_T + beamBottom) / 2, 0], ['y-', 'y+']),\n          bb([FOOT_X, FOOT_T, FOOT_Z], [cx, FOOT_T / 2, 0], ['y-']),\n        ),\n        material: 'housing', collision: 'box',\n      })\n      // the profile's T-slots, one down each face\n      const h0 = FOOT_T + 0.02, h1 = beamBottom - 0.01\n      for (const f of [-1, 1]) {\n        dark.push(g.box([0.0016, h1 - h0, 0.008], [cx + f * (PW / 2 + 0.0006), (h0 + h1) / 2, 0]))\n        dark.push(g.box([0.008, h1 - h0, 0.0016], [cx, (h0 + h1) / 2, f * (PD / 2 + 0.0006)]))\n        // two anchors through the foot plate, fore and aft of the profile\n        dark.push(g.box([0.03, 0.003, 0.03], [cx, FOOT_T + 0.0015, f * 0.08]))\n        dark.push(hex('y', [cx, 0, f * 0.08], FOOT_T + 0.003, 1, 0.02, 0.011))\n        dark.push(hex('y', [cx, 0, f * 0.08], FOOT_T + 0.014, 1, 0.011, 0.008))\n        // a corner bracket on each face where the column meets the beam, bolted into both\n        const ix = side * hw, zf = f * PD / 2\n        dark.push(g.extrude([[ix, beamBottom], [ix - side * 0.08, beamBottom], [ix, beamBottom - 0.08]], zf, zf + f * 0.004, { axis: 'z' }))\n        dark.push(hex('z', [ix - side * 0.052, beamBottom - 0.014, 0], zf + f * 0.004, f, 0.014, 0.006))\n        dark.push(hex('z', [ix - side * 0.014, beamBottom - 0.052, 0], zf + f * 0.004, f, 0.014, 0.006))\n      }\n      // the beam's end cap\n      dark.push(bb([0.008, BEAM_H - 0.006, PD - 0.006], [side * (hw + PW + 0.004), beamBottom + BEAM_H / 2, 0], [side > 0 ? 'x-' : 'x+']))\n    }\n    parts.push({ desc: bb([width + 2 * PW, BEAM_H, PD], [0, beamBottom + BEAM_H / 2, 0]), material: 'cap', colorParam: 'beamColor', collision: 'box' })\n    // the head: a finned housing on a bracket bolted up into the beam, a bezel round its window, and its cable\n    // leaving through a gland on top and running up into the beam\n    const bodyTop = beamBottom - 0.028\n    dark.push(bb([HEAD_X - 0.02, bodyTop - win - 0.012, HEAD_Z], [0, (win + 0.012 + bodyTop) / 2, 0]))\n    dark.push(bb([HEAD_X, 0.012, HEAD_Z + 0.006], [0, win + 0.016, 0]))\n    for (const f of [-1, 1]) {\n      for (let k = 0; k < 3; k++) dark.push(g.box([0.012, bodyTop - win - 0.04, 0.004], [f * (HEAD_X / 2 - 0.004), (win + 0.03 + bodyTop) / 2, -0.03 + k * 0.03]))\n      dark.push(hex('y', [f * 0.03, 0, f * 0.045], beamBottom, -1, 0.014, 0.006))\n    }\n    dark.push(bb([0.1, 0.028, 0.07], [0, bodyTop + 0.014, 0], ['y+']))\n    dark.push(g.lathe([[0, bodyTop], [0.011, bodyTop], [0.011, bodyTop + 0.012], [0.007, bodyTop + 0.012], [0, bodyTop + 0.012]], { axis: 'y', center: [0.075, 0, 0], segments: 6, smooth: false }))\n    dark.push(g.lathe([[0, bodyTop + 0.012], [0.005, bodyTop + 0.012], [0.005, beamBottom], [0, beamBottom]], { axis: 'y', center: [0.075, 0, 0], segments: 10 }))\n    // the beacon's collar on top of the beam\n    dark.push(g.lathe([[0, top], [0.037, top], [0.037, top + 0.008], [0, top + 0.008]], { axis: 'y', center: [0, 0, 0], segments: 20 }))\n    parts.push({ desc: g.merge(...dark), material: 'head' })\n    // the head's window, lit red while a case is under it: the scan line\n    parts.push({ desc: g.box([HEAD_X - 0.04, 0.01, HEAD_Z - 0.03], [0, win + 0.005, 0]), material: 'lens', lamps: [{ name: 'scan', emissive: [1, 0.05, 0.03] }] })\n    // the good-read beacon on top of the beam, over the head\n    parts.push({ desc: g.lathe([[0, 0], [0.03, 0], [0.03, 0.03], [0.02, 0.05], [0, 0.056]], { axis: 'y', center: [0, top, 0], segments: 16 }), material: 'lens', lamps: [{ name: 'read', emissive: [0.1, 1, 0.2] }] })\n    return parts\n  },\n  step(ctx) {\n    const inZone = ctx.zone('read')\n    // a read needs an unread CASE in the window (the window never counts a person) and the scan line on one not yet\n    // read. Marks land after the tick, so a case read this tick shows as marked from the next one: never read twice\n    const unread = inZone - ctx.marked('read', 'scanned')\n    const line = ctx.sense('scanLine')\n    if (unread > 0 && line.hit && !(line.marks && line.marks.scanned)) {\n      count += 1\n      pulse = PULSE\n      code = codeOf(line.marks ? line.marks[ctx.params.codeMark] : undefined)\n      ctx.markHit('scanLine', 'scanned', true)\n    } else if (pulse > 0) {\n      pulse = Math.max(0, pulse - ctx.dt)\n    }\n    const good = pulse > 0\n    ctx.lamps.scan = inZone > 0\n    ctx.lamps.read = good\n    if (ctx.params.readTag) ctx.writeTag(ctx.params.readTag, good)\n    if (ctx.params.countTag) ctx.writeNumber(ctx.params.countTag, count)\n    if (ctx.params.codeTag) ctx.writeNumber(ctx.params.codeTag, code)\n  },\n})\n",
+  "geometry": {
+    "kind": "rig",
+    "links": [
+      {
+        "name": "surface",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.8,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "surfaceHeight"
+          }
+        ]
+      },
+      {
+        "name": "read",
+        "parent": "surface",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          0,
+          0.3,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 1,
+            "param": "clearance",
+            "scale": 0.5
+          }
+        ],
+        "zone": {
+          "size": [
+            1,
+            0.6,
+            0.5
+          ],
+          "sizeParams": [
+            {
+              "axis": 0,
+              "param": "width"
+            },
+            {
+              "axis": 1,
+              "param": "clearance"
+            },
+            {
+              "axis": 2,
+              "param": "readDepth"
+            }
+          ]
+        }
+      },
+      {
+        "name": "scanLine",
+        "parent": "surface",
+        "shape": {
+          "kind": "frame"
+        },
+        "offset": [
+          -0.5,
+          0.05,
+          0
+        ],
+        "offsetParams": [
+          {
+            "axis": 0,
+            "param": "width",
+            "scale": -0.5
+          }
+        ],
+        "beam": {
+          "range": 1,
+          "rangeParam": "width",
+          "showParam": "showBeam",
+          "axis": [
+            1,
+            0,
+            0
+          ]
+        }
+      }
+    ],
+    "joints": [],
+    "bounds": {
+      "length": 1.17,
+      "width": 0.2,
+      "top": 1.66
+    }
+  },
+  "category": "Devices",
+  "materials": [
+    {
+      "id": "housing",
+      "color": [
+        0.479,
+        0.509,
+        0.539
+      ],
+      "metalness": 0.6,
+      "roughness": 0.35
+    },
+    {
+      "id": "head",
+      "color": [
+        0.06,
+        0.065,
+        0.075
+      ],
+      "metalness": 0.2,
+      "roughness": 0.5
+    },
+    {
+      "id": "cap",
+      "color": [
+        0.888,
+        0.508,
+        0.005
+      ],
+      "metalness": 0.1,
+      "roughness": 0.45
+    },
+    {
+      "id": "lens",
+      "color": [
+        0.18,
+        0.18,
+        0.18
+      ],
+      "metalness": 0,
+      "roughness": 0.3
+    }
+  ],
+  "sdk": {
+    "level": 6,
+    "of": "v2:12116:wofhd32f0p"
+  }
+}

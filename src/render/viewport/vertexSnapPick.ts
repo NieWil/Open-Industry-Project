@@ -9,7 +9,7 @@
 
 import { Matrix4, Mesh, MeshBasicMaterial, Plane, SphereGeometry, Vector2, Vector3 } from 'three'
 import type { Box3, BufferGeometry, InstancedMesh } from 'three'
-import { collisionVerticesLocal } from '../../core/collisionGeometry'
+import { collisionVerticesLocal } from '../../core/geometry/collisionGeometry'
 import type { Entry, RenderView } from './view'
 
 /** small sphere drawn at the vertex-snap source/target points (filled dots) */

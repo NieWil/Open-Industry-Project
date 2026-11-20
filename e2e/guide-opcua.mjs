@@ -7,7 +7,7 @@
 //
 //   step 1  the parts' Comms fields set through the Inspector, by name (Main.Eye, Main.Run, Main.Speed)
 //   step 2  the page's program typed into the PLC panel's code editor
-//   step 3  External PLC... from the palette; "Publish the program's variables" ticked; the port; the status line
+//   step 3  PLC Controllers... from the palette; "Publish the program's variables" ticked; the port; the status line
 //   step 4  the client connects to the page's endpoint, finds the server by the page's name, browses PLC / Main, and
 //           every variable has the NodeId, type and access the page's table gives
 //   step 5  before Play: out of service, a write refused; Play: good, the belt waits; Start: the belt runs and the

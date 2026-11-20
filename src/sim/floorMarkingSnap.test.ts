@@ -3,9 +3,9 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildPackage } from './buildPackage'
 import type { PackageManifest } from './buildPackage'
-import { validatePartPackage } from '../core/partPackage'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import { findSnap, type SnapPose } from '../core/snapFeatures'
+import { validatePartPackage } from '../core/parts/partValidate'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import { findSnap, type SnapPose } from '../core/snap/snapFeatures'
 import type { SdkPart } from '../core/types'
 
 // End-to-end test that the shipped SDK Floor Marking (oip.floor-marking) snaps edge-to-edge via the declarative

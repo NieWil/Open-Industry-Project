@@ -1,12 +1,15 @@
 import * as Y from 'yjs'
-import { sanitizeParents } from '../core/hierarchy'
-import { normalizePart } from '../core/scene'
+import { sanitizeParents } from '../core/scene/hierarchy'
+import { normalizePart } from '../core/scene/scene'
 import { PART_DEFS, SCENE_VERSION, toSimRate } from '../core/types'
 import { fromRoomEntry, toRoomEntry } from './roomAssets'
 import type { ParamSpec, ParamValue, PartInstance, PartType, SceneJSON, SdkPart, SimRate } from '../core/types'
-import { upgradeStoredPackage } from '../core/partPackage'
-import type { PartPackage } from '../core/partPackage'
+import { upgradeStoredPackage } from '../core/parts/partUpgrade'
+import type { PartPackage } from '../core/parts/partPackage'
 import { validateController } from '../core/controller'
+import { validateScenePlcs } from '../core/scene/scenePlcs'
+import { readSavedUnits } from '../core/scene/sceneUnits'
+import { readDisplayList } from '../core/scene/sceneDisplay'
 import type { Controller } from '../core/controller'
 import { storedDialect } from '../core/dialect'
 import { changedSpan } from '../core/textDiff'
@@ -194,25 +197,94 @@ export function writeStDoc(
   }, origin)
 }
 
-/** `meta` key holding the room's scene's unit system (SceneJSON.units). Unlike the step rate it IS part of the scene
- *  (a document edit, undoable), so docToScene reads it and a change to it rebuilds the scene like a part edit does
- *  (bridge.ts `movedScene`). Absent = imperial. */
+/** `meta` keys holding the room's scene's Units and Length (SceneJSON.units, .lengthUnit). Unlike the step rate they
+ *  ARE part of the scene (a document edit, undoable), so docToScene reads them and a change to either rebuilds the
+ *  scene like a part edit does (bridge.ts `movedScene`). Absent = metric, each length in its own unit. */
 export const UNITS_META = 'units'
+export const LENGTH_UNIT_META = 'lengthUnit'
 
-/** the room scene's unit system, as SceneJSON carries it (absent = imperial) */
-export function readUnits(ydoc: Y.Doc): SceneJSON['units'] {
-  const v = metaMap(ydoc).get(UNITS_META)
-  return v === 'metric' || v === 'imperial' ? v : undefined
+/** the room scene's Units and Length, as SceneJSON carries them (a room holding `'metric-mm'` reads as metric in mm) */
+export function readUnits(ydoc: Y.Doc): Pick<SceneJSON, 'units' | 'lengthUnit'> {
+  const meta = metaMap(ydoc)
+  return readSavedUnits(meta.get(UNITS_META), meta.get(LENGTH_UNIT_META))
 }
 
-/** write the room scene's unit system; a no-op when unchanged. Call inside the caller's transaction. */
-export function writeUnits(ydoc: Y.Doc, units: SceneJSON['units']): void {
-  if (readUnits(ydoc) === units) return
-  if (units === undefined) metaMap(ydoc).delete(UNITS_META)
-  else metaMap(ydoc).set(UNITS_META, units)
+/** write the room scene's Units and Length, each a no-op when unchanged. Both keys are written as given, so a room
+ *  that held `'metric-mm'` takes the two values it reads as. Call inside the caller's transaction. */
+export function writeUnits(ydoc: Y.Doc, scene: Pick<SceneJSON, 'units' | 'lengthUnit'>): void {
+  const meta = metaMap(ydoc)
+  for (const [key, v] of [[UNITS_META, scene.units], [LENGTH_UNIT_META, scene.lengthUnit]] as const) {
+    if (meta.get(key) === v) continue
+    if (v === undefined) meta.delete(key)
+    else meta.set(key, v)
+  }
 }
 
-/** `meta` key holding the room's scene's physics step rate (Hz; core/project.ts ProjectMachine.simHz). It sits beside the scene's version, not with the
+/** `meta` key holding the room's scene's controllers (SceneJSON.plcs, core/scene/scenePlcs.ts) as JSON. Part of the
+ *  scene like the Units: an edit, undoable, read by docToScene, and a change to it rebuilds the scene (bridge.ts). */
+export const PLCS_META = 'plcs'
+
+// the last list read from each room, by its text: every remote transaction re-reads the scene, and a new list each time
+// would re-derive the controller setup (store/storePlcs.ts plcSetupOf, keyed on the list) at a peer's drag rate
+const lastPlcs = new WeakMap<Y.Doc, { text: string; plcs: SceneJSON['plcs'] }>()
+
+/** the room scene's controllers, read like any other untrusted copy of them; absent when the room has none */
+export function readPlcs(ydoc: Y.Doc): SceneJSON['plcs'] {
+  const v = metaMap(ydoc).get(PLCS_META)
+  if (typeof v !== 'string') return undefined
+  const last = lastPlcs.get(ydoc)
+  if (last?.text === v) return last.plcs
+  let plcs: SceneJSON['plcs']
+  try {
+    plcs = validateScenePlcs(JSON.parse(v), [])
+  } catch {
+    plcs = undefined
+  }
+  lastPlcs.set(ydoc, { text: v, plcs })
+  return plcs
+}
+
+/** write the room scene's controllers; a no-op when unchanged. Call inside the caller's transaction. */
+export function writePlcs(ydoc: Y.Doc, plcs: SceneJSON['plcs']): void {
+  const text = plcs === undefined ? undefined : JSON.stringify(plcs)
+  if (metaMap(ydoc).get(PLCS_META) === text) return
+  if (text === undefined) metaMap(ydoc).delete(PLCS_META)
+  else metaMap(ydoc).set(PLCS_META, text)
+}
+
+/** `meta` key holding the room's scene's display list (SceneJSON.display, core/scene/sceneDisplay.ts) as JSON. Part of
+ *  the scene like the controllers: an edit, undoable, read by docToScene, and a change to it rebuilds the scene. */
+export const DISPLAY_META = 'display'
+
+// the last list read from each room, by its text, as lastPlcs: the same array while a peer drags, so Present and the
+// toolbar don't re-render on every remote transaction
+const lastDisplay = new WeakMap<Y.Doc, { text: string; display: SceneJSON['display'] }>()
+
+/** the room scene's display list, read like any other untrusted copy of it; absent when the room has none */
+export function readDisplay(ydoc: Y.Doc): SceneJSON['display'] {
+  const v = metaMap(ydoc).get(DISPLAY_META)
+  if (typeof v !== 'string') return undefined
+  const last = lastDisplay.get(ydoc)
+  if (last?.text === v) return last.display
+  let display: SceneJSON['display']
+  try {
+    display = readDisplayList(JSON.parse(v))
+  } catch {
+    display = undefined
+  }
+  lastDisplay.set(ydoc, { text: v, display })
+  return display
+}
+
+/** write the room scene's display list; a no-op when unchanged. Call inside the caller's transaction. */
+export function writeDisplay(ydoc: Y.Doc, display: SceneJSON['display']): void {
+  const text = display === undefined || display.length === 0 ? undefined : JSON.stringify(display)
+  if (metaMap(ydoc).get(DISPLAY_META) === text) return
+  if (text === undefined) metaMap(ydoc).delete(DISPLAY_META)
+  else metaMap(ydoc).set(DISPLAY_META, text)
+}
+
+/** `meta` key holding the room's scene's physics step rate (Hz; core/project/project.ts ProjectMachine.simHz). It sits beside the scene's version, not with the
  *  program: the rate is a property of the world, and every peer steps its own - so a room that did not
  *  carry it would have two people watching the same line behave differently. */
 export const SIM_HZ_META = 'simHz'
@@ -243,6 +315,24 @@ export function writeSimHz(ydoc: Y.Doc, hz: SimRate, origin: unknown = LOCAL_ORI
  * touched view-only until a build at least as new ships. `meta.version` (the scene format) is a different key, and unread.
  */
 export const ROOM_BUILD_META = 'build'
+
+/**
+ * The shared project's name (editor/project/sharedProject.ts), written by its owner, so everyone in the room sees what
+ * they are in by name rather than as a room. Absent in a room from before it was written.
+ */
+export const PROJECT_NAME_META = 'projectName'
+/** Its own origin, like a build claim's: an undo never takes the name back. */
+export const PROJECT_NAME_ORIGIN = Symbol('oip-collab-project-name')
+
+export function readProjectName(ydoc: Y.Doc): string | undefined {
+  const v = metaMap(ydoc).get(PROJECT_NAME_META)
+  return typeof v === 'string' && v.trim() !== '' ? v.slice(0, 200) : undefined
+}
+
+export function writeProjectName(ydoc: Y.Doc, name: string): void {
+  if (readProjectName(ydoc) === name) return
+  ydoc.transact(() => metaMap(ydoc).set(PROJECT_NAME_META, name), PROJECT_NAME_ORIGIN)
+}
 
 /** The origin a build claim is written in. Not LOCAL_ORIGIN, so this client's undo never takes a claim back. */
 export const ROOM_BUILD_ORIGIN = Symbol('oip-collab-room-build')
@@ -574,8 +664,11 @@ export function docToScene(ydoc: Y.Doc): SceneJSON {
   const packages = readPackages(ydoc)
   const scene: SceneJSON = { version: SCENE_VERSION, parts: reconcileBuildings(sanitizeParents(list)) }
   if (packages.length > 0) scene.packages = packages
-  const units = readUnits(ydoc)
-  if (units !== undefined) scene.units = units
+  Object.assign(scene, readUnits(ydoc))
+  const plcs = readPlcs(ydoc)
+  if (plcs !== undefined) scene.plcs = plcs
+  const display = readDisplay(ydoc)
+  if (display !== undefined) scene.display = display
   return scene
 }
 
@@ -597,6 +690,8 @@ export function sceneToDoc(scene: SceneJSON, ydoc: Y.Doc, origin: unknown = LOCA
     // its definition (not just its packageId reference)
     for (const pkg of scene.packages ?? []) writePackage(packages, pkg, { edited: edited?.has(pkg.id) })
     meta.set('version', scene.version)
-    writeUnits(ydoc, scene.units)
+    writeUnits(ydoc, scene)
+    writePlcs(ydoc, scene.plcs)
+    writeDisplay(ydoc, scene.display)
   }, origin)
 }

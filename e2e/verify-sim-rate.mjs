@@ -188,8 +188,8 @@ async function main() {
 
     // ── it belongs to the project's scene: kept in the project document (format 4: one scene, its rate beside it) and
     // in its scene file, per project, and across a reload ──
-    const saved = await page.evaluate(() => {
-      const doc = JSON.parse(localStorage.getItem('oip-web/project') ?? '{}')
+    const saved = await page.evaluate(async () => {
+      const doc = JSON.parse((await window.__oip.savedProject()) ?? '{}')
       return { project: doc.simHz, file: JSON.parse(window.__oip.sceneFileText()).simHz }
     })
     check('the project autosave carries the rate', saved.project === last, JSON.stringify(saved))

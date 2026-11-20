@@ -3,7 +3,10 @@ import type { Group, Material, Mesh, Object3D, Texture } from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { versionedAssetUrl } from '../../../core/assetVersions'
-import type { PartAsset, PartMaterial, RigShape } from '../../../core/partPackage'
+import type { PartAsset, PartMaterial, RigShape } from '../../../core/parts/partPackage'
+
+/** A mesh link's shape with the nodes other links of its asset draw (core/glbBox.ts drawnElsewhere). */
+export type CarvedMeshShape = Extract<RigShape, { kind: 'mesh' }> & { readonly drawnElsewhere?: readonly string[] }
 import { shippedFetchUrl } from '../../../core/shippedAssets'
 import { computeColliderBVH } from '../../bvh'
 import { dracoLoader } from '../../dracoDecoder'
@@ -220,7 +223,7 @@ export function buildMaterial(mat: PartMaterial, assets: readonly PartAsset[]): 
 // named node isn't in the GLB (the link stays visual-empty). Shared by attachMesh (one instance under the
 // link group) and the arrayed-mesh path (the instance becomes a template cloned per array delta - the EOAT
 // suction-cup grid).
-export function prepareMeshInstance(scene: Object3D, shape: Extract<RigShape, { kind: 'mesh' }>, material: Material | undefined, perMaterial: Map<string, Material> | undefined, siblingNodes: Set<string>): Object3D | null {
+export function prepareMeshInstance(scene: Object3D, shape: CarvedMeshShape, material: Material | undefined, perMaterial: Map<string, Material> | undefined, siblingNodes: Set<string>): Object3D | null {
   // `node` selects one node of an articulated GLB; else the whole scene. A named node that isn't in the
   // GLB → nothing (the link stays visual-empty).
   const source = shape.node ? scene.getObjectByName(shape.node) : scene
@@ -261,6 +264,11 @@ export function prepareMeshInstance(scene: Object3D, shape: Extract<RigShape, { 
       inst.add(n) // n now sits in the fitted frame, alone
     }
   }
+  // nodes another link of this asset keeps are drawn by that link (core/glbBox.ts drawnElsewhere)
+  for (const name of shape.drawnElsewhere ?? []) {
+    const o = inst.getObjectByName(name)
+    if (o && o.name !== shape.keepNode) o.removeFromParent()
+  }
   const remap = (mat: Material): Material => (mat.name && perMaterial?.get(mat.name)) || mat
   inst.traverse((o) => {
     const m = o as Mesh
@@ -281,7 +289,7 @@ export function prepareMeshInstance(scene: Object3D, shape: Extract<RigShape, { 
 // name (the data-driven form of a built-in's per-material recolour). `perMaterial` wins when both are present.
 // `onPrepared` sees the finished instance just before it is attached: the seam the caller uses to tag the
 // loaded subtree (rig.ts pool opt-in), which can't be done at call time because the GLB resolves later.
-export function attachMesh(group: Group, visualRoot: Group, shape: Extract<RigShape, { kind: 'mesh' }>, assets: readonly PartAsset[], material: Material | undefined, perMaterial: Map<string, Material> | undefined, siblingNodes: Set<string>, onPrepared?: (inst: Object3D) => void): void {
+export function attachMesh(group: Group, visualRoot: Group, shape: CarvedMeshShape, assets: readonly PartAsset[], material: Material | undefined, perMaterial: Map<string, Material> | undefined, siblingNodes: Set<string>, onPrepared?: (inst: Object3D) => void): void {
   const asset = assets.find((a) => a.id === shape.asset)
   if (!asset) return
   void loadMeshAsset(asset)

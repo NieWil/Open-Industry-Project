@@ -111,7 +111,7 @@ definePart({
     if (p.solid !== false) mp.collision = 'hull'
     return [mp]
   },
-  step() {
+  react() {
     // inert scenery — no tags, no motion
   },
 })

@@ -1,6 +1,6 @@
 // Live analog setpoints: what the running ST program is actually commanding into a part's number params.
 //
-// A conveyor's `speedTag` replaces its `speed` param in the behavior - `comms && tag ? readNumber(tag) :
+// A conveyor's `speedTag` replaces its `speed` param in the behavior - `tag ? readNumber(tag) :
 // params.speed` - so while the scene runs, the Inspector's authored `speed` is a number nothing obeys: a
 // program commanding 0.5 leaves the field reading 1. This module is the host-visible half of that rule
 // (the analog twin of pilot.ts's `partUseInAuto` for boolean command tags): it walks the package's `'tag'`
@@ -11,13 +11,13 @@
 // Resolution mirrors sim/plcHost.interleave exactly, so what the field shows is what the part read: the
 // program's variable image, looked up by the tag the part's param names.
 //
-// The gate is running, not program-attached: a bound setpoint is consulted whenever
-// comms are on, so with no program (or a program that never declares the tag) the behavior reads an unset
+// The gate is running, not program-attached: a bound setpoint is consulted whenever it names a tag (and,
+// on a custom part with a comms switch, the switch is on), so with no program (or a program that never declares the tag) the behavior reads an unset
 // tag, which is 0. The conveyor then sits still while the Inspector would show the authored speed. That is
 // the same wrong readout, so an empty tag table resolves to 0 here rather than falling back.
 // Stopped, nothing is commanding anything and the authored params rule again.
 
-import { getPackage } from '../../core/partRegistry'
+import { getPackage } from '../../core/parts/partRegistry'
 import type { SdkPart, PartInstance } from '../../core/types'
 import type { TagValue } from '../../plc'
 import type { EditorController } from '../controller'

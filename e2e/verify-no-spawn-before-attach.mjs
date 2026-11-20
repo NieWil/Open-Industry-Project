@@ -1,8 +1,8 @@
 // No spawner may emit while its own gate tag reads shut. This checks when the world starts stepping.
 //
 // `setDrivenTags` and `runProgram` are posted to the sim worker after `start`. If a world starts stepping
-// as soon as it is built, it runs its first behavior tick with an empty driven set. Every comms part resolves its
-// mode as `enableComms && tagDriven(tag) ? readTag(tag) : <authored state>`, so for that one frame each part
+// as soon as it is built, it runs its first behavior tick with an empty driven set. Every wired part resolves its
+// mode as `tagDriven(tag) ? readTag(tag) : <authored state>`, so for that one frame each part
 // reads its authored state instead of the program's. For a conveyor that is one frame of motion nobody sees.
 // For a spawner it is a body that stays in the scene. The demo's pallet magazine was gated on PalletFeed, so
 // "not driven yet" read as "not held", and it dispensed a pallet into the finished load on the build deck on
@@ -80,7 +80,7 @@ async function main() {
 
     // every comms-gated spawner in the scene, read off the scene rather than typed here
     const spawners = await page.evaluate(() => window.__oip.store.getState().scene.parts
-      .filter((p) => (p.packageId === 'oip.box-spawner' || p.packageId === 'oip.pallet-spawner') && p.params?.enableComms && p.params?.runTag)
+      .filter((p) => (p.packageId === 'oip.box-spawner' || p.packageId === 'oip.pallet-spawner') && p.params?.runTag)
       .map((p) => ({ name: p.name ?? p.packageId, tag: p.params.runTag, x: p.position[0], y: p.position[1], z: p.position[2] })))
     console.log(`comms-gated spawners: ${spawners.map((s) => `${s.name}[${s.tag}]`).join(', ') || '(none)'}`)
     // Only one: the demo's pallets come from a dispenser fed by a supply truck, which releases authored stock

@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_FORMAT, validatePartPackage } from '../../core/partPackage'
-import type { PartPackage } from '../../core/partPackage'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
+import { validatePartPackage } from '../../core/parts/partValidate'
+import type { PartPackage } from '../../core/parts/partPackage'
 import { buildAuthoredCargoFrame, CARGO_KIND_BOX, CARGO_KIND_PALLET, cargoView } from '../../core/frame'
-import { registerPackage } from '../../core/partRegistry'
-import { instantiatePartScript } from '../../core/partScript'
+import { registerPackage } from '../../core/parts/partRegistry'
+import { instantiatePartScript } from '../../core/parts/partScript'
 import type { SdkPart } from '../../core/types'
 import { PALLET_SIZE } from '../../core/types'
-import { partFootprint } from '../../core/partGeometry'
+import { partFootprint } from '../../core/parts/partGeometry'
 import { examplePart, type CargoGeo } from './examplePart'
 
 // The cargo Box + Pallet, authored on the part SDK's cargo geometry kind (C-cargo,

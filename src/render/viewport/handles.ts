@@ -11,12 +11,12 @@ import {
   Vector3,
 } from 'three'
 import type { PerspectiveCamera, Ray, Raycaster } from 'three'
-import { beltPathFromParams, beltSegmentFrames, defaultBeltSegments, sampleBeltPathExt } from '../../core/beltPath'
-import { guardArcRange, openingAt, openingsOnSide, rowsToOpeningSpecs } from '../../core/guardOpeningEdit'
-import type { GuardWall } from '../../core/guardOpeningEdit'
+import { beltPathFromParams, beltSegmentFrames, defaultBeltSegments, sampleBeltPathExt } from '../../core/conveyor/beltPath'
+import { guardArcRange, openingAt, openingsOnSide, rowsToOpeningSpecs } from '../../core/guards/guardOpeningEdit'
+import type { GuardWall } from '../../core/guards/guardOpeningEdit'
 import { OVERLAY_LAYER } from '../env'
 import {
-  beltLikeView,
+  bedView,
   curvedGizmoOf,
   flexPathOf,
   curvedHandleLocal,
@@ -25,13 +25,13 @@ import {
   isBeltLike,
   isTailOriginConveyor,
   partFootprint,
+  rectangleBedOf,
   resizeHandleMidY,
   resolveInclineRad,
-  straightConveyorView,
   toLocalXZ,
   toWorldXZ,
-} from '../../core/partGeometry'
-import type { CurvedGizmo } from '../../core/partGeometry'
+} from '../../core/parts/partGeometry'
+import type { CurvedGizmo } from '../../core/parts/partGeometry'
 import { GUARD_HEIGHT } from '../../core/types'
 import type { BeltGuardOpeningSpec, BeltSegmentSpec, PartInstance } from '../../core/types'
 import type { BoxResizeHandle, CurveResizeHandle, FlexResizeHandle, GuardOpeningHandle, ResizeHandle, ScreenProjector } from '../api'
@@ -115,7 +115,7 @@ function sameHandle(a: ResizeHandle, b: ResizeHandle): boolean {
 
 /** normalized belt segments for any belt-like part (built-in or a declared-`path`-handle SDK part) */
 function beltSegmentsOf(part: PartInstance): BeltSegmentSpec[] {
-  return beltLikeView(part)?.segments ?? defaultBeltSegments()
+  return bedView(part, 'path')?.segments ?? defaultBeltSegments()
 }
 
 /** local +Y face the resize box presents for sign (top = y1, bottom = y0) */
@@ -423,8 +423,8 @@ export class ResizeHandles {
   private layoutOpeningCubes(part: PartInstance): boolean {
     const range = guardArcRange(part)
     if (!range) return false
-    const view = beltLikeView(part)
-    const straight = view ? null : straightConveyorView(part)
+    const view = bedView(part, 'path')
+    const straight = view ? null : rectangleBedOf(part)
     if (!view && !straight) return false
     // local (plan-X, elevation, slope) of a row value, per family, and the values the wall polyline samples
     let sample: (s: number) => { x: number; y: number; angle: number }

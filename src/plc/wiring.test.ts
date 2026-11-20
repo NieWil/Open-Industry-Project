@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearPackages, registerPackage } from '../core/partRegistry'
-import type { PartPackage } from '../core/partPackage'
-import { LocalPlcLink } from './plcLink'
+import { clearPackages, registerPackage } from '../core/parts/partRegistry'
+import type { PartPackage } from '../core/parts/partPackage'
+import { LocalPlcLink } from './link/plcLink'
 import { unhandledProgramTags } from './bindings'
 import { checkWiring, type WiringPart, wiredBindings } from './wiring'
-import { PACKAGE_FORMAT } from '../core/partPackage'
+import { PACKAGE_FORMAT } from '../core/parts/partPackage'
 
 // The wiring check reads the declared signal on each tag param (dir + stType) - so unlike the
 // direction-blind walk in bindings.ts it can tell a driver from a reader, and catch the plumbing
@@ -77,6 +77,30 @@ PE := TRUE;`)
     expect(report.problems.map((p) => p.kind)).toContain('contested')
   })
 
+  it("reads the program's value table once, however many tags are wired", () => {
+    registerPackage(SENSOR)
+    const program = new LocalPlcLink(`VAR
+  A : BOOL;
+  B : BOOL;
+  C : INT;
+END_VAR`)
+    // a link builds its whole table on each read
+    let reads = 0
+    const link = {
+      inputs: program.inputs,
+      outputs: program.outputs,
+      aliases: program.aliases,
+      get watch() {
+        reads++
+        return program.watch
+      },
+    }
+    const report = checkWiring(scene(part('s1', 't.sensor', { tag: 'A' }), part('s2', 't.sensor', { tag: 'B' }), part('s3', 't.sensor', { tag: 'C' })), link)
+    expect(reads).toBe(1)
+    // and the type check it feeds still runs: a BOOL sensor on an INT variable
+    expect(report.problems.some((p) => p.tag === 'C')).toBe(true)
+  })
+
   it('flags one tag declared as two different ST types', () => {
     registerPackage(SENSOR)
     registerPackage(COUNTER)
@@ -107,6 +131,24 @@ Q := Level > 3;`)
     const undriven = report.problems.find((p) => p.kind === 'undriven')
     expect(undriven).toMatchObject({ severity: 'warning', tag: 'NotYetWritten' })
     expect(report.problems.every((p) => p.severity === 'warning')).toBe(true)
+  })
+
+  it('says what an undriven setpoint costs: the part runs on 0 in place of the param it replaces', () => {
+    registerPackage(pkg('t.drive', {
+      speed: { type: 'number', default: 1, label: 'Speed (m/s, − reverses)' },
+      speedTag: { type: 'tag', dir: 'in', stType: 'REAL', setpointFor: 'speed', default: '' },
+      runTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '' },
+      stopTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '' },
+    }))
+    const report = checkWiring(scene(part('d1', 't.drive', { speedTag: 'Rate', runTag: 'Go', stopTag: 'Halt' })))
+    const msg = (tag: string) => report.problems.find((p) => p.kind === 'undriven' && p.tag === tag)?.message
+    expect(msg('Rate')).toContain('so d1 uses 0 in place of its Speed (m/s)')
+    // a gate read only while driven: undriven, the part runs on its own setting, so it does not read 0
+    expect(msg('Go')).toContain('d1 ignores it and runs on its own setting')
+    expect(msg('Go')).not.toContain('zero value')
+    // one read whenever it names a tag does read 0, and replaces no param
+    expect(msg('Halt')).toContain('it stays at its zero value')
+    expect(msg('Halt')).not.toContain('in place of')
   })
 
   it('warns on a published tag nobody reads, and stays quiet once the program reads it', () => {
@@ -174,8 +216,8 @@ describe('checkWiring: a part wired to a direct address', () => {
     registerPackage(SENSOR)
     const report = checkWiring(scene(part('c1', 't.conveyor', { runTag: '%IX0.1' }), part('s1', 't.sensor', { tag: '%QX0.0' })))
     expect(report.problems.map((p) => [p.kind, p.parts, p.message])).toEqual([
-      ['address', ['c1'], "c1.runTag: this part is driven by the value, so it is the PLC's output: a %Q address (%QX0.1), not %IX0.1"],
-      ['address', ['s1'], "s1.tag: this part publishes the value, so it is the PLC's input: an %I address (%IX0.0), not %QX0.0"],
+      ['address', ['c1'], "c1 (runTag): this part is driven by the value, so it is the PLC's output: a %Q address (%QX0.1), not %IX0.1"],
+      ['address', ['s1'], "s1 (tag): this part publishes the value, so it is the PLC's input: an %I address (%IX0.0), not %QX0.0"],
     ])
   })
 
@@ -343,5 +385,65 @@ describe('a word inside a double word', () => {
       ),
     )
     expect(overlaps(r)).toEqual([])
+  })
+})
+
+describe('a tag on another controller', () => {
+  // `Cell2::%IX0.0` (core/io/controllerTag.ts): its address and its writers are checked, but not against the program
+  // here, which does not run it
+  const PROGRAM = new LocalPlcLink(`VAR_INPUT
+  PE : BOOL;
+END_VAR
+VAR_OUTPUT
+  Motor : BOOL;
+END_VAR
+Motor := PE;`)
+
+  it('checks the address behind the name, and keys it canonically', () => {
+    registerPackage(SENSOR)
+    registerPackage(CONVEYOR)
+    const r = checkWiring(scene(part('s', 't.sensor', { tag: 'Cell2::%i0.0' }), part('c', 't.conveyor', { runTag: 'Cell2::%IX0.1' })))
+    // a tag with an address error is left out of the tags, as on the default controller
+    expect(r.tags.map((t) => t.name)).toEqual(['Cell2::%IX0.0'])
+    expect(r.problems).toEqual([expect.objectContaining({ kind: 'address', tag: 'Cell2::%IX0.1' })])
+    expect(r.problems[0]!.message).toMatch(/a %Q address \(%QX0\.1\)/)
+  })
+
+  it('is not undriven or unread by the program, and the program does not miss it', () => {
+    registerPackage(SENSOR)
+    registerPackage(CONVEYOR)
+    const parts = scene(part('s', 't.sensor', { tag: 'PE' }), part('c', 't.conveyor', { runTag: 'Motor' }), part('s2', 't.sensor', { tag: 'Cell2::PE' }), part('c2', 't.conveyor', { runTag: 'Cell2::Motor' }))
+    expect(checkWiring(parts, PROGRAM).problems).toEqual([])
+    expect(unhandledProgramTags(parts, PROGRAM)).toEqual({ unbound: [], unwired: [] })
+    // the program's own PE and Motor bind; Cell2's do not
+    expect(wiredBindings(parts, { inputs: [], outputs: [], bindable: ['PE', 'Motor'] })).toEqual({ inputs: ['PE'], outputs: ['Motor'] })
+  })
+
+  it('lets two controllers use the same address, and still catches two writers on one', () => {
+    registerPackage(SENSOR)
+    const r = checkWiring(scene(part('a', 't.sensor', { tag: '%IX0.0' }), part('b', 't.sensor', { tag: 'Cell2::%IX0.0' }), part('c', 't.sensor', { tag: 'Cell3::%IX0.0' }), part('d', 't.sensor', { tag: 'Cell3::%IX0.0' })))
+    const contested = r.problems.filter((p) => p.kind === 'contested')
+    expect(contested.map((p) => p.tag)).toEqual(['Cell3::%IX0.0'])
+  })
+
+  it('finds a word inside a double word within one controller, not across two', () => {
+    registerPackage(COUNTER)
+    const across = checkWiring(scene(part('a', 't.counter', { countTag: '%ID100' }), part('b', 't.counter', { countTag: 'Cell2::%IW201' })))
+    expect(across.problems.filter((p) => p.kind === 'overlap')).toEqual([])
+    const within = checkWiring(scene(part('a', 't.counter', { countTag: 'Cell2::%ID100' }), part('b', 't.counter', { countTag: 'Cell2::%IW201' })))
+    expect(within.problems.filter((p) => p.kind === 'overlap').map((p) => p.tag)).toEqual(['Cell2::%IW201'])
+  })
+
+  it('refuses a prefix that is not a controller name', () => {
+    registerPackage(SENSOR)
+    const r = checkWiring(scene(part('s', 't.sensor', { tag: '2nd::Eye' })))
+    expect(r.problems).toEqual([expect.objectContaining({ severity: 'error', kind: 'controller', tag: '2nd::Eye' })])
+    expect(r.tags).toEqual([])
+  })
+
+  it('reports one controller spelled two ways, since the sim matches tags exactly', () => {
+    registerPackage(SENSOR)
+    const r = checkWiring(scene(part('a', 't.sensor', { tag: 'Cell2::%IX0.0' }), part('b', 't.sensor', { tag: 'cell2::%IX0.1' })))
+    expect(r.problems).toEqual([expect.objectContaining({ severity: 'error', kind: 'controller', tag: 'cell2', parts: ['b'] })])
   })
 })

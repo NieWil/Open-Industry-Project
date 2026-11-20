@@ -1,8 +1,8 @@
 // A building's static colliders - its perimeter walls (open dock doors cut out) and the interior column grid - as
 // boxes; SimWorld adds each as a static body at the building's yaw.
-import { DOCK_OPENING_HALF_WIDTH, openDockOpenings } from '../core/buildingDocks'
-import { INTERIOR_COLUMN_SIZE, interiorColumns } from '../core/buildingColumns'
-import { toWorldXZ } from '../core/partGeometry'
+import { DOCK_OPENING_HALF_WIDTH, openDockOpenings } from '../core/building/buildingDocks'
+import { INTERIOR_COLUMN_SIZE, interiorColumns } from '../core/building/buildingColumns'
+import { toWorldXZ } from '../core/parts/partGeometry'
 import { buildingEaveHeight, BUILDING_SECTION_SIZE, BUILDING_WALL_THICKNESS } from '../core/types'
 import type { BuildingPart } from '../core/types'
 
@@ -14,6 +14,26 @@ export interface YawBox {
   x: number
   y: number
   z: number
+}
+
+/**
+ * Half the side of the square ground slab: the default ground, or wider when a building's footprint reaches past
+ * it. A building draws its own floor at any size, so its floor has to hold what stands on it there too. A scene
+ * whose buildings fit keeps the default slab, so its physics does not change.
+ */
+export function groundHalfExtent(parts: readonly { type: string; position: readonly number[]; rotationY: number; params?: unknown }[], base: number): number {
+  let half = base
+  for (const p of parts) {
+    if (p.type !== 'building') continue
+    const b = p as unknown as BuildingPart
+    const hl = (b.params.lengthSections * BUILDING_SECTION_SIZE) / 2 + BUILDING_WALL_THICKNESS
+    const hw = (b.params.widthSections * BUILDING_SECTION_SIZE) / 2 + BUILDING_WALL_THICKNESS
+    for (const [lx, lz] of [[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw]] as const) {
+      const c = toWorldXZ(b, lx, lz)
+      half = Math.max(half, Math.abs(c.x) + 1, Math.abs(c.z) + 1)
+    }
+  }
+  return half
 }
 
 /** a building's colliders: four static perimeter walls + the interior column grid, each yawed like the part (visibility
@@ -31,7 +51,7 @@ export function buildingBoxes(part: BuildingPart): YawBox[] {
     { lx: -length / 2, lz: 0, hx: t / 2, hz: width / 2 + t / 2 },
     { lx: length / 2, lz: 0, hx: t / 2, hz: width / 2 + t / 2 },
   ]
-  // an open dock door is a hole in its wall (core/buildingDocks.ts): a load goes through it, as it does for the
+  // an open dock door is a hole in its wall (core/building/buildingDocks.ts): a load goes through it, as it does for the
   // walking character, whose walls are the drawn ones. A shut door stays solid wall.
   const open = openDockOpenings(part)
   for (const w of walls) {
@@ -53,7 +73,7 @@ export function buildingBoxes(part: BuildingPart): YawBox[] {
       if (g !== null) from = g + DOCK_OPENING_HALF_WIDTH
     }
   }
-  // the interior column grid (core/buildingColumns.ts): floor-to-eave solids, the same stations the view draws
+  // the interior column grid (core/building/buildingColumns.ts): floor-to-eave solids, the same stations the view draws
   const half = INTERIOR_COLUMN_SIZE / 2
   for (const col of interiorColumns(part)) {
     const c = toWorldXZ(part, col.x, col.z)

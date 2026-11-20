@@ -9,7 +9,7 @@
 // The non-trivial semantics (width-correct shifts/rotates, rounding conversions) live as
 // shared helpers in runtime.ts, so "shown" and "executed" call the exact same code.
 
-import { bcdToInt, bool, calendarValue, conv, idiv, intToBcd, isBitString, isCalendar, isInt, isReal, isString, isTime, num, rol, ror, shl, shr, str, strDelete, strFind, strInsert, strLeft, strMid, strReplace, strRight, widen, wrap } from './runtime'
+import { bcdToInt, bool, calendarValue, conv, idiv, intToBcd, isBitString, isCalendar, isInt, isInt32, isReal, isString, isTime, num, rol, ror, shl, shr, str, strDelete, strFind, strInsert, strLeft, strMid, strReplace, strRight, widen, wrap } from './runtime'
 import { SCALAR_TYPES, StError } from './types'
 import type { ScalarType, SourcePos, TagValue } from './types'
 
@@ -234,7 +234,7 @@ function needNum(name: string, t: ScalarType, pos: SourcePos): ScalarType {
 }
 
 /**
- * ADD, SUB, MUL and DIV over durations and dates: exactly the operators' rules (checker.ts
+ * ADD, SUB, MUL and DIV over durations and dates: exactly the operators' rules (checkExpr.ts
  * `inferTimeBinary`, and `calendarOperatorType` above), so `ADD(tod, t)` and `tod + t` cannot disagree.
  * ADD chains left to right; a duration scales by a plain number, and nothing else mixes with one.
  */
@@ -515,7 +515,11 @@ export function evalBuiltin(name: string, rt: ScalarType, args: TagValue[]): Tag
     case 'REPLACE': return strReplace(str(args[0]!), str(args[1]!), num(args[2]!), num(args[3]!))
     case 'CONCAT': return args.map(str).join('')
     case 'SEL': return bool(args[0]!) ? args[2]! : args[1]!
-    case 'MUX': return args[1 + num(args[0]!)] ?? 0
+    case 'MUX': {
+      // a selector past the inputs, either way, answers 0
+      const k = num(args[0]!)
+      return k >= 0 && k < args.length - 1 ? args[1 + k]! : 0
+    }
     // the REAL math set: computed in f64 then rounded to the REAL result type's f32,
     // which is what a single-precision FPU produces
     case 'SQRT': return coerceNum(rt, Math.sqrt(num(args[0]!)))
@@ -541,7 +545,10 @@ export function evalBuiltin(name: string, rt: ScalarType, args: TagValue[]): Tag
   const va = VARIADIC_ARITH[name]
   if (va) {
     const vals = args.map(num)
-    const x = va === '+' ? vals.reduce((a, b) => a + b) : vals.reduce((a, b) => a * b)
+    // step by step, as `a + b + c` is: an integer wraps and a REAL rounds to f32 after each step, and a 32-bit
+    // product goes through Math.imul, as the `*` operator takes it (runtime.ts isInt32)
+    const step = isCalendar(rt) ? (x: number): number => x : (x: number): number => wrap(rt, x)
+    const x = va === '+' ? vals.reduce((a, b) => step(a + b)) : isInt32(rt) ? vals.reduce((a, b) => Math.imul(a | 0, b | 0)) : vals.reduce((a, b) => step(a * b))
     return isCalendar(rt) ? calendarValue(rt, x) : coerceNum(rt, x)
   }
   if (BINARY_ARITH[name]) {
@@ -640,7 +647,9 @@ export function emitBuiltin(name: string, rt: ScalarType, a: string[]): string {
     case 'MOVE': return `(${a[0]})`
   }
   const va = VARIADIC_ARITH[name]
-  if (va) return isCalendar(rt) ? dated(a.join(` ${va} `)) : w(a.join(` ${va} `))
+  if (va === '*' && isInt32(rt)) return w(a.reduce((x, y) => `Math.imul(${x} | 0, ${y} | 0)`))
+  // an integer wraps and a REAL rounds after each step, as `a + b + c` does (evalBuiltin)
+  if (va) return isCalendar(rt) ? dated(a.join(` ${va} `)) : a.reduce((x, y) => w(`${x} ${va} ${y}`))
   if (BINARY_ARITH[name]) {
     if (name === 'SUB') return isCalendar(rt) ? dated(`${a[0]} - ${a[1]}`) : w(`${a[0]} - ${a[1]}`)
     if (isTime(rt)) return `idiv(${a[0]}, ${a[1]})`

@@ -4,10 +4,10 @@ import { keymapRev, subscribeKeymap } from '../../core/keymap'
 import type { IRenderView } from '../../render/api'
 import { withKeys } from '../keyHint'
 import type { EditorController } from '../controller'
-import type { EditorState, EditorStore } from '../store'
-import { isOtherDocumentSlot, SCENE_SLOT, sceneSlotKey, slotDocumentId } from '../documentStore'
-import { canCreateProject, createNewProject, openProjectById } from '../newProject'
-import { leaveDemo } from '../sceneFile'
+import type { EditorState, EditorStore } from '../store/store'
+import { isOtherDocumentSlot, SCENE_SLOT, sceneSlotKey, slotDocumentId } from '../project/documentStore'
+import { canCreateProject, createNewProject, openProjectById } from '../project/newProject'
+import { leaveDemo } from '../project/sceneFile'
 import {
   clearTutorialProgress,
   consumeTourOnBoot,
@@ -203,11 +203,15 @@ export function TutorialOverlay({ store, state, controller, view }: TutorialOver
     if (canCreateProject(store)) {
       markTourOnBoot()
       // i18n-ok: the new project's name, which also names its folder
-      void createNewProject(store, 'Tutorial').then((error) => {
-        if (error === null) return // reloading into it
+      const failed = (error: string): void => {
         consumeTourOnBoot()
         alert(error)
-      })
+      }
+      void createNewProject(store, 'Tutorial')
+        .then((error) => {
+          if (error !== null) failed(error) // null: reloading into it
+        })
+        .catch((e: unknown) => failed(e instanceof Error ? e.message : String(e)))
       return
     }
     if (s.readOnly) return
@@ -321,11 +325,18 @@ export function TutorialOverlay({ store, state, controller, view }: TutorialOver
           // the run up at its step. If it cannot be opened (deleted since), the run is dropped and starts over.
           const doc = slotDocumentId(saved.sceneId)
           if (doc !== null && isOtherDocumentSlot(saved.sceneId) && canCreateProject(store)) {
-            void openProjectById(store, doc).then((error) => {
-              if (error === null) return // reloading into it
+            const failed = (): void => {
               clearTutorialProgress()
               beginFreshRun()
-            })
+            }
+            void openProjectById(store, doc)
+              .then((error) => {
+                if (error !== null) failed() // null: reloading into it
+              })
+              .catch((e: unknown) => {
+                console.warn('[oip] reopening the tutorial project failed', e)
+                failed()
+              })
             return
           }
           // its scene is gone from this project: dropped, and a fresh run

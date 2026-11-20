@@ -75,7 +75,7 @@ const unique = [...new Set(files)]
 
 // A file a project's manifest names is part of that project's PROGRAM: format 7 keeps one file per POU, listed in
 // order by the manifest's `program`, and a POU may use a type or block another file declares, so the files are checked
-// as the app runs them - joined in that order (core/projectFolder.ts joinProgramFiles) - and each diagnostic is
+// as the app runs them - joined in that order (core/project/projectFolder.ts joinProgramFiles) - and each diagnostic is
 // reported at the file and line it was written at. A program may be written for a dialect this version does not
 // have (`stDialect`, core/dialect.ts): it is refused with the reason, never checked as IEC. The NEAREST project.json
 // above a file decides, and only when it names the file; a loose file, or one no manifest names, is checked alone as
@@ -145,7 +145,7 @@ try {
   const { compile, diagnostics } = await vite.ssrLoadModule('/src/plc/index.ts')
   const { StError } = await vite.ssrLoadModule('/src/plc/types.ts')
   const { dialectRefusal, isKnownDialect } = await vite.ssrLoadModule('/src/core/dialect.ts')
-  const { joinProgramFiles, programFileOffset } = await vite.ssrLoadModule('/src/core/projectFolder.ts')
+  const { joinProgramFiles, programFileOffset } = await vite.ssrLoadModule('/src/core/project/projectFolder.ts')
 
   // repo-relative where possible (clickable in an editor); absolute for anything outside it, since a "../../../.."
   // chain is worse than the real path

@@ -138,7 +138,7 @@ async function main() {
     const [A, B] = convs
 
     // A placed part carries no explicit `name`; the tree shows a derived label
-    // ("Roller Conveyor", "Roller Conveyor 2"; see core/partDisplayName.ts), which depends on
+    // ("Roller Conveyor", "Roller Conveyor 2"; see core/parts/partDisplayName.ts), which depends on
     // sibling order. Name them so each row is addressable by an exact, stable string.
     await page.evaluate(([a, b]) => {
       window.__oip.store.rename(a, 'Conveyor A')

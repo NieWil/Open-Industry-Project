@@ -286,7 +286,6 @@ export function bundleRecordSerial(): number {
  * freezes the camera (e2e/probes/bundle-probe.mjs) because the camera is only in shared uniform
  * groups, and Bindings._update gates shared-group uploads on a version no replay frame bumps, so the
  * camera bytes are never uploaded even with a forced refresh. bundleReplayRefresh.ts bypasses that gate.
- * (pipelineDedup was ruled out: the freeze reproduces with it disabled.)
  *
  * Fallback cost: a re-record frame is ~one normal unbundled encode (the HUD's draw calls returning
  * while orbiting); parked-camera frames replay at ~zero encode either way.

@@ -1,4 +1,4 @@
-// When may a retired rig shape kind (RETIRED_SHAPE_KINDS in src/core/partPackage.ts) be deleted for good?
+// When may a retired rig shape kind (RETIRED_SHAPE_KINDS in src/core/parts/partUpgrade.ts) be deleted for good?
 //
 // A retired kind keeps LOADING (its links are dropped) for a grace period, because saved scenes, project libraries
 // and collab rooms embed a copy of every package they use. Deleting the entry turns such a save from "loads without
@@ -64,7 +64,7 @@ const vite = await createServer({
 })
 let RETIRED_SHAPE_KINDS, RETIRED_KIND_GRACE_MONTHS, packagesMap
 try {
-  ;({ RETIRED_SHAPE_KINDS, RETIRED_KIND_GRACE_MONTHS } = await vite.ssrLoadModule('/src/core/partPackage.ts'))
+  ;({ RETIRED_SHAPE_KINDS, RETIRED_KIND_GRACE_MONTHS } = await vite.ssrLoadModule('/src/core/parts/partUpgrade.ts'))
   ;({ packagesMap } = await vite.ssrLoadModule('/src/collab/schema.ts'))
 } finally {
   await vite.close()

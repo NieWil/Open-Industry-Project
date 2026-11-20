@@ -3,8 +3,8 @@
 // only what it reads; the press gesture drives the placement session (./placement.ts), so it takes what that needs
 // plus the pointer and viewport it tracks (CatalogPlaceDeps).
 
-import { createSdkPart, createPart } from '../../core/scene'
-import { getPackage } from '../../core/partRegistry'
+import { createSdkPart, createPart } from '../../core/scene/scene'
+import { getPackage } from '../../core/parts/partRegistry'
 import { PART_DEFS } from '../../core/types'
 import type { PartInstance, PartType } from '../../core/types'
 import { assetsBusy, runSpeculativeWarm, whenAssetsQuiet } from '../../render/gltf'
@@ -136,6 +136,24 @@ export function endCatalogPlace(press: CatalogPress, ec: CatalogPlaceDeps, clien
   }
   ec.placement.preview = null
   ec.store.cancelPlacing() // a drag is one-shot, unlike click-to-place
+}
+
+/**
+ * Place one copy of a package at a screen point, as a card dragged there and released does: a part file dropped on
+ * the viewport lands where it was dropped. False when the point gives no placement.
+ */
+export function placePackageAt(ec: CatalogPlaceDeps, packageId: string, clientX: number, clientY: number): boolean {
+  if (ec.readOnly) return false
+  const r = ec.container.getBoundingClientRect()
+  if (clientX < r.left || clientX > r.right || clientY < r.top || clientY > r.bottom) return false
+  ec.placement.pendingPackageId = packageId
+  ec.surfaceAlignAxis = 1
+  ec.store.startPlacing('part', packageId) // opens the placement session (controller onStoreChange)
+  const spot = placementOps.computePlacing(ec.placement, ec, 'part', clientX, clientY, false)
+  if (spot) placementOps.placePart(ec.placement, ec, 'part', spot)
+  ec.placement.preview = null
+  ec.store.cancelPlacing()
+  return spot !== null
 }
 
 export function cancelCatalogPlace(press: CatalogPress, ec: CatalogPlaceDeps): void {

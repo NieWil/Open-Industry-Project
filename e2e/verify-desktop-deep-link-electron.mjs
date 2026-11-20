@@ -1,4 +1,4 @@
-// A browser link opens the desktop app in a room (apps/desktop/deepLink.cjs, src/editor/desktopLink.ts).
+// A browser link opens the desktop app in a room (apps/desktop/deepLink.cjs, src/editor/desktop/desktopLink.ts).
 //
 // The OS's half - the installer registering `openindustry://` - only an installed app can show, so this drives what
 // the OS does with a click instead: it starts the app with the link on its command line, or, with the app already

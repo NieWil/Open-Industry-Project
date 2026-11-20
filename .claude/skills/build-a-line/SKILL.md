@@ -28,7 +28,8 @@ skill is the procedure only.
 | Hand off to a real PLC | `assign_io`, `get_io_list` | `npm run assign-io -- <folder>`, `-- <folder> --export` |
 | Check | `get_problems` | `npm run check-wiring -- <folder> --strict`, `npm run check-layout -- <folder> --strict` |
 | Test | `run_test`, `save_test` | `npm run test-project -- <folder>` (exit 1 = a check failed, 3 = could not run) |
-| See what happened | `capture_view`, `run` + `trace_tags` / `get_cargo` | `npm run check-flow -- <folder>`, `test-project --cargo 5,10` |
+| See what happened | `capture_view`, `run` + `trace_tags` / `get_cargo` (live, wall-clock); at a known sim time, `run_test` with `cargo` and `trace` | `npm run check-flow -- <folder>`, `test-project --cargo 5,10` |
+| Files written in the folder | `sync_folder` (loads them now, says what loaded and whether that stopped the run) | (none: the CLIs read the folder) |
 
 A line needs a part the catalog lacks: that is the `make-a-part` skill. Look at what you built (`capture_view`)
 before you call it done: a test cannot see a sensor mounted on the wrong side or a model floating above its stand.
@@ -62,7 +63,8 @@ pose or param skips both.
 ## 3. Test so that a wrong program fails
 
 - Assert what happened physically, not only the tags. Use `passed` probes with a `color` filter for "boxes went
-  down this lane", and `count` with `always` + `max: 0` for "nothing ever reached the floor".
+  down this lane", and `count` with `always` + `max: 0` for "nothing ever reached the floor". On a divert or a turn,
+  a `square` probe with `always` + `max` on the middle of each spur checks the cases ride it square, not skewed.
 - Prefer windows (`from` / `until`), tag-against-tag checks (`"max": {"tag": "Sorted1"}`) and `notEquals` over an
   exact count at an exact time. An exact count breaks when an unrelated change moves an arrival by a tenth of
   a second.

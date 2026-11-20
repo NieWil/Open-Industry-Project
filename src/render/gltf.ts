@@ -31,10 +31,15 @@ const bitmapLoader = new ImageBitmapLoader()
  * What a texture should sample as when its image never arrives. An image-less Texture is not "no
  * map": three binds its empty default and the surface samples black. Without a fallback, one dropped
  * request would turn the warehouse floor black under a lifted cover, since the gate settles on failure by design. A
- * neutral 1x1 degrades to "untextured but correctly lit".
+ * neutral 2x2 degrades to "untextured but correctly lit".
  *
- * The neutral value is per channel: white for albedo, but black for emissive (or the fixture glows)
+ * The neutral value is per channel: mid grey for albedo, black for emissive (or the fixture glows)
  * and flat +Z for normals.
+ *
+ * 2x2, not 1x1: three's WebGPU backend caches a texture's GPU view under a key of its size and mip count
+ * (WebGPUBindingUtils.createBindGroup) and never clears that cache when the empty 1x1 default is replaced by
+ * the real upload. A 1x1 single-mip fallback gets the default's key, binds the default's view, and samples black
+ * for the session whenever the failure lands after the surface first drew (docs/three-coupling.md).
  *
  * Apply it only after the fetch has definitively failed. Never use it as a placeholder before the image
  * arrives: three's WebGPU backend sizes a GPUTexture from the first image uploaded, so a 1x1
@@ -56,18 +61,18 @@ const FALLBACK_HEX: Record<TextureFallback, string> = {
 
 const fallbackImages = new Map<TextureFallback, HTMLCanvasElement>()
 
-/** a cached 1x1 canvas of the neutral colour; null where there is no DOM (node unit tests) */
+/** a cached 2x2 canvas of the neutral colour; null where there is no DOM (node unit tests) */
 function fallbackImage(kind: TextureFallback): HTMLCanvasElement | null {
   if (typeof document === 'undefined') return null
   let img = fallbackImages.get(kind)
   if (!img) {
     const canvas = document.createElement('canvas')
-    canvas.width = 1
-    canvas.height = 1
+    canvas.width = 2
+    canvas.height = 2
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
     ctx.fillStyle = FALLBACK_HEX[kind]
-    ctx.fillRect(0, 0, 1, 1)
+    ctx.fillRect(0, 0, 2, 2)
     img = canvas
     fallbackImages.set(kind, img)
   }
@@ -411,8 +416,11 @@ function scheduleSettle(): void {
   queueMicrotask(() => {
     settleScheduled = false
     if (buildingLoads.length === 0 && coverOnlyLoads.length === 0) return
-    // the gate waits for the shell only; the cover additionally waits for cover-only scenery
+    // the gate waits for the shell only; the cover additionally waits for cover-only scenery. Neither chain can
+    // reject: allSettled never does, and openGate / settleCover are promise resolvers.
+    // eslint-disable-next-line oip/no-unhandled-then
     if (buildingLoads.length > 0) void Promise.allSettled(buildingLoads).then(() => openGate())
+    // eslint-disable-next-line oip/no-unhandled-then
     void Promise.allSettled([...buildingLoads, ...coverOnlyLoads]).then(() => settleCover())
   })
 }

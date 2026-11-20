@@ -65,9 +65,9 @@ async function loadScene(page) {
       version: st.getState().scene.version,
       parts: [
         { id: 'belt', type: 'part', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0,
-          params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, enableComms: true, runTag: 'Main.Run' } },
+          params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, runTag: 'Main.Run' } },
         { id: 'box', type: 'part', packageId: 'oip.box', position: [0.6, 1.0, 0], rotationY: 0, params: { length: 0.4, width: 0.3, height: 0.3 } },
-        { id: 'eye', type: 'part', packageId: 'oip.diffuse-sensor', position: [3, 0.75, -0.6], rotationY: 0, params: { maxRange: 1.2, enableComms: true, tag: 'Main.Eye' } },
+        { id: 'eye', type: 'part', packageId: 'oip.diffuse-sensor', position: [3, 0.75, -0.6], rotationY: 0, params: { maxRange: 1.2, tag: 'Main.Eye' } },
       ],
       packages: need,
     }))
@@ -121,7 +121,7 @@ try {
   const id = (name) => variables.find((v) => v.path.join('.') === `PLC.Main.${name}`)?.nodeId
   expect(id('Start') === 'ns=1;s=Main.Start', `a variable's NodeId is its name (${id('Start')})`)
   const types = await client.describe([id('Start'), id('Eye'), id('Speed')])
-  expect(JSON.stringify(types) === JSON.stringify([{ dataType: 'ns=0;i=1', access: 3 }, { dataType: 'ns=0;i=1', access: 1 }, { dataType: 'ns=0;i=10', access: 3 }]), `types and access follow the declarations, the eye the scene feeds read-only (${JSON.stringify(types)})`)
+  expect(JSON.stringify(types) === JSON.stringify([{ dataType: 'ns=0;i=1', builtin: 1, access: 3 }, { dataType: 'ns=0;i=1', builtin: 1, access: 1 }, { dataType: 'ns=0;i=10', builtin: 10, access: 3 }]), `types and access follow the declarations, the eye the scene feeds read-only (${JSON.stringify(types)})`)
   let r = await client.exchange([{ nodeId: id('Start'), builtin: 1, value: true }], [id('Eye')])
   expect(r.reads?.[0]?.status === 'BadOutOfService' && r.writes?.[0] === 'BadInvalidState', `stopped, a read is out of service and a write refused (${JSON.stringify(r)})`)
   await page.waitForFunction(() => window.__oip.controller.opcUaServerStatus.clients.length === 1, null, { timeout: 5000, polling: 100 })

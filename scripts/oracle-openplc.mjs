@@ -179,10 +179,10 @@ async function loadOurs() {
     const m = async (p) => vite.ssrLoadModule(p)
     return {
       ...(await m('/src/plc/conformanceCases.ts')),
-      ...(await m('/src/plc/export.ts')),
-      ...(await m('/src/plc/exportText.ts')),
-      ...(await m('/src/plc/importText.ts')),
-      ...(await m('/src/plc/importXml.ts')),
+      ...(await m('/src/plc/exchange/export.ts')),
+      ...(await m('/src/plc/exchange/exportText.ts')),
+      ...(await m('/src/plc/exchange/importText.ts')),
+      ...(await m('/src/plc/exchange/importXml.ts')),
       ...(await m('/src/plc/interpreter.ts')),
       ...(await m('/src/plc/scanEngine.ts')),
       ...(await m('/src/plc/checker.ts')),

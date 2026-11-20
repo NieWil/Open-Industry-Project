@@ -3,9 +3,9 @@
 // A listing's text (names, descriptions) is written by its publisher: it is handed over marked as data, never as
 // instructions.
 
-import { libraryCredit, libraryStatus, offeredVersion } from '../../core/partLibrary'
-import { downloadVersion, installFromLibrary, readLibrary } from '../partLibraries'
-import { libraryUrls } from '../partLibraryUrls'
+import { libraryCredit, libraryStatus, offeredVersion } from '../../core/parts/partLibrary'
+import { downloadVersion, installFromLibrary, readLibrary } from '../parts/partLibraries'
+import { libraryUrls } from '../parts/partLibraryUrls'
 import { AgentToolError, assertEditable, optBool, optStr, str } from './toolKit'
 import type { AgentTool } from './toolKit'
 

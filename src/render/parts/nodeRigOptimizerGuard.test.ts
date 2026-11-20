@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { PartAsset, PartPackageGeometry } from '../../core/partPackage'
+import type { PartAsset, PartPackageGeometry } from '../../core/parts/partPackage'
 
 // Guards a prod-only bug. A custom-part rig whose links reference GLB nodes (shape.kind:'mesh' with a
 // `node`) is rendered by sdkPart.prepareMeshInstance, which resets each such node's transform to identity

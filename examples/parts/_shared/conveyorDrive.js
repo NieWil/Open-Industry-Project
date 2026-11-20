@@ -44,7 +44,7 @@ export function driveFeedbackParams(speedMs, group) {
     velocityTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Velocity tag (30 at the speed above)', ...g, desc: 'Drive feedback the program reads: the effective speed as a share of the speed at 30 revolutions, times 30. Stopped reads 0, and a run tag holding the conveyor still counts as stopped.' },
     inchesPerPulse: { type: 'number', default: 1, min: 0.05, max: 100, step: 0.05, label: 'Travel per pulse (in)', ...g, desc: 'How far the surface travels between pulses on the pulse tag. A pulse cannot be finer than one simulation step, so a fast conveyor at a fine pitch needs a higher project simHz.' },
     pulseTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Pulse tag (one per pitch)', ...g, desc: 'An encoder for the program to count: TRUE for one simulation step each time the surface has travelled the inches above, in either direction, and FALSE otherwise.' },
-    encoderTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Encoder tag (travel, m)', ...g, desc: 'Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station.' },
+    encoderTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Encoder tag (travel)', unit: 'm', ...g, desc: 'Odometer of surface travel in metres, integrated on sim time: it climbs while the conveyor runs forward and counts back while it reverses. Latch it when a photo-eye sees a box, then act once it has advanced a known distance - the standard way to track product without a sensor at every station.' },
   }
 }
 
@@ -58,14 +58,14 @@ export function conveyorDrive() {
   }
 }
 
-/** In step(): the unit the conveyor is set up in and the commanded speed, `{ comms, fpm, setpointTag, commanded }`.
+/** In step(): the unit the conveyor is set up in and the commanded speed, `{ fpm, setpointTag, commanded }`.
  *  `commanded` is always m/s, so everything after this call is m/s. */
-export function commandedSpeed(ctx, comms) {
+export function commandedSpeed(ctx) {
   const fpm = ctx.params.fpmUnits === true
   const setpointTag = fpm ? ctx.params.speedFpmTag : ctx.params.speedTag
   const unit = fpm ? FPM_MS : 1
-  const commanded = (comms && setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * unit
-  return { comms, fpm, setpointTag, commanded }
+  const commanded = (setpointTag ? ctx.readNumber(setpointTag) : fpm ? ctx.params.speedFpm : ctx.params.speed) * unit
+  return { fpm, setpointTag, commanded }
 }
 
 /** In step(), after commandedSpeed(): the speed the surface actually runs at (m/s), `target` (the command, gates
@@ -80,7 +80,7 @@ export function rampedSpeed(ctx, drive, cmd, target) {
   if (!drive.rampStarted) {
     drive.rampStarted = true
     // no program commands this conveyor: its authored speed is a belt that is running, not one being started
-    if (!(cmd.comms && (cmd.setpointTag || (ctx.params.runTag && ctx.tagDriven(ctx.params.runTag))))) drive.driven = want
+    if (!(cmd.setpointTag || (ctx.params.runTag && ctx.tagDriven(ctx.params.runTag)))) drive.driven = want
   }
   if (want * drive.driven < 0) { if (ctx.params.decelTime > 0) want = 0; else drive.driven = 0 } // reversing: stop first
   const rampTime = Math.abs(want) > Math.abs(drive.driven) ? ctx.params.accelTime : ctx.params.decelTime
@@ -90,16 +90,23 @@ export function rampedSpeed(ctx, drive, cmd, target) {
 
 /** In step(): the velocity feedback, the pulse and the encoder, from the effective speed `v` (m/s). */
 export function publishDrive(ctx, drive, cmd, v) {
-  const comms = cmd.comms
   // the velocity as a share of the speed at 30
   const at30 = cmd.fpm ? ctx.params.speedAt30Fpm * FPM_MS : ctx.params.speedAt30
-  if (comms && ctx.params.velocityTag) ctx.writeNumber(ctx.params.velocityTag, at30 > 0 ? (v / at30) * 30 : 0)
+  if (ctx.params.velocityTag) ctx.writeNumber(ctx.params.velocityTag, at30 > 0 ? (v / at30) * 30 : 0)
   // the encoder pulse
   const pitch = ctx.params.inchesPerPulse > 0 ? ctx.params.inchesPerPulse : 1
   drive.pulseTravel += (Math.abs(v) * ctx.dt) / 0.0254
   const pulse = drive.pulseTravel >= pitch - 1e-9 // (a hair of tolerance: twelve twelfths of an inch do not sum to exactly one)
   if (pulse) drive.pulseTravel = Math.max(0, drive.pulseTravel - pitch * Math.max(1, Math.floor(drive.pulseTravel / pitch + 1e-9)))
-  if (comms && ctx.params.pulseTag) ctx.writeTag(ctx.params.pulseTag, pulse)
+  if (ctx.params.pulseTag) ctx.writeTag(ctx.params.pulseTag, pulse)
   drive.odo += v * ctx.dt
-  if (comms && ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)
+  if (ctx.params.encoderTag) ctx.writeNumber(ctx.params.encoderTag, drive.odo)
+}
+
+/** In react(), last: ask for the next tick while the drive has work of its own. It has while it ramps toward
+ *  `target` (the command, gates applied, as handed to rampedSpeed), and while it runs with a pulse or an encoder tag
+ *  to count travel on. A conveyor at its commanded speed with neither waits for a tag to change, and its surface
+ *  keeps the speed it was last given. */
+export function driveAgain(ctx, drive, target) {
+  if (drive.driven !== target || (drive.driven !== 0 && (ctx.params.pulseTag || ctx.params.encoderTag))) ctx.again()
 }

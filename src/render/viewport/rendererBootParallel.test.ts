@@ -40,7 +40,6 @@ describe('createWebGPURenderer keeps its chunk loads parallel', () => {
     // path would silently lose its factories, so assert the set is still requested somewhere.
     for (const mod of [
       'three/webgpu',
-      './pipelineDedup',
       './projectionStats',
       '../parts/metalNodeMaterial',
       '../parts/beltNodeMaterial',

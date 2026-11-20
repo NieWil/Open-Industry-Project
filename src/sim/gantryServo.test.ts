@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { servoJointsJson, type PartPackageGeometry } from '../core/partPackage'
+import { rigJointsJson, type PartPackageGeometry } from '../core/parts/partPackage'
 import { create, destroy, stepDirect, type BehaviorOutput } from './embeddedBehavior'
 
 // The shipped gantry on its three servo axes, driven the way a PLC drives it: tags in, tags out, one tick at a time.
@@ -11,7 +11,7 @@ const geometry = Object.values(RIGS)[0]!.geometry
 const source = Object.values(SOURCES)[0]!
 
 const DT = 1 / 60
-const TAGS = { enableComms: true, executeTag: 'Exe', commandTag: 'Cmd', doneTag: 'Done', faultTag: 'Fault', targetXTag: 'TX', targetYTag: 'TY', targetZTag: 'TZ', actualXTag: 'AX', actualYTag: 'AY', actualZTag: 'AZ' }
+const TAGS = { executeTag: 'Exe', commandTag: 'Cmd', doneTag: 'Done', faultTag: 'Fault', targetXTag: 'TX', targetYTag: 'TY', targetZTag: 'TZ', actualXTag: 'AX', actualYTag: 'AY', actualZTag: 'AZ' }
 
 class Gantry {
   private h: number
@@ -19,12 +19,13 @@ class Gantry {
   out!: BehaviorOutput
   trace: Array<[number, number, number]> = []
   constructor(params: Record<string, unknown>) {
-    this.h = create(source, JSON.stringify(params), servoJointsJson(geometry))
+    this.h = create(source, JSON.stringify(params), rigJointsJson(geometry))
     expect(this.h).toBeGreaterThan(0)
   }
   tick(n = 1): this {
     for (let i = 0; i < n; i++) {
-      const out = stepDirect(this.h, { tags: { ...this.tags } }, DT)
+      // every tag the test sets stands for a program driving it (an enable tag counts only while driven)
+      const out = stepDirect(this.h, { tags: { ...this.tags }, driven: { ...this.tags } }, DT)
       expect(out).not.toBeNull()
       this.out = out!
       for (const [k, v] of Object.entries(out!.tags)) this.tags[k] = v
@@ -46,9 +47,11 @@ class Gantry {
 }
 
 describe('gantry on servos', () => {
-  it('with comms off the drives stay off and it holds home', () => {
-    const g = new Gantry({}).tick(120)
+  it('with no tags named it holds home, on its authored idle vacuum', () => {
+    const g = new Gantry({ vacuumOn: true }).tick(120)
     expect(g.pose).toEqual([0, 0, 0])
+    expect(g.out.grips.gripper).toBe(true)
+    expect(g.out.lamps.vacuumLamp).toBe(true)
     g.dispose()
   })
 

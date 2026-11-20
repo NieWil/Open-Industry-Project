@@ -81,7 +81,7 @@ describe('classifyBundleObject - the active-frame dirty-list buckets', () => {
   })
 
   it('a side guard is an ordinary per-part draw: its beam holes are geometry, not scene-global uniforms', () => {
-    // The holes are drawn geometry (core/guardHoles.ts), so a guard refreshes only when its own part changes and
+    // The holes are drawn geometry (core/guards/guardHoles.ts), so a guard refreshes only when its own part changes and
     // stays out of the always-active bucket. A leftover tag must not matter.
     const guard = partMesh()
     ;(guard.mesh.material as MeshStandardMaterial).userData.guardBeams = true

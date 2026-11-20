@@ -1,13 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Mesh, MeshStandardMaterial, Object3D, Quaternion, Vector3 } from 'three'
-import { clearPackages, registerPackage } from '../../core/partRegistry'
-import type { PartPackage } from '../../core/partPackage'
+import { clearPackages, registerPackage } from '../../core/parts/partRegistry'
+import type { PartPackage } from '../../core/parts/partPackage'
 import type { SdkPart } from '../../core/types'
 import { ROLLER_MODEL_RADIUS } from './common'
 import { createCustomVisual, rigRollerSpinRadius } from './sdkPart'
 import { examplePart, type RigGeo } from './examplePart'
-import { evalPartGeometry } from '../../core/geometryEval'
-import { PACKAGE_FORMAT } from '../../core/partPackage'
+import { evalPartGeometry } from '../../core/geometry/geometryEval'
+import { PACKAGE_FORMAT } from '../../core/parts/partPackage'
 
 const pkg = (length: number, width: number): PartPackage => ({
   format: PACKAGE_FORMAT,
@@ -124,6 +124,24 @@ describe('createCustomVisual (rig geometry)', () => {
     v.dispose()
   })
 
+  it('resetRunPose drops the run\'s subPoses, so a refresh after Stop lays the link at rest', () => {
+    // a jointless rig driven only by setSubPose (a sorter's shoes): applyJoints({}) has nothing to clear
+    registerPackage(rigPkg())
+    const part = rigPart()
+    const v = createCustomVisual(part)
+    const arm = findLink(v.object, 'arm')!
+    const rest = arm.position.toArray()
+    ;(v.object.userData.applySubPoses as (p: Record<string, { position?: [number, number, number] }>) => void)({ arm: { position: [1, 2, 3] } })
+    v.update(part)
+    expect(arm.position.toArray()).toEqual([1, 2, 3]) // a refresh alone keeps the run's last subPose
+    const before = v.object.userData.poseRev as number
+    ;(v.object.userData.resetRunPose as () => void)()
+    v.update(part)
+    expect(arm.position.toArray()).toEqual(rest)
+    expect(v.object.userData.poseRev as number).toBeGreaterThan(before)
+    v.dispose()
+  })
+
   // the matrix freeze (viewMatrices.ts) keeps every rig frozen and relies on these self-reports to know
   // when to re-bake - a mutator that moves transforms without bumping poseRev renders stale
   it('applyJoints bumps the visual poseRev (frozen-subtree self-invalidation)', () => {
@@ -159,6 +177,14 @@ describe('createCustomVisual (rig geometry)', () => {
     registerPackage(rigPkg({ posable: true }))
     const v = createCustomVisual(rigPart())
     expect((v.object.userData.robotGizmo as { rig?: boolean } | undefined)?.rig).toBe(true)
+    v.dispose()
+  })
+
+  it('reads a sliding joint of the idle pose in metres, as Capture Pose writes it', () => {
+    const pose = { type: 'numberList', rows: 1, arity: 1, default: [[0]], label: 'Idle pose' }
+    registerPackage(rigPkg({ posable: true, joints: [{ name: 'lift', link: 'arm', type: 'prismatic', axis: [0, 1, 0], min: 0, max: 1 }] }, { params: { pose } }))
+    const v = createCustomVisual({ ...rigPart(), params: { pose: [[0.5]] } })
+    expect(findLink(v.object, 'arm')!.position.y).toBeCloseTo(0.3 + 0.5)
     v.dispose()
   })
 
@@ -421,5 +447,55 @@ describe('rigRollerSpinRadius (SDK roller visual spin rate)', () => {
   it('a rig with no roller links falls back to the GLB native radius (a "roller"-role mesh keeps native scale)', () => {
     const geo = rig([{ name: 'deck', shape: { kind: 'box', size: [3, 0.04, 1] }, offset: [0, -0.02, 0] }])
     expect(rigRollerSpinRadius(geo, {})).toBe(ROLLER_MODEL_RADIUS)
+  })
+})
+
+// A posable conveying array's belt look (a cross-belt sorter's carriers): a `finish: 'belt'` submesh on the array is
+// drawn as belt fabric whose copies scroll at their own copy's belt speed, through the shared fabric-bank shader.
+describe('conveying copies: per-copy belt fabric', () => {
+  // the belt weave is an <img> the browser decodes; node has none, and nothing here needs its pixels
+  beforeEach(() => {
+    vi.stubGlobal('Image', class { src = ''; addEventListener(): void {} })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+  const BELT_BEHAVIOR = `definePart({
+    params: { length: { type: 'number', default: 2 } },
+    geometry(g) { return [{ desc: g.box([0.6, 0.01, 0.4], [0, 0.05, 0]), finish: 'belt', link: 'carrier' }] },
+    step() {},
+  })`
+  const register = (): void => {
+    registerPackage({
+      format: PACKAGE_FORMAT,
+      id: 'test.belts',
+      name: 'Belts',
+      params: { length: { type: 'number', default: 2 } },
+      behavior: BELT_BEHAVIOR,
+      geometry: {
+        kind: 'rig',
+        links: [{ name: 'carrier', shape: { kind: 'frame' }, offset: [0, 0, 0], collision: { box: [0.6, 0.1, 0.4] }, conveys: true, array: { pitch: { axis: 0, spanParam: 'length', pitch: 1 }, posable: true } }],
+        joints: [],
+      },
+    } as PartPackage)
+  }
+  const rates = (v: ReturnType<typeof createCustomVisual>): number[] => {
+    let bank: { geometry: { getAttribute(n: string): { array: ArrayLike<number> } }; count: number } | null = null
+    v.object.traverse((o) => { if ((o as { userData: { beltFabricBank?: boolean } }).userData.beltFabricBank) bank = o as never })
+    const b = bank!
+    const a = b.geometry.getAttribute('fabricScroll').array
+    return Array.from({ length: b.count }, (_, i) => a[i * 2 + 1]!)
+  }
+
+  it("each copy's belt scrolls at its own speed while running, and every belt stops on Stop", () => {
+    register()
+    const v = createCustomVisual({ id: 'cp_1', type: 'part', packageId: 'test.belts', position: [0, 0, 0], rotationY: 0, params: {} } as SdkPart)
+    const ud = v.object.userData as { applyCopySpeeds: (s: Record<string, number[]>) => void; tick: (dt: number, running: boolean) => void; resetRunPose: () => void }
+    expect(rates(v)).toEqual([0, 0]) // two copies at rest
+    ud.applyCopySpeeds({ carrier: [0, 1.5] })
+    ud.tick(1 / 60, true)
+    expect(rates(v)).toEqual([0, -1.5]) // copy 1 runs (the weave walks back so the pattern moves along +u); copy 0 holds
+    ud.resetRunPose()
+    ud.tick(1 / 60, false)
+    expect(rates(v)).toEqual([0, 0])
+    v.dispose()
   })
 })

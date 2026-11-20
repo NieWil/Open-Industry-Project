@@ -83,7 +83,8 @@ separately, since every placed part runs its own copy of the script.
 
 A part folder contains `manifest.json` and `behavior.js`. The manifest describes the
 geometry, rig links and joints, assets and materials, and what the part is to the host: the
-kind of conveyor it is (`conveyor`), the boolean that switches its PLC link (`commsParam`),
+kind of conveyor it is (`conveyor`), an optional boolean that switches its PLC link (`commsParam`; without one, each
+tag field that names a tag is connected),
 how it connects to other parts (`snap`), the cargo it stores (`holds`), and, for a project's
 copy of a part from elsewhere, where it came from (`origin`). It's typed as `PackageManifest` in
 `manifest.d.ts` (also exported from the package root), and each shape kind has its own

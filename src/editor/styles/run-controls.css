@@ -16,12 +16,29 @@
   color: #fff;
 }
 
+/* Play, Pause and Stop as one .segmented group. Their fills touch, so a border in the toolbar's own colour
+   draws the seam between two colours (and is invisible on the outer edge). */
+.run-transport > .run-button {
+  border: 1px solid var(--panel);
+}
+
 .run-button.play {
   background: #2e8b46;
 }
 
 .run-button.play:hover:not(:disabled) {
   background: #36a253;
+}
+
+/* while watching a live run, Play leaves it for a copy of one's own: offered, not the loudest thing on the bar */
+.run-transport > .run-button.play.watching {
+  background: var(--panel);
+  color: #2e8b46;
+  box-shadow: inset 0 0 0 1px #2e8b46;
+}
+
+.run-transport > .run-button.play.watching:hover:not(:disabled) {
+  background: light-dark(#e6f3e9, #1f3326);
 }
 
 /* Light greys dark enough for the white glyph to clear 3:1 (#7d848d is ~3.8:1; #b2b7be would be ~2:1) */
@@ -89,6 +106,18 @@
 
 .run-button.speed.short:hover:not(:disabled),
 .run-button.speed.boosted.short:hover:not(:disabled) {
+  background: #9d6e17;
+}
+
+/* Off 1x while an external PLC runs the logic: the PLC keeps real time, so the same amber says its timing no
+   longer matches the sim (Toolbar.tsx plcClock) */
+.run-button.speed.boosted.plc-clock {
+  background: #8a6114;
+  border-color: transparent;
+  color: #fff;
+}
+
+.run-button.speed.boosted.plc-clock:hover:not(:disabled) {
   background: #9d6e17;
 }
 
@@ -171,7 +200,7 @@
 }
 
 /* The external PLC link's state beside Play and Stop (PlcLinkStatus.tsx): a chip with a dot, only while Play hands the
-   scene to a PLC. Its popover hangs under it, the points it serves and the way to Controller Properties. */
+   scene to a PLC. A click opens Controller Properties. */
 .plc-link {
   position: relative;
   display: flex;
@@ -208,6 +237,52 @@
 
 .plc-link-dot.bad {
   background: #ff6b5e;
+}
+
+/* The running program's forced variables (ForcesStatus.tsx): the same chip, in the warning colour */
+.plc-link-dot.forced {
+  background: var(--warn);
+}
+
+/* loud on purpose: a force left on is the costliest commissioning mistake, so the chip must not read as one more
+   grey control beside the speed button */
+.toolbar .plc-forces-button,
+.plc-forces-button {
+  background: light-dark(#f2c94c, #e6b800);
+  border-color: light-dark(#c9a227, #b38f00);
+  color: #1f2023;
+  font-weight: 600;
+}
+.toolbar .plc-forces-button:hover,
+.plc-forces-button.active {
+  background: light-dark(#e8bd35, #f0c419);
+}
+.plc-forces-button .plc-link-dot.forced {
+  background: currentColor;
+}
+
+.plc-forces-list {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+}
+
+.plc-forces-row {
+  display: contents;
+}
+
+.plc-forces-wired {
+  display: block;
+  color: var(--text-dim);
+  font: 11px ui-sans-serif, system-ui, sans-serif;
+}
+
+.plc-forces-name,
+.plc-forces-value {
+  font: 12px ui-monospace, monospace;
+  overflow-wrap: anywhere;
 }
 
 .plc-link-note {

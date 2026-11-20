@@ -1,20 +1,24 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
-import { effectivelyHiddenSet, orderedTree, subtreeIds } from '../../core/hierarchy'
+import { effectivelyHiddenSet, orderedTree, subtreeIds } from '../../core/scene/hierarchy'
 import { PART_DEFS } from '../../core/types'
 import type { SdkPart, PartDef, PartInstance } from '../../core/types'
-import { getPackage, packageCategory } from '../../core/partRegistry'
-import { partDisplayNames } from '../../core/partDisplayName'
+import { getPackage } from '../../core/parts/partRegistry'
+import { isStandardCategory, packageCategory } from '../../core/parts/partCategory'
+import { partDisplayNames } from '../../core/parts/partDisplayName'
 import { resolveKeyAction } from '../../core/keymap'
+import { keyBelongsToTarget } from '../dialogHost'
 import { runCommand, runCommandOn } from '../commands'
 import { preloadBehaviorEditor } from './behaviorEditorChunk'
 import { flattenRigForest, jointRange, rigGeometryOf, shapeLabel } from '../rigTree'
-import { sceneUnits } from '../../core/sceneUnits'
-import type { RigJoint, RigLink } from '../../core/partPackage'
-import { partLinkOwnership } from '../../core/rigPose'
-import type { EditorState, EditorStore } from '../store'
-import { rigNodeKey } from '../store'
+import { sceneDisplayUnits } from '../../core/scene/sceneUnits'
+import type { RigJoint, RigLink } from '../../core/parts/partPackage'
+import { partLinkOwnership } from '../../core/rig/rigPose'
+import type { EditorState, EditorStore } from '../store/store'
+import { rigNodeKey } from '../store/store'
 import type { EditorController } from '../controller'
+import { controllerBadges } from '../program/controllerBadges'
+import { partsWithForces, usePlcForces } from '../program/plcForces'
 import { matchesTreeFilter, sessionDefinitionScope } from '../treeNode'
 import type { TreeNodeSource } from '../treeNode'
 import { SceneTreeMenu } from './SceneTreeMenu'
@@ -25,11 +29,16 @@ import { ChevronIcon, PencilIcon, SceneIcon, ScriptIcon, TreeGlyph } from './too
 import type { TreeGlyphKind } from './toolbarIcons'
 import { defineMessages, t } from '../../core/i18n'
 
-export const CATEGORY_ICONS: Record<PartDef['category'], TreeGlyphKind> = {
+const CATEGORY_ICONS: Record<PartDef['category'], TreeGlyphKind> = {
   Equipment: 'equipment',
   Devices: 'devices',
   Products: 'products',
   Structure: 'structure',
+}
+
+/** a category's row glyph: a category a part names itself has no glyph of its own, so it takes Equipment's */
+export function categoryIcon(category: string): TreeGlyphKind {
+  return isStandardCategory(category) ? CATEGORY_ICONS[category] : 'equipment'
 }
 
 /** indentation per tree depth, in px */
@@ -170,6 +179,10 @@ interface TreeRowProps {
   collapsed: boolean
   canReorder: boolean
   running: boolean
+  /** a tag of the part is forced while the program runs (EditorController.forcePlcValue) */
+  forced?: boolean
+  /** the controller its PLC tags are on, when the row names one (program/controllerBadges.ts) */
+  controllerBadge?: string
   onRowClick: (e: ReactMouseEvent, desc: RowDesc) => void
   onRowContextMenu: (e: ReactMouseEvent, desc: RowDesc) => void
   onBeginRename: (desc: RowDesc) => void
@@ -181,7 +194,7 @@ interface TreeRowProps {
   /** part rows only: start a drag-toggle of visibility from this row's eye (hidden = its current own state) */
   onVisiblePointerDown: (id: string, hidden: boolean) => void
   /** part rows only: pointer dragged onto this row - paints the active visibility drag, if any */
-  onRowPointerEnter: (id: string) => void
+  onRowPointerEnter: (id: string, buttons: number) => void
   onOpenBehavior: (id: string) => void
   onOpenScene: (id: string) => void
   onDragStart: (e: ReactDragEvent<HTMLDivElement>, id: string) => void
@@ -194,6 +207,10 @@ interface TreeRowProps {
 }
 
 const M = defineMessages('sceneTree', {
+  // a mark, not a word: the forced badge the rungs draw beside an operand (LadderView)
+  forced: 'F',
+  forcedTitle: 'A tag of this part is forced: the running program holds it until released',
+  controllerTitle: 'Its PLC tags are on {name}',
   tagParam: 'param',
   whyParam: "Its position is partly set by the part's params: {params}",
   tagAim: 'aim',
@@ -285,7 +302,7 @@ const TreeRow = memo(function TreeRow(props: TreeRowProps) {
       title={rowTitle}
       draggable={isPart && canReorder && !renaming}
       onClick={(e) => props.onRowClick(e, desc)}
-      onPointerEnter={isPart ? () => props.onRowPointerEnter(rowId) : undefined}
+      onPointerEnter={isPart ? (e) => props.onRowPointerEnter(rowId, e.buttons) : undefined}
       onContextMenu={(e) => props.onRowContextMenu(e, desc)}
       onDoubleClick={() => {
         if (running || renaming) return
@@ -336,6 +353,17 @@ const TreeRow = memo(function TreeRow(props: TreeRowProps) {
       ) : (
         <>
           <span className="tree-name">{label}</span>
+          {props.forced && (
+            <span className="tree-forced" data-testid="tree-forced" title={t(M.forcedTitle)}>
+              {t(M.forced)}
+            </span>
+          )}
+          {props.controllerBadge ? (
+            <span className="tree-controller" data-testid="tree-controller" title={t(M.controllerTitle, { name: props.controllerBadge })}>
+              {/* i18n-ok: the controller's name, as the tags spell it */}
+              {props.controllerBadge}
+            </span>
+          ) : null}
           {props.nodeBadges ? (
             <span className="tree-node-badges" data-testid="tree-node-badges">
               {props.nodeBadges}
@@ -421,6 +449,9 @@ const TreeRow = memo(function TreeRow(props: TreeRowProps) {
 })
 
 export function SceneTree({ store, state, controller }: SceneTreeProps) {
+  // the parts with a forced signal, re-worked out when a force is set or released (not every frame)
+  const forces = usePlcForces(controller)
+  const forcedParts = useMemo(() => partsWithForces(state.scene.parts, forces, controller?.plcProgramWatch, controller?.plcAliases), [state.scene.parts, forces, controller])
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [text, setText] = useState('')
   // author-mode rig-node rename (parallel to the part-row rename above): which internal link is being
@@ -452,6 +483,8 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
   // custom part's label comes from its package name, which can change with `parts` untouched; hence
   // packageRev, as in renderRows below.
   const displayNames = useMemo(() => partDisplayNames(parts), [parts, state.packageRev])
+  // which rows name the PLC their tags are on: few, since a group on one controller is named once
+  const badgeOf = useMemo(() => controllerBadges(parts, filtering), [parts, filtering, state.packageRev])
   // filtered view is a flat list (no nesting/DnD); otherwise a nested pre-order walk
   const allRows = useMemo(
     () =>
@@ -591,7 +624,15 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
   live.current = { visibleIds, selectedIds: state.selectedIds, parts, partsById, focusId, renamingId, running: state.running, text, renamingRig, rigText }
 
   // drag & drop (reorder + reparent): the in-flight drag ids, drop indicator, and row/container handlers
-  const { dropAt, onDragStart, onRowDragOver, onRowDrop, onDragEnd, onTreeDragOver, onTreeDrop } = useTreeDrag(store, live)
+  const expandRow = useCallback((id: string) => {
+    setCollapsed((cur) => {
+      if (!cur.has(id)) return cur
+      const next = new Set(cur)
+      next.delete(id)
+      return next
+    })
+  }, [])
+  const { dropAt, onDragStart, onRowDragOver, onRowDrop, onDragEnd, onTreeDragOver, onTreeDrop } = useTreeDrag(store, live, expandRow)
 
   const closeMenu = useCallback(() => setMenu(null), [])
 
@@ -603,6 +644,24 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
 
   const cancelRename = useCallback(() => setRenamingId(null), [])
 
+  // open every collapsed ancestor of `id`, so its row is in the list
+  const expandAncestors = useCallback((id: string) => {
+    const byId = live.current.partsById
+    const part = byId.get(id)
+    if (!part) return
+    setCollapsed((cur) => {
+      let next: Set<string> | null = null
+      const seen = new Set<string>()
+      for (let pid = part.parent; pid !== undefined && !seen.has(pid); pid = byId.get(pid)?.parent) {
+        seen.add(pid)
+        if (!cur.has(pid)) continue
+        next = next ?? new Set(cur)
+        next.delete(pid)
+      }
+      return next ?? cur
+    })
+  }, [])
+
   const beginRename = useCallback(
     (id: string) => {
       const { running, partsById: byId } = live.current
@@ -611,21 +670,11 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
       if (!part) return
       // F2 on a part picked in the viewport can land under a collapsed ancestor: open the path so the
       // input mounts (a row hidden any other way is dropped by the rename guard above)
-      setCollapsed((cur) => {
-        let next: Set<string> | null = null
-        const seen = new Set<string>()
-        for (let pid = part.parent; pid !== undefined && !seen.has(pid); pid = byId.get(pid)?.parent) {
-          seen.add(pid)
-          if (!cur.has(pid)) continue
-          next = next ?? new Set(cur)
-          next.delete(pid)
-        }
-        return next ?? cur
-      })
+      expandAncestors(id)
       setText(part.name ?? '')
       setRenamingId(id)
     },
-    [],
+    [expandAncestors],
   )
 
   const toggleCollapse = useCallback((id: string) => {
@@ -639,19 +688,29 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
 
   // drag-toggle visibility: press the eye and drag across rows to set them
   // all to the same state. visPaint holds the target `visible` value for the active drag.
+  // The paint ends on release, on the window losing focus, or on entering a row with no button held: Alt-Tab mid-drag
+  // can take the release with it, and the paint then went on hiding every row the mouse crossed, an undo step each.
   const visPaint = useRef<boolean | null>(null)
   const onVisiblePointerDown = useCallback(
     (id: string, hidden: boolean) => {
       const target = hidden // toggling a hidden row shows it, and vice-versa
       visPaint.current = target
       store.setVisible([id], target)
-      window.addEventListener('pointerup', () => (visPaint.current = null), { once: true })
+      const end = (): void => {
+        visPaint.current = null
+        window.removeEventListener('pointerup', end)
+        window.removeEventListener('blur', end)
+      }
+      window.addEventListener('pointerup', end)
+      window.addEventListener('blur', end)
     },
     [store],
   )
   const onRowPointerEnter = useCallback(
-    (id: string) => {
-      if (visPaint.current !== null) store.setVisible([id], visPaint.current)
+    (id: string, buttons: number) => {
+      if (visPaint.current === null) return
+      if (buttons === 0) visPaint.current = null
+      else store.setVisible([id], visPaint.current)
     },
     [store],
   )
@@ -779,7 +838,36 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
     })
     return () => cancelAnimationFrame(raf)
   }, [])
-  useEffect(() => (scrollTargetKey === undefined ? undefined : revealRow(scrollTargetKey)), [scrollTargetKey, revealRow])
+  // A part picked in the viewport can sit under a collapsed ancestor: open the path once per new pick.
+  // Keyed on the pick, not the collapse set, so collapsing a parent of the selection later stays collapsed.
+  useEffect(() => {
+    if (lastSelected !== undefined) expandAncestors(lastSelected)
+  }, [lastSelected, expandAncestors])
+  // whether the target has a row yet: the expansion above lands a render later, and the reveal re-runs then
+  const targetListed = useMemo(
+    () => scrollTargetKey !== undefined && renderRows.some((r) => r.key === scrollTargetKey),
+    [renderRows, scrollTargetKey],
+  )
+  useEffect(
+    () => (scrollTargetKey === undefined || !targetListed ? undefined : revealRow(scrollTargetKey)),
+    [scrollTargetKey, targetListed, revealRow],
+  )
+  // Move Up / Move Down keeps the selection, so the effect above does not run: follow the row on request
+  const scrollTargetRef = useRef(scrollTargetKey)
+  scrollTargetRef.current = scrollTargetKey
+  useEffect(() => {
+    let cancel: (() => void) | undefined
+    const off = store.onRevealTreeSelection(() => {
+      const key = scrollTargetRef.current
+      if (key === undefined) return
+      cancel?.()
+      cancel = revealRow(key)
+    })
+    return () => {
+      off()
+      cancel?.()
+    }
+  }, [store, revealRow])
   // a rename can open on a row that isn't on screen (F2 after a viewport pick, which may also have just
   // expanded its ancestors): the input is kept mounted off-window, so scroll it to where it's typed into
   useEffect(() => (renamingKey === null ? undefined : revealRow(renamingKey)), [renamingKey, revealRow])
@@ -788,8 +876,9 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (resolveKeyAction(e, 'editor') !== 'edit.rename' || state.running || state.selectedIds.length !== 1) return
-      const t = e.target
-      if (t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return
+      // a code editor or the ladder find bar keeps F2 even on one of its buttons: opening a part rename there
+      // took the keyboard out of the panel
+      if (keyBelongsToTarget(e)) return
       e.preventDefault()
       beginRename(state.selectedIds[0]!)
     }
@@ -984,7 +1073,7 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
                 depth={rigDepth}
                 icon={joint ? (joint.type === 'revolute' ? 'revolute' : 'prismatic') : 'node'}
                 typeLabel={state.treeTypes ? (joint ? joint.name : shapeLabel(link.shape)) : ''}
-                rowTitle={[joint ? `${joint.name}: ${joint.type} · ${jointRange(joint, sceneUnits(state.scene))}` : shapeLabel(link.shape), ...badges.why].join('\n')}
+                rowTitle={[joint ? `${joint.name}: ${joint.type} · ${jointRange(joint, sceneDisplayUnits(state.scene))}` : shapeLabel(link.shape), ...badges.why].join('\n')}
                 nodeBadges={badges.tags}
                 hasChildren={false}
                 grouped={false}
@@ -1048,7 +1137,7 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
                 rowId={part.id}
                 label={displayName}
                 depth={depth}
-                icon={CATEGORY_ICONS[isCustom ? packageCategory(getPackage((part as SdkPart).packageId)) : def.category]}
+                icon={categoryIcon(isCustom ? packageCategory(getPackage((part as SdkPart).packageId)) : def.category)}
                 typeLabel={state.treeTypes ? typeSub : ''}
                 // with the type column toggled off, the type stays discoverable on hover
                 rowTitle={!state.treeTypes && typeSub ? typeSub : undefined}
@@ -1068,6 +1157,8 @@ export function SceneTree({ store, state, controller }: SceneTreeProps) {
                 collapsed={!open}
                 canReorder={canReorder}
                 running={state.running}
+                forced={forcedParts.has(part.id)}
+                controllerBadge={badgeOf.get(part.id)}
                 onRowClick={onRowClickDesc}
                 onRowContextMenu={onRowContextMenuDesc}
                 onBeginRename={onBeginRenameDesc}

@@ -84,9 +84,8 @@ try {
   check('app-owned chord is shown as a hint', item('Edit', 'edit.undo')?.accelerator === 'CmdOrCtrl+Z', String(item('Edit', 'edit.undo')?.accelerator))
 
   // ── 2. main's own items survived the handover ───────────────────────────────────────────────────
-  // main's own parts item: a picked folder is imported into the project's parts (packageSource.ts), not
-  // watched as a workspace.
-  check('the parts import item is still there', labels('File').includes('Import Parts from Folder…'), labels('File').join(' · '))
+  // importing a folder of parts is the Parts panel's Import part, one way in, not a second item here
+  check('the File menu has no separate parts import', !labels('File').some((l) => /Import Parts/.test(l)), labels('File').join(' · '))
   check('the Help links are still there', labels('Help').includes('Documentation') && labels('Help').includes('View on GitHub'), labels('Help').join(' · '))
 
   // ── 3. enablement tracks the editor ─────────────────────────────────────────────────────────────

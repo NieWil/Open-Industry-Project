@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { joinProgramFiles } from '../core/projectFolder'
+import { joinProgramFiles } from '../core/project/projectFolder'
 import { flattenDocument, parseDocument } from './document'
 import { holdsLadder, programFiles } from './programFiles'
 

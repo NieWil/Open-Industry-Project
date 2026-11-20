@@ -1,5 +1,5 @@
 // The PLC panel's organizer as the program's list, not just an index: New / Rename / Delete, from the tree beside the
-// code (components/PlcOrganizer.tsx).
+// code (components/plc/PlcOrganizer.tsx).
 //
 // document.test.ts covers the text transforms: that a new block compiles, that a rename reaches every reference
 // and no comment text, that the program body cannot be deleted. Only a browser run can check that the gestures reach
@@ -86,7 +86,7 @@ async function main() {
 
     await setDoc(page, PROGRAM)
     await page.waitForTimeout(600)
-    check('the tree lists the program it was given', (await rowNames(page)) === 'Main,Latch,Other', await rowNames(page))
+    check('the tree lists the program it was given', (await rowNames(page)) === 'Top-level code,Latch,Other', await rowNames(page))
 
     // ---- New: "+ New" adds a block and asks what it is called ----
     await page.locator('[data-testid="org-new"]').click()
@@ -100,7 +100,7 @@ async function main() {
     await page.keyboard.type('Debounce')
     await page.keyboard.press('Enter')
     await page.waitForTimeout(600)
-    check('the name typed is the name kept', (await rowNames(page)) === 'Main,Latch,Other,Debounce', await rowNames(page))
+    check('the name typed is the name kept', (await rowNames(page)) === 'Top-level code,Latch,Other,Debounce', await rowNames(page))
     const afterAdd = await stored(page)
     check('the new POU lands ABOVE the program body, where the grammar needs it',
       afterAdd.indexOf('FUNCTION_BLOCK Debounce') < afterAdd.indexOf('seal(S := Start'),
@@ -145,7 +145,7 @@ async function main() {
     await page.waitForTimeout(250)
 
     // ---- the program body is not a POU among POUs ----
-    await row(page, 'Main').click({ button: 'right' })
+    await row(page, 'Top-level code').click({ button: 'right' })
     await page.locator('.ctx-menu').waitFor({ state: 'visible', timeout: 4000 })
     check('the top-level code offers no Delete', (await page.locator('[data-testid="org-delete-item"]').count()) === 0)
     await page.keyboard.press('Escape')
@@ -154,7 +154,7 @@ async function main() {
     // ---- Delete, and Ctrl-Z ----
     await rowMenu(page, 'Debounce', 'org-delete-item')
     await page.waitForTimeout(300)
-    check('deleting a block drops it from the tree', (await rowNames(page)) === 'Main,Interlock,Other', await rowNames(page))
+    check('deleting a block drops it from the tree', (await rowNames(page)) === 'Top-level code,Interlock,Other', await rowNames(page))
     check('and from the program', !(await stored(page)).includes('Debounce'))
     await page.locator('.cm-content').focus()
     await page.keyboard.press('Control+z')
@@ -227,7 +227,7 @@ async function main() {
     const filler = (tag) => Array.from({ length: 60 }, (_, k) => `(* ${tag} note ${k} *)`).join('\n')
     await setDoc(page, `FUNCTION_BLOCK Alpha\n${filler('alpha')}\nEND_FUNCTION_BLOCK\n\nFUNCTION_BLOCK Beta\n${filler('beta')}\nEND_FUNCTION_BLOCK\n\nVAR_INPUT X : BOOL; END_VAR\nX := X;`)
     await page.waitForTimeout(600)
-    check('the row of the block the cursor is in is lit (typing ends in the body)', (await litRows(page)) === 'Main', await litRows(page))
+    check('the row of the block the cursor is in is lit (typing ends in the body)', (await litRows(page)) === 'Top-level code', await litRows(page))
     await row(page, 'Alpha').click()
     await page.waitForTimeout(300)
     check('opening a row lights that row, and only that one', (await litRows(page)) === 'Alpha', await litRows(page))
@@ -241,18 +241,18 @@ async function main() {
     await page.locator('.cm-content').focus()
     await page.keyboard.press('Control+End')
     await page.waitForTimeout(300)
-    check('moving the cursor lights its block again', (await litRows(page)) === 'Main', await litRows(page))
+    check('moving the cursor lights its block again', (await litRows(page)) === 'Top-level code', await litRows(page))
 
     // ---- Devices: the scene's parts that use tags, in the organizer tree ----
-    // The section is the tree's (components/OrganizerTree.tsx): it is what the scene offers the program, so an
+    // The section is the tree's (components/plc/OrganizerTree.tsx): it is what the scene offers the program, so an
     // unwired part can be seen from the panel.
     await page.waitForFunction(() => window.__oip.store.getState().bundledPackages.length > 0, null, { timeout: 60000, polling: 200 })
     await page.evaluate(() => {
       const st = window.__oip.store
       const scene = st.getState().scene
       st.commit('Add devices', { ...scene, parts: [...scene.parts,
-        { id: 'b1', type: 'part', name: 'Belt_1', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0, params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, enableComms: true, runTag: 'B_R_1' } },
-        { id: 's1', type: 'part', name: 'Sensor_1', packageId: 'oip.diffuse-sensor', position: [3, 0.75, 0], rotationY: 0, params: { maxRange: 1.2, enableComms: true, tag: 'S_1' } },
+        { id: 'b1', type: 'part', name: 'Belt_1', packageId: 'oip.belt-conveyor', position: [0, 0.8, 0], rotationY: 0, params: { shapePreset: 'custom', segments: [[5, 0]], width: 0.8, standHeight: 0.8, speed: 0.5, runTag: 'B_R_1' } },
+        { id: 's1', type: 'part', name: 'Sensor_1', packageId: 'oip.diffuse-sensor', position: [3, 0.75, 0], rotationY: 0, params: { maxRange: 1.2, tag: 'S_1' } },
       ] })
     })
     await page.waitForTimeout(500)

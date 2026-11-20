@@ -1,7 +1,7 @@
 // Cartesian Gantry: a 3-axis linear pick-and-place on three SERVO axes (x along the length, y across the width,
 // z the lift, measured DOWNWARD). The host runs each servo's motion profile; this script decides where they go.
 //
-// Three ways a PLC drives it (enableComms), picked by the 'mode' param:
+// Three ways a PLC drives it, picked by the 'mode' param:
 //  - WAYPOINTS (default): an INT command tag picks a row of the taught waypoint table (0 = home), a rising Execute
 //    runs the move, Done reads true while idle. A row outside the frame parks at the frame's limit.
 //  - POSITION CONTROL: three REAL target tags say where to go, in metres, and a rising Execute goes there. A target
@@ -14,10 +14,10 @@
 //    limits that FAULT are the program's own axis's (AXIS_REF software limits), as on a real drive in this mode.
 // The first two move COORDINATED: each axis's velocity and acceleration are scaled by its share of the longest
 // axis's travel, which scales the whole profile, so they start and arrive together and the tool runs a straight
-// line. In follow mode the coordination is the program's. The actual X/Y/Z tags report where the axes are, every tick. An Enable tag (empty = always)
+// line. In follow mode the coordination is the program's. The actual X/Y/Z tags report where the axes are, every tick. An Enable tag (always on until a program drives it)
 // powers the drives: dropping it stops the gantry dead and abandons the move, like a real drive's enable.
-// With comms off the drives stay unpowered and the gantry holds home. 'vacuumOn' is the authored idle vacuum: it
-// seeds the grip state and lights the status LED at rest (the lamp's param).
+// With no tags named the gantry holds home. 'vacuumOn' is the authored idle vacuum: it seeds the grip state and
+// lights the status LED at rest (the lamp's param) until a vacuum tag is named.
 //
 // The rig is assembled from Gantry.glb: four corner legs, twin Beam_Main rails, an X bridge on a prismatic 'x'
 // joint, a Y carriage on 'z'-axis travel ('y' joint), and a telescoping Beam_Lift + Tool_01 on a downward
@@ -82,8 +82,7 @@ definePart({
     frameHeight: { type: 'number', default: 1, min: 0.5, max: 10, step: 0.1, label: 'Frame height (m)', desc: 'Height of the frame, which sets how far the tool can be lowered on the lift axis.' },
     speed: { type: 'number', default: 1, min: 0.1, max: 10, step: 0.1, label: 'Motion speed (m/s)', group: 'Motion', desc: 'Top speed of a move, reached by the axis with the farthest to go. The other two are slowed in proportion so all three arrive together and the tool runs a straight line.' },
     accel: { type: 'number', default: 5, min: 0.1, max: 50, step: 0.1, label: 'Acceleration (m/s²)', group: 'Motion', desc: 'How hard the axes ramp up to speed and brake to a stop, for the axis with the farthest to go. Lower it for a heavier or more delicate load; a short move may never reach top speed at all.' },
-    vacuumOn: { type: 'boolean', default: false, label: 'Vacuum on (idle grip + LED)', group: 'Start state', desc: 'Authored resting state of the vacuum: it seeds the grip and lights the status LED while the gantry sits idle. With comms on, the vacuum tag below takes over.' },
-    enableComms: { type: 'boolean', default: false, label: 'Enable comms', group: 'Comms', desc: 'Connect this gantry to a PLC program. Its tags appear once this is on. Without a program the drives stay off and it holds its home pose.' },
+    vacuumOn: { type: 'boolean', default: false, label: 'Vacuum on (idle grip + LED)', group: 'Start state', desc: 'Authored resting state of the vacuum: it seeds the grip and lights the status LED while the gantry sits idle. Once a vacuum tag is named, that tag takes over.' },
     mode: {
       type: 'enum', default: 'waypoints', label: 'Mode', group: 'Comms',
       desc: 'How the program drives the gantry. Waypoints: set the command tag to a row of the taught table and pulse Execute, like drives with stored positions. Position: write the X, Y and Z targets and pulse Execute; the gantry plans one coordinated straight-line move, like a gantry with its own controller. Follow setpoints: hold Execute and stream each axis set position every scan, for a program that runs its own motion control (an MC_MoveAbsolute per axis); the program does the coordinating.',
@@ -93,17 +92,17 @@ definePart({
         { value: 'follow', label: 'Follow PLC setpoints (PLC plans the motion)' },
       ],
     },
-    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Enable tag', group: 'Comms', desc: 'Powers the drives. Drop it and the gantry stops where it is and abandons its move; raise it and it waits for the next Execute. Wire it to the cell being safe to work in. Leave it empty and the drives are always on.' },
+    enableTag: { type: 'tag', dir: 'in', stType: 'BOOL', onlyWhenDriven: true, default: '', label: 'Enable tag', group: 'Comms', desc: 'Powers the drives. Drop it and the gantry stops where it is and abandons its move; raise it and it waits for the next Execute. Wire it to the cell being safe to work in. Until a program drives it, or with it empty, the drives are always on, so a merely-typed tag does not hold them.' },
     commandTag: { type: 'tag', dir: 'in', stType: 'INT', default: '', label: 'Command tag (0 = home, 1+ = waypoint)', group: 'Comms', visibleWhen: { param: 'mode', is: 'waypoints' }, desc: 'Which row of the waypoint table to move to, as an index: 0 is home, 1 the second row and so on. Set it BEFORE pulsing execute. An index past the end of the table is ignored, and the arm stays put rather than guessing.' },
-    targetXTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', label: 'Target X tag (m)', group: 'Comms', visibleWhen: { param: 'mode', is: ['position', 'follow'] }, desc: 'Where to move along the length, in metres from the frame centre. Position mode: set all three targets BEFORE pulsing execute; outside the frame, the gantry drives toward the end of the frame, stops short of it and raises Fault. Follow mode: read every scan; outside the frame, that axis parks at the end of the frame.' },
-    targetYTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', label: 'Target Y tag (m)', group: 'Comms', visibleWhen: { param: 'mode', is: ['position', 'follow'] }, desc: 'Where to move across the width, in metres from the frame centre.' },
-    targetZTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', label: 'Target Z tag (m, down)', group: 'Comms', visibleWhen: { param: 'mode', is: ['position', 'follow'] }, desc: 'How far to lower the tool, in metres below its raised position: 0 is fully up.' },
+    targetXTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', label: 'Target X tag', unit: 'm', group: 'Comms', visibleWhen: { param: 'mode', is: ['position', 'follow'] }, desc: 'Where to move along the length, in metres from the frame centre. Position mode: set all three targets BEFORE pulsing execute; outside the frame, the gantry drives toward the end of the frame, stops short of it and raises Fault. Follow mode: read every scan; outside the frame, that axis parks at the end of the frame.' },
+    targetYTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', label: 'Target Y tag', unit: 'm', group: 'Comms', visibleWhen: { param: 'mode', is: ['position', 'follow'] }, desc: 'Where to move across the width, in metres from the frame centre.' },
+    targetZTag: { type: 'tag', dir: 'in', stType: 'REAL', default: '', label: 'Target Z tag (down)', unit: 'm', group: 'Comms', visibleWhen: { param: 'mode', is: ['position', 'follow'] }, desc: 'How far to lower the tool, in metres below its raised position: 0 is fully up.' },
     executeTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Execute tag', group: 'Comms', desc: 'Pulse this false-to-true to start a move. It is edge-triggered, so holding it true does NOT repeat - drop it and raise it again for each move. In follow mode, hold it true for as long as the gantry should track the targets.' },
     doneTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Done tag', group: 'Comms', desc: 'Handshake back to the program: true whenever the gantry is parked and ready for the next command. Wait for it before pulsing execute again, or the edge lands mid-move and is dropped. In follow mode: true while all three axes sit on their setpoints.' },
     faultTag: { type: 'tag', dir: 'out', stType: 'BOOL', default: '', label: 'Fault tag', group: 'Comms', desc: 'True when the last move was refused (the drives not enabled) or ended in a fault (a target past the frame: the gantry stops short of the frame end). The next Execute clears it, once the axes are still.' },
-    actualXTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Actual X tag (m)', group: 'Comms', desc: 'Where the X axis is now, every scan, in the same metres as the target.' },
-    actualYTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Actual Y tag (m)', group: 'Comms', desc: 'Where the Y axis is now.' },
-    actualZTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Actual Z tag (m, down)', group: 'Comms', desc: 'How far the tool is lowered now.' },
+    actualXTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Actual X tag', unit: 'm', group: 'Comms', desc: 'Where the X axis is now, every scan, in the same metres as the target.' },
+    actualYTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Actual Y tag', unit: 'm', group: 'Comms', desc: 'Where the Y axis is now.' },
+    actualZTag: { type: 'tag', dir: 'out', stType: 'REAL', default: '', label: 'Actual Z tag (down)', unit: 'm', group: 'Comms', desc: 'How far the tool is lowered now.' },
     gripperTag: { type: 'tag', dir: 'in', stType: 'BOOL', default: '', label: 'Vacuum tag', group: 'Comms', desc: 'Grip or release the load. Read continuously rather than on an edge, so hold it true for the whole carry and drop it only once the load is where it belongs.' },
     waypoints: { type: 'numberList', columns: ['x m', 'y m', 'z m'], arity: 3, default: DEFAULT_POSES, visibleWhen: { param: 'mode', is: 'waypoints' }, label: 'Waypoints (row 0 = home)', group: 'Motion', desc: 'Positions in frame-local metres, one row each: x along the length, y across, and z the lift measured DOWNWARD (larger is lower). Row 0 is home and the command tag picks a row. A value outside the frame parks at its limit.' },
   },
@@ -113,10 +112,10 @@ definePart({
   step(ctx) {
     const P = ctx.params
     const S = [ctx.servos.x, ctx.servos.y, ctx.servos.z]
-    const enabled = P.enableComms && (P.enableTag === '' || ctx.readTag(P.enableTag))
+    const enabled = !ctx.tagDriven(P.enableTag) || ctx.readTag(P.enableTag)
     for (const s of S) s.power(enabled)
     if (!enabled) moving = false // a drive that drops out abandons its move
-    const following = P.enableComms && P.mode === 'follow'
+    const following = P.mode === 'follow'
     // follow mode: Done compares with LAST scan's setpoints, since the positions read here are where the servos
     // stood before this scan
     const onTarget = S.every((s, i) => Math.abs(s.position - followed[i]) <= 1e-6)
@@ -136,8 +135,8 @@ definePart({
         followed = tgt
       } else for (const s of S) if (s.state === 'continuous') s.halt()
       moving = false
-      grip = ctx.readTag(P.gripperTag)
-    } else if (P.enableComms) {
+      if (P.gripperTag) grip = ctx.readTag(P.gripperTag)
+    } else {
       // ctx.rising diffs the begin-of-tick snapshot, so an edge can't be dropped over the async bus the way a
       // hand-rolled prev-flag could
       if (ctx.rising(P.executeTag) && !moving) {
@@ -164,7 +163,7 @@ definePart({
           busy = 0
         }
       }
-      grip = ctx.readTag(P.gripperTag)
+      if (P.gripperTag) grip = ctx.readTag(P.gripperTag)
     }
     if (moving) {
       busy += ctx.dt
@@ -175,12 +174,10 @@ definePart({
     }
     ctx.grips.gripper = grip
     ctx.lamps.vacuumLamp = grip
-    if (P.enableComms) {
-      if (P.doneTag) ctx.writeTag(P.doneTag, following ? onTarget : !moving)
-      if (P.faultTag) ctx.writeTag(P.faultTag, fault)
-      if (P.actualXTag) ctx.writeNumber(P.actualXTag, S[0].position)
-      if (P.actualYTag) ctx.writeNumber(P.actualYTag, S[1].position)
-      if (P.actualZTag) ctx.writeNumber(P.actualZTag, S[2].position)
-    }
+    if (P.doneTag) ctx.writeTag(P.doneTag, following ? onTarget : !moving)
+    if (P.faultTag) ctx.writeTag(P.faultTag, fault)
+    if (P.actualXTag) ctx.writeNumber(P.actualXTag, S[0].position)
+    if (P.actualYTag) ctx.writeNumber(P.actualYTag, S[1].position)
+    if (P.actualZTag) ctx.writeNumber(P.actualZTag, S[2].position)
   },
 })

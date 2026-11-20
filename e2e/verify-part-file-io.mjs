@@ -1,10 +1,11 @@
 // Verifies part file export/import (docs/part-authoring-guide.md "Sharing"): every custom-part catalog
-// card offers ⤓ Download (a self-contained <id>.part.json), and the Parts dock's ⤒ Import loads such a
-// file. The imported part appears as a placeable catalog card and survives a reload (userPackages
-// persistence). Also checks the round trip: the downloaded file re-imports cleanly.
+// card offers ⤓ Download (a self-contained <id>.oippart, core/parts/partArchive.ts), and the Parts dock's ⤒ Import
+// loads a part file: the older single-JSON <id>.part.json here, the downloaded .oippart in the round trip. The
+// imported part appears as a placeable catalog card and survives a reload (userPackages persistence).
 // Run: node e2e/verify-part-file-io.mjs [--headed]
 /* global process, console, window */
 import { startServer } from './_server.mjs'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -72,19 +73,20 @@ try {
   const cardWrap = page.locator('.catalog-card-custom', { has: page.locator('[data-package-id="e2e.imported-deck"]') })
   await cardWrap.hover()
   const [download] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), cardWrap.locator('.catalog-card-download').click()])
-  check('⤓ downloads the part file', download.suggestedFilename() === 'e2e.imported-deck.part.json', download.suggestedFilename())
-  const exportPath = join(dir, 'roundtrip.part.json')
+  check('⤓ downloads the part file', download.suggestedFilename() === 'e2e.imported-deck.oippart', download.suggestedFilename())
+  const exportPath = join(dir, 'roundtrip.oippart')
   await download.saveAs(exportPath)
-  const exported = JSON.parse(readFileSync(exportPath, 'utf8'))
-  // the imported geometry is a rig (the retired 'deck' kind loads as a one-link rig): the export
-  // must carry that rig back out, including the deck link
-  check('exported file carries the behavior + geometry', typeof exported.behaviorSource === 'string' && exported.geometry?.kind === 'rig' && exported.geometry?.links?.[0]?.name === 'deck' && exported.geometry?.links?.[0]?.conveys === true, JSON.stringify(exported.geometry)?.slice(0, 200))
+  const files = unzipSync(new Uint8Array(readFileSync(exportPath)))
+  const manifest = files['manifest.json'] ? JSON.parse(strFromU8(files['manifest.json'])) : null
+  const behavior = files['behavior.js'] ? strFromU8(files['behavior.js']) : null
+  // the export must carry the rig back out, including the deck link, and the behavior verbatim
+  check('exported archive carries the behavior + geometry', behavior?.includes('setSurfaceVelocity') === true && manifest?.geometry?.kind === 'rig' && manifest?.geometry?.links?.[0]?.name === 'deck' && manifest?.geometry?.links?.[0]?.conveys === true, `${Object.keys(files).join(', ')} | ${JSON.stringify(manifest?.geometry)?.slice(0, 200)}`)
 
   // import the export back under a fresh id - a clean file must re-import without touching the original
-  exported.id = 'e2e.roundtrip-deck'
-  exported.name = 'E2E Roundtrip Deck'
-  const roundtripPath = join(dir, 'e2e.roundtrip-deck.part.json')
-  writeFileSync(roundtripPath, JSON.stringify(exported))
+  manifest.id = 'e2e.roundtrip-deck'
+  manifest.name = 'E2E Roundtrip Deck'
+  const roundtripPath = join(dir, 'e2e.roundtrip-deck.oippart')
+  writeFileSync(roundtripPath, zipSync({ ...files, 'manifest.json': strToU8(JSON.stringify(manifest, null, 2)) }))
   await page.locator('.catalog-dock input[type="file"]').setInputFiles(roundtripPath)
   await page.locator('.catalog-card-custom [data-package-id="e2e.roundtrip-deck"]').waitFor({ timeout: 10000 })
   check('a downloaded part file re-imports (round trip)', true)

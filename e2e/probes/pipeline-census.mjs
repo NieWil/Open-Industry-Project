@@ -16,7 +16,7 @@
 // of pipelines that are pure state/format/layout variants of a shader that is already compiled,
 // which merging can remove without touching a single shader.
 //
-// Usage: node e2e/probes/pipeline-census.mjs [--nodedup] [--dev] [--q=<extra query flags>]
+// Usage: node e2e/probes/pipeline-census.mjs [--dev] [--q=<extra query flags>]
 //   default - serves the existing dist/ (no rebuild); run `npm run build` first if dist/ is stale
 //   --dev - runs against a dev server instead. Absolute counts differ from prod (dev geometry is
 //               un-quantized, so the `geometry` axis has different buckets), but code-driven axes like
@@ -101,7 +101,6 @@ async function main() {
     console.error('dist/ is not a finished build - run `npm run build` first, or pass --dev')
     process.exit(1)
   }
-  const noDedup = process.argv.includes('--nodedup')
   const extra = (process.argv.find((a) => a.startsWith('--q=')) ?? '').slice(4)
   let baseUrl, close
   if (dev) {
@@ -117,7 +116,7 @@ async function main() {
   try {
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 850 }, serviceWorkers: 'block' })
     const page = await ctx.newPage()
-    const q = `?scene=demo&hook${noDedup ? '&nopipelinededup' : ''}${extra ? `&${extra}` : ''}`
+    const q = `?scene=demo&hook${extra ? `&${extra}` : ''}`
     log(`${dev ? 'dev server' : 'dist/'}  ${q}\n`)
     await page.goto(`${baseUrl}/app/${q}`, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => document.querySelector('.viewport-cover')?.classList.contains('ready'), null, {
@@ -160,7 +159,7 @@ async function main() {
       } else unparsed++
     }
 
-    log(`demo scene, WebGPU, pipelineDedup ${noDedup ? 'OFF' : 'ON'}\n`)
+    log(`demo scene, WebGPU\n`)
     log(`── totals`)
     log(`   render pipelines   ${rows.length}${unparsed ? `  (+${unparsed} unparsed)` : ''}`)
     log(`   compute pipelines  ${raw.compute}`)

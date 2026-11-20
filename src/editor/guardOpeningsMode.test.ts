@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SCENE_VERSION } from '../core/types'
 import type { PartInstance } from '../core/types'
-import { registerPackage } from '../core/partRegistry'
+import { registerPackage } from '../core/parts/partRegistry'
 import { buildPackage } from '../sim/buildPackage'
-import { bundledBehaviors, bundledManifests } from './bundledExamples'
-import { EditorStore, guardOpeningsTarget } from './store'
+import { bundledBehaviors, bundledManifests } from './parts/bundledExamples'
+import { EditorStore, guardOpeningsTarget } from './store/store'
 
 // Guard-openings mode (G) is a session state with a target: one selected conveyor that authors guardOpenings.
 // As a persisted global flag, a G pressed yesterday would silently swap every conveyor's size handles for

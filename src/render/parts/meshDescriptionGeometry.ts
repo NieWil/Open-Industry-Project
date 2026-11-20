@@ -1,6 +1,6 @@
 import { Box3, BufferGeometry, Float32BufferAttribute, Sphere } from 'three'
 import type { BufferAttribute } from 'three'
-import type { MeshDescription } from '../../core/meshDescription'
+import type { MeshDescription } from '../../core/geometry/meshDescription'
 import { dropColliderBVH } from '../bvh'
 import { noteGeometryRecycle } from '../geometryRecycle'
 

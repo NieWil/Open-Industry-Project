@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react'
-import type { EditorState, EditorStore } from '../store'
+import type { EditorState, EditorStore } from '../store/store'
 import { defineMessages, t } from '../../core/i18n'
 
 const M = defineMessages('history', {
   kindPart: 'part',
-  emptyRoom: 'No edits yet. Changes anyone makes in this room appear here, newest last.',
+  emptyRoom: 'No edits yet. Changes anyone makes in this shared project appear here, newest last.',
   emptySolo: 'No edits yet. Changes you make appear here, newest last.',
   opened: 'Project opened',
   you: 'You',

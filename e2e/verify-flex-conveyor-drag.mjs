@@ -1,6 +1,6 @@
 // Verify the flex conveyor is pulled into shape, the two ways a real one is, from either end.
 //   A) Editor: selecting one shows a dot on its infeed and on every control point of its path (the `flexPath` handle,
-//      core/partGeometry flexPathOf / flexPull). Dragging the end dot round to the side curves the bed to it; dragging
+//      core/parts/partGeometry flexPathOf / flexPull). Dragging the end dot round to the side curves the bed to it; dragging
 //      a middle dot the other way makes an S. Each drag writes the points and the bed length together, the infeed
 //      holds, and a drag is one undo step. Dragging the infeed dot moves the part itself while every control point
 //      holds in the world. A drag past full length stops at full length rather than being refused.
