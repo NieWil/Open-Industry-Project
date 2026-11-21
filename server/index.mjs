@@ -30,6 +30,7 @@
 //     deleted and refused, so Stop sharing makes its links stop working, and may ask everyone to watch its run
 //     (the spotlight); an editor of the room can do neither
 //   - GET /healthz for uptime monitoring
+//   - ONLY_ROOMS: a server beside a plant service hosts the rooms named there and no other (scripts/plant-view.mjs)
 //   - /assets/<sha256>: the bytes of parts' embedded models, so a room's document carries only their hashes
 //     (assets.mjs: public GET by hash, PUT only with a room edit secret, capped per file and per IP per hour, and
 //     swept daily once no stored room or snapshot names them)
@@ -99,6 +100,10 @@ const assets = createAssetStore({
 })
 // the only document names a client may open (src/collab/rooms.ts DOC_NAME_RE)
 const DOC_NAME_RE = /^r-[0-9a-f]{64}$/
+// ONLY_ROOMS (comma-separated document names): a server that hosts these rooms and no other, such as the one
+// beside a plant service (scripts/plant-view.mjs), which must not become a public host for anyone's rooms
+const ONLY_ROOMS = new Set((process.env.ONLY_ROOMS ?? '').split(',').map((s) => s.trim()).filter((s) => DOC_NAME_RE.test(s)))
+const isRoom = (name) => DOC_NAME_RE.test(name) && (ONLY_ROOMS.size === 0 || ONLY_ROOMS.has(name))
 // thrown from a hook, it reaches the client as a permission-denied message with this reason
 // (its provider's `authenticationFailed` event), and the document is never set up
 const notARoom = () => Object.assign(new Error('not a room'), { reason: 'not-a-room' })
@@ -365,7 +370,7 @@ const server = new Server({
   // just not writable. (A name that is not a room was already refused in onConnect; the
   // check is repeated so this hook stays safe on its own.)
   async onAuthenticate({ documentName, token, connectionConfig }) {
-    if (!DOC_NAME_RE.test(documentName)) throw notARoom()
+    if (!isRoom(documentName)) throw notARoom()
     const holdsSecret = typeof token === 'string' && token.length > 0 && `r-${sha256Hex(token)}` === documentName
     if (!holdsSecret) connectionConfig.readOnly = true
   },
@@ -373,7 +378,7 @@ const server = new Server({
   async onConnect({ request, socketId, documentName, instance }) {
     // Only `r-<sha256>` names are rooms. Refused first, so a bare or legacy name never
     // creates a document, counts against an IP, or reaches a row persisted under it.
-    if (!DOC_NAME_RE.test(documentName)) throw notARoom()
+    if (!isRoom(documentName)) throw notARoom()
     // closed by its owner (roomOwners.mjs): every link to it stops working
     if (await isClosed(documentName)) throw roomClosed()
     const ip = clientIp(request)
